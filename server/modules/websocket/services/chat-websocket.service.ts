@@ -74,6 +74,7 @@ export type ProviderRuntimeGateway = {
   ): Promise<unknown>;
   abort(provider: LLMProvider, sessionId: string): Promise<boolean>;
   stopBackgroundTask(provider: LLMProvider, sessionId: string, taskId: string): Promise<boolean>;
+  setPermissionMode(provider: LLMProvider, sessionId: string, permissionMode: string): Promise<boolean>;
   /** Whether a provider runtime still holds background work for the session after its turn ended. */
   hasBackgroundWork(sessionId: string): boolean;
   resolveToolApproval(requestId: string, payload: ProviderPermissionDecision): void;
@@ -491,6 +492,38 @@ async function handleChatStopTask(
 }
 
 /**
+ * Handles `chat.set-permission-mode`: applies a mode the user picked to the
+ * session's live process, so it governs the rest of the turn already running.
+ * A session with no live process is not an error: its next `chat.send` carries
+ * the mode anyway, so nothing is echoed back either way.
+ */
+async function handleChatSetPermissionMode(
+  ws: WebSocket,
+  data: AnyRecord,
+  dependencies: ChatWebSocketDependencies
+): Promise<void> {
+  const sessionId = readRequiredSessionId(data);
+  if (!sessionId) {
+    sendProtocolError(ws, 'SESSION_ID_REQUIRED', 'chat.set-permission-mode requires a sessionId.');
+    return;
+  }
+
+  const permissionMode = typeof data.permissionMode === 'string' ? data.permissionMode.trim() : '';
+  if (!permissionMode) {
+    sendProtocolError(ws, 'PERMISSION_MODE_REQUIRED', 'chat.set-permission-mode requires a permissionMode.', sessionId);
+    return;
+  }
+
+  const session = sessionsDb.getSessionById(sessionId);
+  if (!session) {
+    sendProtocolError(ws, 'SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`, sessionId);
+    return;
+  }
+
+  await dependencies.runtime.setPermissionMode(session.provider as LLMProvider, sessionId, permissionMode);
+}
+
+/**
  * Handles `chat.subscribe`: for each requested session, reports whether a run
  * is processing, re-attaches the live stream to this socket, replays missed
  * events (seq > lastSeq), and includes pending permission requests.
@@ -585,6 +618,7 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  * - `chat.send`                { sessionId, content, options? }
  * - `chat.abort`               { sessionId }
  * - `chat.stop-task`           { sessionId, taskId }
+ * - `chat.set-permission-mode` { sessionId, permissionMode }
  * - `chat.subscribe`           { sessions: [{ sessionId, lastSeq? }] }
  * - `chat.permission-response` { requestId, allow, updatedInput?, message?, rememberEntry? }
  *
@@ -690,6 +724,9 @@ export function handleChatConnection(
           return;
         case 'chat.stop-task':
           await handleChatStopTask(ws, data, dependencies);
+          return;
+        case 'chat.set-permission-mode':
+          await handleChatSetPermissionMode(ws, data, dependencies);
           return;
         case 'chat.subscribe':
           handleChatSubscribe(ws, data, dependencies);

@@ -66,6 +66,8 @@ type ActiveSession = {
   status: 'active' | 'aborted';
   writer: ClaudeRuntimeWriter | null;
   releaseInput: (() => void) | null;
+  /** Switches the live process and the run's own approval rules to another permission mode. */
+  applyPermissionMode: ((permissionMode: string) => Promise<void>) | null;
 };
 
 type ToolApprovalDecision = AnyRecord | null;
@@ -298,6 +300,46 @@ export function buildClaudeSdkEnv(hostEnv: NodeJS.ProcessEnv = process.env): Nod
   };
 }
 
+// Tools plan mode lets through without a prompt, on top of the user's own allow list.
+const PLAN_MODE_TOOLS = ['Read', 'Task', 'exit_plan_mode', 'TodoRead', 'TodoWrite', 'WebFetch', 'WebSearch'];
+
+const CLAUDE_PERMISSION_MODES = new Set(['default', 'auto', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk']);
+
+/**
+ * The mode the SDK actually runs in for a requested mode. "Skip permissions" in
+ * the tool settings overrides every mode except plan, which only reads.
+ */
+function resolveSdkPermissionMode(permissionMode: string | undefined, skipPermissions: boolean) {
+  if (skipPermissions && permissionMode !== 'plan') {
+    return 'bypassPermissions';
+  }
+  return permissionMode || 'default';
+}
+
+/**
+ * Adds plan mode's tools to a run's allow list while the run is in plan mode,
+ * and takes back out exactly the ones it added once it leaves. `granted`
+ * remembers those, so a tool the user allowed themselves is never removed.
+ */
+function syncPlanModeTools(allowedTools: string[], granted: Set<string>, permissionMode: string | undefined) {
+  if (permissionMode === 'plan') {
+    for (const tool of PLAN_MODE_TOOLS) {
+      if (!allowedTools.includes(tool)) {
+        allowedTools.push(tool);
+        granted.add(tool);
+      }
+    }
+    return;
+  }
+  for (const tool of granted) {
+    const index = allowedTools.indexOf(tool);
+    if (index !== -1) {
+      allowedTools.splice(index, 1);
+    }
+  }
+  granted.clear();
+}
+
 function mapCliOptionsToSDK(options: AnyRecord = {}) {
   const { providerSessionId, cwd, toolsSettings, permissionMode, effort, resumeAnchorId, resumeFromScratch } = options;
 
@@ -318,32 +360,20 @@ function mapCliOptionsToSDK(options: AnyRecord = {}) {
     sdkOptions.cwd = cwd;
   }
 
-  if (permissionMode && permissionMode !== 'default') {
-    sdkOptions.permissionMode = permissionMode;
-  }
-
   const settings = toolsSettings || {
     allowedTools: [],
     disallowedTools: [],
     skipPermissions: false
   };
 
-  if (settings.skipPermissions && permissionMode !== 'plan') {
-    sdkOptions.permissionMode = 'bypassPermissions';
+  const sdkPermissionMode = resolveSdkPermissionMode(permissionMode, Boolean(settings.skipPermissions));
+  if (sdkPermissionMode !== 'default') {
+    sdkOptions.permissionMode = sdkPermissionMode;
   }
 
-  let allowedTools = [...(settings.allowedTools || [])];
-
-  if (permissionMode === 'plan') {
-    const planModeTools = ['Read', 'Task', 'exit_plan_mode', 'TodoRead', 'TodoWrite', 'WebFetch', 'WebSearch'];
-    for (const tool of planModeTools) {
-      if (!allowedTools.includes(tool)) {
-        allowedTools.push(tool);
-      }
-    }
-  }
-
-  sdkOptions.allowedTools = allowedTools;
+  // Plan mode's extra tools are added by the run itself, which has to be able
+  // to take them back out when the mode changes mid-run.
+  sdkOptions.allowedTools = [...(settings.allowedTools || [])];
 
   // Use the tools preset to make all default built-in tools available (including AskUserQuestion).
   // This was introduced in SDK 0.1.57. Omitting this preserves existing behavior (all tools available),
@@ -398,6 +428,7 @@ function addSession(
   queryInstance: ClaudeQuery,
   writer: ClaudeRuntimeWriter | null = null,
   releaseInput: (() => void) | null = null,
+  applyPermissionMode: ((permissionMode: string) => Promise<void>) | null = null,
 ) {
   const existing = activeSessions.get(sessionId);
   // A different live instance under the same key means an earlier run was
@@ -429,7 +460,8 @@ function addSession(
     status: 'active',
     writer,
     // Re-registered mid-run once the provider session id lands; keep the closer.
-    releaseInput: releaseInput || carried?.releaseInput || null
+    releaseInput: releaseInput || carried?.releaseInput || null,
+    applyPermissionMode: applyPermissionMode || carried?.applyPermissionMode || null,
   });
   // The history reader reports a background agent as running or stopped by
   // whether this entry exists, and the cached history does not see this map.
@@ -1105,6 +1137,8 @@ async function queryClaudeSDK(
       model: resolvedModel || options.model,
       effortModels,
     });
+    const planModeGrants = new Set<string>();
+    syncPlanModeTools(sdkOptions.allowedTools, planModeGrants, options.permissionMode);
 
     const mcpServers = await loadMcpConfig(options.cwd);
     if (mcpServers) {
@@ -1249,9 +1283,19 @@ async function queryClaudeSDK(
       });
     }
 
+    // canUseTool reads the mode and allow list from sdkOptions, so they change
+    // together with the process; otherwise a switch to bypass would still prompt.
+    const runQuery = queryInstance;
+    const applyPermissionMode = async (permissionMode: string) => {
+      const sdkPermissionMode = resolveSdkPermissionMode(permissionMode, Boolean(options.toolsSettings?.skipPermissions));
+      await runQuery.setPermissionMode!(sdkPermissionMode);
+      sdkOptions.permissionMode = sdkPermissionMode;
+      syncPlanModeTools(sdkOptions.allowedTools, planModeGrants, permissionMode);
+    };
+
     // Track the query instance for abort capability
     if (sessionKey()) {
-      addSession(sessionKey()!, queryInstance, ws, releasePromptStream);
+      addSession(sessionKey()!, queryInstance, ws, releasePromptStream, applyPermissionMode);
     }
 
     // Process streaming messages
@@ -1262,7 +1306,7 @@ async function queryClaudeSDK(
       if (message.session_id && !capturedSessionId) {
 
         capturedSessionId = message.session_id;
-        addSession(sessionKey()!, queryInstance, ws, releasePromptStream);
+        addSession(sessionKey()!, queryInstance, ws, releasePromptStream, applyPermissionMode);
 
         // Set session ID on writer
         if (ws.setSessionId && typeof ws.setSessionId === 'function') {
@@ -1577,6 +1621,22 @@ async function stopClaudeSDKTask(sessionId: string, taskId: string) {
 }
 
 /**
+ * Switches a live session to another permission mode, for the tool calls still
+ * to come in its current turn.
+ * @param {string} sessionId - Session identifier
+ * @param {string} permissionMode - One of the SDK's permission modes
+ * @returns {Promise<boolean>} False when no live process holds the session, or the mode is unknown
+ */
+async function setClaudeSDKPermissionMode(sessionId: string, permissionMode: string) {
+  const session = getSession(sessionId);
+  if (!session?.applyPermissionMode || session.status !== 'active' || !CLAUDE_PERMISSION_MODES.has(permissionMode)) {
+    return false;
+  }
+  await session.applyPermissionMode(permissionMode);
+  return true;
+}
+
+/**
  * Checks if an SDK session is currently active
  * @param {string} sessionId - Session identifier
  * @returns {boolean} True if session is active
@@ -1655,6 +1715,7 @@ export const claudeRuntime = {
   },
   listBackgroundWork: listClaudeSDKBackgroundWork,
   stopBackgroundTask: stopClaudeSDKTask,
+  setPermissionMode: setClaudeSDKPermissionMode,
 };
 
 // Export public API
@@ -1663,6 +1724,7 @@ export {
   abortClaudeSDKSession,
   listClaudeSDKBackgroundWork,
   stopClaudeSDKTask,
+  setClaudeSDKPermissionMode,
   isClaudeSDKSessionActive,
   getClaudeSDKSessionStartTime,
   getActiveClaudeSDKSessions,

@@ -52,6 +52,13 @@ export interface IProviderRuntime {
    * settled, or the id was never one of its own.
    */
   stopBackgroundTask?(sessionId: string, taskId: string): Promise<boolean>;
+  /**
+   * Switches the permission mode of the session's live process, so a mode the
+   * user picks mid-turn governs the tool calls still to come in that turn.
+   * Resolves false when the session has no live process or the mode is not one
+   * the runtime knows; the next turn starts with the mode it is sent with anyway.
+   */
+  setPermissionMode?(sessionId: string, permissionMode: string): Promise<boolean>;
 }
 
 /**
