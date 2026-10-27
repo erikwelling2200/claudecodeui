@@ -129,6 +129,7 @@ function ChatInterface({
   } = useChatProviderState({
     selectedSession,
     selectedProject,
+    sendMessage,
   });
 
   const {

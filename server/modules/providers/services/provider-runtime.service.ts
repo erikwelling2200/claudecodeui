@@ -102,6 +102,12 @@ export function createProviderRuntimeService(
         Boolean(provider.runtime.acceptsLiveTurn?.(sessionId, options)));
     },
 
+    async setPermissionMode(providerName: LLMProvider, sessionId: string, permissionMode: string): Promise<boolean> {
+      // A runtime that cannot switch a live process picks the mode up on the next turn.
+      const { runtime } = dependencies.resolveProvider(providerName);
+      return Boolean(await runtime.setPermissionMode?.(sessionId, permissionMode));
+    },
+
     hasBackgroundWork(sessionId: string): boolean {
       return dependencies.listProviders().some((provider) =>
         (provider.runtime.listBackgroundWork?.() ?? []).some((entry) => entry.sessionId === sessionId));

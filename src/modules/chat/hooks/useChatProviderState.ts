@@ -77,6 +77,8 @@ type ProviderCapabilitiesApiResponse = {
 type UseChatProviderStateArgs = {
   selectedSession: ProjectSession | null;
   selectedProject: Project | null;
+  /** Chat socket send, used to hand a newly picked permission mode to the session's running turn. */
+  sendMessage?: (message: unknown) => void;
 };
 
 type ProviderModelsApiResponse = {
@@ -124,7 +126,7 @@ const getSessionSelectionKey = (provider: LLMProvider, sessionId: string): strin
   `${provider}:${sessionId}`
 );
 
-export function useChatProviderState({ selectedSession, selectedProject: _selectedProject }: UseChatProviderStateArgs) {
+export function useChatProviderState({ selectedSession, selectedProject: _selectedProject, sendMessage }: UseChatProviderStateArgs) {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
   // The provider the composer sends under. Held here rather than read from
@@ -436,8 +438,11 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     localStorage.setItem(`permissionMode-last-${provider}`, nextMode);
     if (selectedSession?.id) {
       localStorage.setItem(`permissionMode-${selectedSession.id}`, nextMode);
+      // A turn takes its mode when it is sent; this switches one already
+      // running. The server ignores it when the session has no live turn.
+      sendMessage?.({ type: 'chat.set-permission-mode', sessionId: selectedSession.id, permissionMode: nextMode });
     }
-  }, [provider, selectedSession?.id]);
+  }, [provider, selectedSession?.id, sendMessage]);
 
   const cyclePermissionMode = useCallback(() => {
     const modes = getPermissionModesForProvider(provider);
