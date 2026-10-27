@@ -60,7 +60,10 @@ function NewWorktreeForm({ projectId, unit, onCreated }: { projectId: string; un
         setJob(payload.data.job);
         if (payload.data.job.state === 'done' || payload.data.job.state === 'failed') {
           setJobId(null);
-          if (payload.data.job.state === 'done') onCreated();
+          if (payload.data.job.state === 'done') {
+            setSuffix('');
+            onCreated();
+          }
         }
       } catch (error) {
         setJob({ state: 'failed', error: error instanceof Error ? error.message : String(error) });
