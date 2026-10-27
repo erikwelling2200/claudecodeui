@@ -47,13 +47,13 @@ function findAnchorRow(container: HTMLElement): ScrollAnchor | null {
  * The caller captures the anchor while the user reads history and clears it
  * while following the bottom. `shouldHoldAnchor` is read at resize time; it
  * must return false while something else owns the scroll position (the
- * initial scroll, a search jump). `observeKey` re-attaches the observer, and
- * drops the anchor, when the transcript content may have been replaced.
+ * initial scroll, a search jump). A change of `anchorResetKey` (the session)
+ * drops the recorded anchor.
  */
 export function useTranscriptScrollAnchor(
   scrollContainerRef: RefObject<HTMLDivElement>,
   shouldHoldAnchor: () => boolean,
-  observeKey: unknown,
+  anchorResetKey: unknown,
 ) {
   const anchorRef = useRef<ScrollAnchor | null>(null);
   const shouldHoldAnchorRef = useRef(shouldHoldAnchor);
@@ -68,22 +68,41 @@ export function useTranscriptScrollAnchor(
     anchorRef.current = null;
   }, []);
 
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const observedContentRef = useRef<Element | null>(null);
+
+  // Checked after every render rather than once per session: the content
+  // element is absent while a chat is still loading and mounts later, and an
+  // observer attached only on session change then watches nothing.
   useEffect(() => {
-    anchorRef.current = null;
-    const container = scrollContainerRef.current;
-    const content = container?.querySelector('[data-transcript-content]');
-    if (!container || !content || typeof ResizeObserver === 'undefined') return undefined;
+    const content = scrollContainerRef.current?.querySelector('[data-transcript-content]') ?? null;
+    if (content === observedContentRef.current) return;
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    observedContentRef.current = content;
+    if (!content || typeof ResizeObserver === 'undefined') return;
 
     const observer = new ResizeObserver(() => {
+      const container = scrollContainerRef.current;
       const anchor = anchorRef.current;
-      if (!anchor?.row.isConnected || !shouldHoldAnchorRef.current()) return;
+      if (!container || !anchor?.row.isConnected || !shouldHoldAnchorRef.current()) return;
       const offset = anchor.row.getBoundingClientRect().top - container.getBoundingClientRect().top;
       const drift = offset - anchor.offset;
       if (Math.abs(drift) >= 0.5) container.scrollTop += drift;
     });
     observer.observe(content);
-    return () => observer.disconnect();
-  }, [scrollContainerRef, observeKey]);
+    observerRef.current = observer;
+  });
+
+  useEffect(() => () => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    observedContentRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    anchorRef.current = null;
+  }, [anchorResetKey]);
 
   return { captureAnchor, clearAnchor };
 }
