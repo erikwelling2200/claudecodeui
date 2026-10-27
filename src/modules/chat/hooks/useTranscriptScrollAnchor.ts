@@ -1,17 +1,30 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 
-/** A transcript row and how far its top edge sat below the viewport's top edge. */
+/**
+ * A transcript row and where its top edge sat within the transcript content.
+ * Measured against the content rather than the viewport, so the user's own
+ * scrolling never reads as a shift to correct.
+ */
 type ScrollAnchor = {
   row: HTMLElement;
-  offset: number;
+  contentOffset: number;
 };
 
 /**
- * The first row still (partly) inside the viewport. Rows are in document order,
+ * Rows recorded per anchor. Prepending a page re-keys the rows at the old top
+ * (a tool run that gains members becomes a new group element), so the first
+ * visible row can be replaced; the next ones survive.
+ */
+const ANCHOR_CANDIDATE_COUNT = 8;
+
+/**
+ * Rows starting inside the viewport, with the row cut off at its top edge and
+ * the transcript's first row as a last resort: either can change its own
+ * height, which moves everything below it without moving its own top. Rows are in document order,
  * so a binary search keeps this to a handful of rect reads on a long transcript.
  */
-function findAnchorRow(container: HTMLElement): ScrollAnchor | null {
+function findAnchorRows(container: HTMLElement, content: Element): ScrollAnchor[] {
   const rows = container.querySelectorAll<HTMLElement>('[data-transcript-row]');
   const viewportTop = container.getBoundingClientRect().top;
   let low = 0;
@@ -26,8 +39,15 @@ function findAnchorRow(container: HTMLElement): ScrollAnchor | null {
       low = middle + 1;
     }
   }
-  if (found === -1) return null;
-  return { row: rows[found], offset: rows[found].getBoundingClientRect().top - viewportTop };
+  if (found === -1) return [];
+  const candidates = Array.from(rows).slice(found, found + ANCHOR_CANDIDATE_COUNT + 1);
+  // The transcript's first row is re-rendered when an older page lands above
+  // it (it drops its sender header next to a same-sender predecessor), so it
+  // changes height exactly when anchoring matters most.
+  const unstable = (row: HTMLElement) => row === rows[0] || row.getBoundingClientRect().top < viewportTop;
+  candidates.sort((a, b) => Number(unstable(a)) - Number(unstable(b)));
+  const contentTop = content.getBoundingClientRect().top;
+  return candidates.map((row) => ({ row, contentOffset: row.getBoundingClientRect().top - contentTop }));
 }
 
 /**
@@ -38,13 +58,14 @@ function findAnchorRow(container: HTMLElement): ScrollAnchor | null {
  *
  * Browser scroll anchoring covers some of this, but not at scrollTop 0 (which
  * is exactly where an older page loads) and not in Safari, so the transcript
- * does its own: the anchor row is recorded on every scroll, and a
- * ResizeObserver on the transcript content puts it back before the frame
- * paints. The correction is measured, so it is a no-op whenever the browser
- * already anchored correctly.
+ * does its own: the anchor rows are recorded on every scroll, and a
+ * ResizeObserver on the transcript content puts the first surviving one back
+ * at the same place within the content before the frame paints. The pane sets `overflow-anchor: none`, because the
+ * browser picks its own anchor node and the two corrections then add up.
  *
- * The caller captures the anchor while the user reads history and clears it
- * while following the bottom. `shouldHoldAnchor` is read at resize time; it
+ * The caller captures the anchor on every scroll while the user reads history
+ * and clears it while following the bottom. `shouldHoldAnchor` is read at each
+ * correction; it
  * must return false while something else owns the scroll position (the
  * initial scroll, a search jump). A change of `anchorResetKey` (the session)
  * drops the recorded anchor.
@@ -54,17 +75,35 @@ export function useTranscriptScrollAnchor(
   shouldHoldAnchor: () => boolean,
   anchorResetKey: unknown,
 ) {
-  const anchorRef = useRef<ScrollAnchor | null>(null);
+  const anchorsRef = useRef<ScrollAnchor[]>([]);
   const shouldHoldAnchorRef = useRef(shouldHoldAnchor);
   shouldHoldAnchorRef.current = shouldHoldAnchor;
 
+  // Offsets within the content do not change when the user scrolls, so any
+  // difference from the recorded one is a content shift not yet corrected.
+  // Checked here as well as on resize: a row mounting in the same frame as a
+  // scroll event would otherwise be re-recorded as the new normal.
+  const settleAnchor = useCallback((container: HTMLElement, content: Element) => {
+    const anchor = anchorsRef.current.find((candidate) => candidate.row.isConnected);
+    if (anchor && shouldHoldAnchorRef.current()) {
+      const shift = anchor.row.getBoundingClientRect().top - content.getBoundingClientRect().top - anchor.contentOffset;
+      if (Math.abs(shift) >= 0.5) container.scrollTop += shift;
+    }
+    anchorsRef.current = findAnchorRows(container, content);
+  }, []);
+
   const captureAnchor = useCallback(() => {
     const container = scrollContainerRef.current;
-    anchorRef.current = container ? findAnchorRow(container) : null;
-  }, [scrollContainerRef]);
+    const content = container?.querySelector('[data-transcript-content]');
+    if (!container || !content) {
+      anchorsRef.current = [];
+      return;
+    }
+    settleAnchor(container, content);
+  }, [scrollContainerRef, settleAnchor]);
 
   const clearAnchor = useCallback(() => {
-    anchorRef.current = null;
+    anchorsRef.current = [];
   }, []);
 
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -83,11 +122,7 @@ export function useTranscriptScrollAnchor(
 
     const observer = new ResizeObserver(() => {
       const container = scrollContainerRef.current;
-      const anchor = anchorRef.current;
-      if (!container || !anchor?.row.isConnected || !shouldHoldAnchorRef.current()) return;
-      const offset = anchor.row.getBoundingClientRect().top - container.getBoundingClientRect().top;
-      const drift = offset - anchor.offset;
-      if (Math.abs(drift) >= 0.5) container.scrollTop += drift;
+      if (container && anchorsRef.current.length > 0) settleAnchor(container, content);
     });
     observer.observe(content);
     observerRef.current = observer;
@@ -100,7 +135,7 @@ export function useTranscriptScrollAnchor(
   }, []);
 
   useEffect(() => {
-    anchorRef.current = null;
+    anchorsRef.current = [];
   }, [anchorResetKey]);
 
   return { captureAnchor, clearAnchor };

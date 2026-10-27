@@ -17,8 +17,8 @@ import type { LazyRowObserver } from '@/modules/chat/hooks/useLazyRowObserver';
  *
  * The placeholder reuses the row's last measured height, so scrolling back
  * through previously seen content changes no scroll geometry at all; rows
- * never yet measured use an estimate and rely on browser scroll anchoring
- * while they settle.
+ * never yet measured use an estimate, and the transcript's scroll anchor
+ * (useTranscriptScrollAnchor) absorbs the shift while they settle.
  */
 
 /** Placeholder height for rows that have never been measured. */
