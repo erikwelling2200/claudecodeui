@@ -57,7 +57,7 @@ test('a path under the system temp directory resolves as readable', async () => 
   }
 });
 
-test('a background agent output link resolves to its transcript under the Claude projects directory', async () => {
+test('a background agent output link resolves to its transcript under the Claude projects directory', async (t) => {
   const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'read-only-root-'));
 
   try {
@@ -71,7 +71,18 @@ test('a background agent output link resolves to its transcript under the Claude
     const tasksDirectory = path.join(temporaryDirectory, 'tasks');
     await mkdir(tasksDirectory);
     const outputLink = path.join(tasksDirectory, 'task-1.output');
-    await symlink(transcriptPath, outputLink);
+    try {
+      await symlink(transcriptPath, outputLink);
+    } catch (error) {
+      // A file link cannot be a junction, and Windows refuses file symlinks
+      // without admin rights or Developer Mode. Skip rather than pass: what is
+      // under test is following exactly this kind of link.
+      if ((error as NodeJS.ErrnoException).code === 'EPERM' && process.platform === 'win32') {
+        t.skip('creating a file symlink needs admin rights or Developer Mode on Windows');
+        return;
+      }
+      throw error;
+    }
 
     assert.equal(await resolveReadOnlyRootPath(outputLink), transcriptPath);
     assert.equal(await resolveReadOnlyRootPath(transcriptPath), transcriptPath);
@@ -106,7 +117,9 @@ test('a symlink planted in the temp directory cannot read outside every root', a
   try {
     await writeFile(path.join(outsideDirectory, 'secret.txt'), 'secret', 'utf8');
     const escapeLink = path.join(temporaryDirectory, 'escape');
-    await symlink(outsideDirectory, escapeLink);
+    // A junction is a directory link Windows creates without privileges; the
+    // type is ignored elsewhere, where this is a plain symlink.
+    await symlink(outsideDirectory, escapeLink, 'junction');
 
     // The name is under a read-only root but the file is not, so resolving the
     // link before comparing is what keeps this closed.

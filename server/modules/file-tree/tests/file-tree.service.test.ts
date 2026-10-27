@@ -518,7 +518,9 @@ test('reading through a symlink out of the temp directory is still refused', asy
   try {
     assert.equal(await resolveReadOnlyRootPath(outsideDirectory), null);
     await fsPromises.writeFile(path.join(outsideDirectory, 'secret.txt'), 'secret', 'utf8');
-    await fsPromises.symlink(outsideDirectory, path.join(temporaryDirectory, 'escape'));
+    // A junction is a directory link Windows creates without privileges; the
+    // type is ignored elsewhere, where this is a plain symlink.
+    await fsPromises.symlink(outsideDirectory, path.join(temporaryDirectory, 'escape'), 'junction');
 
     const service = createRealFileSystemService(projectRoot);
     await assert.rejects(
@@ -546,7 +548,8 @@ test('a file in another folder of the workspace can be read, but never written t
     const reportPath = path.join(siblingDirectory, 'report.md');
     await fsPromises.writeFile(reportPath, 'what the run found', 'utf8');
     await fsPromises.writeFile(path.join(outsideDirectory, 'secret.txt'), 'secret', 'utf8');
-    await fsPromises.symlink(outsideDirectory, path.join(workspaceRoot, 'escape'));
+    // A junction, so Windows needs no privileges for it (see above).
+    await fsPromises.symlink(outsideDirectory, path.join(workspaceRoot, 'escape'), 'junction');
 
     const service = createRealFileSystemService(projectRoot, workspaceRoot);
 

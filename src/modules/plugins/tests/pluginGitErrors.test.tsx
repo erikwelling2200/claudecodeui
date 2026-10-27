@@ -60,7 +60,13 @@ function renderPluginSettings() {
   );
 }
 
-describe('Settings > Plugins shows why a git install or update failed', () => {
+// Each test mounts the whole plugin settings tab and finds its controls by
+// role, which jsdom answers slowly (a getComputedStyle walk per candidate):
+// well under a second alone, past vitest's 5 s default when the whole suite
+// shares the CPU.
+const SETTINGS_TAB_TIMEOUT = { timeout: 20_000 };
+
+describe('Settings > Plugins shows why a git install or update failed', SETTINGS_TAB_TIMEOUT, () => {
   beforeEach(() => {
     localStorage.clear();
   });
@@ -101,7 +107,7 @@ describe('Settings > Plugins shows why a git install or update failed', () => {
   });
 });
 
-describe('PluginsContext reads the structured error envelope of every plugin call', () => {
+describe('PluginsContext reads the structured error envelope of every plugin call', SETTINGS_TAB_TIMEOUT, () => {
   beforeEach(() => {
     localStorage.clear();
   });

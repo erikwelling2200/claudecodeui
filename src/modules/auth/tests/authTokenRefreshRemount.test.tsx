@@ -141,6 +141,11 @@ test('tokens refreshed while the workspace is open do not remount it', async () 
   renderApp();
   await screen.findByText('workspace');
   assert.equal(workspaceMounts, 1);
+  // The stored token is past half of its lifetime, so signing in schedules one
+  // proactive refresh right away. Whether its request lands before or after the
+  // workspace text appears is a race between two timers, so wait for it and
+  // count it as part of the bootstrap rather than as a reaction to a rotation.
+  await waitFor(() => assert.ok(requestedPaths.includes('/api/auth/refresh')));
   const bootstrapRequests = requestedPaths.length;
 
   // In-flight requests that still carried the aged token each come back with

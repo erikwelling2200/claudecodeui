@@ -194,7 +194,7 @@ test('a non-streaming API run answers with the app session id and is off the lis
 
 test('an API run continues a session the caller names by either id, and refuses one that does not exist', async () => {
   await withIsolatedDatabase(async () => {
-    sessionsDb.createAppSession('app-existing', 'claude', '/home/test/project', 'Existing');
+    sessionsDb.createAppSession('app-existing', 'claude', path.resolve('/home/test/project'), 'Existing');
     sessionsDb.assignProviderSessionId('app-existing', 'native-existing');
     const runtime = createHeldRuntime();
     runtime.release();
@@ -242,7 +242,7 @@ test('a sessionId that is not a string is refused, not bound to a query', async 
 
 test('a continued session runs under its own provider and project, as a chat send does', async () => {
   await withIsolatedDatabase(async () => {
-    sessionsDb.createAppSession('app-codex', 'codex', '/home/test/project', 'Codex one');
+    sessionsDb.createAppSession('app-codex', 'codex', path.resolve('/home/test/project'), 'Codex one');
     const claudeCalls: unknown[] = [];
     const codexCalls: unknown[] = [];
     const dependencies = createDependencies(async (_command, options, writer) => {

@@ -55,6 +55,11 @@ const FIXTURES: Record<string, string> = {
   'a footnote definition': 'Text[^1].\n\n[^1]: the note\n\nEnd.\n',
 };
 
+// Each fixture mounts the full <Markdown> twice for every prefix (up to ~60),
+// up to 2 s alone and past vitest's 5 s default when the whole suite shares
+// the CPU.
+const PREFIX_SWEEP_TIMEOUT_MS = 20_000;
+
 for (const [name, content] of Object.entries(FIXTURES)) {
   test(`the split render matches the unsplit render: ${name}`, () => {
     // Every prefix, because the split point moves as the reply streams in and a
@@ -74,7 +79,7 @@ for (const [name, content] of Object.entries(FIXTURES)) {
       streamed.unmount();
       whole.unmount();
     }
-  });
+  }, PREFIX_SWEEP_TIMEOUT_MS);
 }
 
 const renderStreaming = (content: string) =>

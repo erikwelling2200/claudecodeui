@@ -416,7 +416,11 @@ test('what the user types while a follow-up is being queued stays in the compose
   await act(async () => { view.result.current.setInput('follow-up A'); });
   const pending = startSubmit(view);
   await waitFor(() => assert.equal(appendRequestCount, 1));
-  assert.equal(view.result.current.input, '', 'the composer empties when the message is taken');
+  // The append is still held open, so this is still before the server
+  // answers. The submit runs outside act, though, so its setInput('') is only
+  // a scheduled render when the request goes out; under load the check above
+  // can win that race. Wait for the render rather than reading it early.
+  await waitFor(() => assert.equal(view.result.current.input, '', 'the composer empties when the message is taken'));
 
   // The next follow-up, typed before the server has answered.
   await act(async () => { view.result.current.setInput('the next one, typed meanwhile'); });

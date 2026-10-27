@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, test, vi } from 'vitest';
 
 import '@/modules/i18n';
@@ -115,21 +115,32 @@ beforeEach(() => {
   resetUserPreferences();
 });
 
+// The panel tests run a dozen role and label queries, each walking the panel
+// through jsdom's slow getComputedStyle: about a second alone, and past
+// vitest's 5 s default when the whole suite shares the CPU.
+const PANEL_TEST_TIMEOUT_MS = 20_000;
+
 test('the model library declares effort levels for a new custom model', async () => {
   const { actions, created } = createActions();
   render(<ModelLibraryPanel initialProvider="claude" providerModelCatalog={CATALOG} actions={actions} />);
 
+  // Every role query computes accessibility for each candidate through jsdom's
+  // slow getComputedStyle, so the level buttons are looked up inside their own
+  // fieldset rather than across the whole panel, which is what pushed this
+  // test past the default timeout when the suite runs in parallel.
+  const levels = within(screen.getByText('Reasoning levels').closest('fieldset') as HTMLElement);
   // Every level the catalog allows is offered, in the server's order.
   const levelButtons = ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'].map((level) => (
-    screen.getByRole('button', { name: level, pressed: false })
+    levels.getByRole('button', { name: level, pressed: false })
   ));
   assert.equal(levelButtons.length, 6);
+  assert.deepEqual(levels.getAllByRole('button').map((button) => button.textContent), ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']);
 
   fireEvent.change(screen.getByLabelText('Model name'), { target: { value: 'Gateway Claude' } });
   fireEvent.change(screen.getByLabelText('Model ID'), { target: { value: 'gateway-claude' } });
   // Ticked out of order on purpose: the payload follows the display order.
-  fireEvent.click(screen.getByRole('button', { name: 'max' }));
-  fireEvent.click(screen.getByRole('button', { name: 'low' }));
+  fireEvent.click(levels.getByRole('button', { name: 'max' }));
+  fireEvent.click(levels.getByRole('button', { name: 'low' }));
   fireEvent.click(screen.getByRole('button', { name: 'Add model' }));
 
   await waitFor(() => assert.equal(created.length, 1));
@@ -141,7 +152,7 @@ test('the model library declares effort levels for a new custom model', async ()
       effort: { values: ['low', 'max'] },
     },
   });
-});
+}, PANEL_TEST_TIMEOUT_MS);
 
 test('editing a custom model keeps its default level and can clear its levels', async () => {
   const { actions, updated } = createActions();
@@ -163,7 +174,7 @@ test('editing a custom model keeps its default level and can clear its levels', 
   fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => assert.equal(updated.length, 2));
   assert.equal(updated[1]?.input.effort, null);
-});
+}, PANEL_TEST_TIMEOUT_MS);
 
 test('OpenCode offers its effort levels even when no visible built-in model declares any', async () => {
   const { actions, created } = createActions();

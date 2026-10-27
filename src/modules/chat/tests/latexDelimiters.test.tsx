@@ -129,12 +129,17 @@ const STREAMING_FIXTURES: Array<[string, string]> = [
   ['inline latex after a paragraph', 'Intro.\n\n' + String.raw`Then \(x^2\) inline` + '\n\nEnd'],
 ];
 
+// Each fixture renders every prefix twice through remark and KaTeX, which is
+// well under a second alone but passes vitest's 5 s default when the whole
+// suite shares the CPU.
+const PREFIX_SWEEP_TIMEOUT_MS = 20_000;
+
 for (const [label, content] of STREAMING_FIXTURES) {
   test(`every streaming prefix renders identically: ${label}`, () => {
     for (let end = 1; end <= content.length; end += 1) {
       assertRendersIdentically(content.slice(0, end), `${label} @${end}`);
     }
-  });
+  }, PREFIX_SWEEP_TIMEOUT_MS);
 }
 
 test("the reporter's sample renders the same split as whole", () => {

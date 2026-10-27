@@ -70,15 +70,22 @@ const withEnv = async (
 
 const withTempHome = async (fn: (homeDir: string) => Promise<void>) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'claude-auth-test-'));
-  const originalHome = process.env.HOME;
-  process.env.HOME = homeDir;
+  // os.homedir() reads HOME on POSIX but USERPROFILE on Windows, so both must
+  // point at the temp dir or the test reads the real user's ~/.claude.
+  const HOME_KEYS = ['HOME', 'USERPROFILE'] as const;
+  const original = HOME_KEYS.map((key) => [key, process.env[key]] as const);
+  for (const key of HOME_KEYS) {
+    process.env[key] = homeDir;
+  }
   try {
     await fn(homeDir);
   } finally {
-    if (originalHome === undefined) {
-      delete process.env.HOME;
-    } else {
-      process.env.HOME = originalHome;
+    for (const [key, value] of original) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
     await rm(homeDir, { recursive: true, force: true });
   }

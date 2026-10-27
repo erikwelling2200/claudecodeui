@@ -35,14 +35,22 @@ const backgroundActivity = (tasks: BackgroundTaskSummary[]): SessionActivity => 
 });
 
 test('a background-only session names its workflow, counts from its start and offers no Stop', () => {
-  const onAbort = vi.fn();
-  const { container } = render(<ActivityIndicator activity={backgroundActivity([task()])} onAbort={onAbort} />);
+  // Freeze the clock (Date only; the pill's interval stays real), so the
+  // elapsed label cannot tick past 1m 5s between building the task and the
+  // first render when the suite runs under load.
+  vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+  try {
+    const onAbort = vi.fn();
+    const { container } = render(<ActivityIndicator activity={backgroundActivity([task()])} onAbort={onAbort} />);
 
-  assert.match(container.textContent ?? '', /Background work…/);
-  assert.match(container.textContent ?? '', /Workflow frontend-architecture-audit/);
-  assert.match(container.textContent ?? '', /1m 5s/, 'elapsed since the task started, not since the pill mounted');
-  assert.equal(screen.queryByRole('button', { name: 'Stop' }), null);
-  assert.ok(container.querySelector('.bg-purple-500'), 'the dot is the cards\' purple, not the primary colour');
+    assert.match(container.textContent ?? '', /Background work…/);
+    assert.match(container.textContent ?? '', /Workflow frontend-architecture-audit/);
+    assert.match(container.textContent ?? '', /1m 5s/, 'elapsed since the task started, not since the pill mounted');
+    assert.equal(screen.queryByRole('button', { name: 'Stop' }), null);
+    assert.ok(container.querySelector('.bg-purple-500'), 'the dot is the cards\' purple, not the primary colour');
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('an agent and a command are named by what they were asked to do; several tasks by their count', () => {

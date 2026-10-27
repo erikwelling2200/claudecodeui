@@ -93,9 +93,13 @@ test('rendering many times does not inject the stylesheet again', () => {
   assert.equal(document.querySelectorAll(STYLE_ELEMENT_SELECTOR).length, 1);
 });
 
+// vi.resetModules() makes the import below evaluate Markdown's whole graph
+// again (react-markdown, remark/rehype, KaTeX, the Prism themes, the code
+// editor module), which is the point of the test and takes most of a second
+// alone, past vitest's 5 s default when the whole suite shares the CPU.
 test('re-evaluating the module reuses the stylesheet already in the document', async () => {
   vi.resetModules();
   await import('@/modules/chat/transcript/Markdown');
 
   assert.equal(document.querySelectorAll(STYLE_ELEMENT_SELECTOR).length, 1);
-});
+}, 20_000);

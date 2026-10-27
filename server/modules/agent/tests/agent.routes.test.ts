@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import * as nodeCrypto from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
 import type { AddressInfo } from 'node:net';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
@@ -400,7 +401,7 @@ test('Agent route reads no model catalog for a continued session of an unregiste
         session_id: 'legacy-session',
         provider: 'gemini',
         provider_session_id: null,
-        project_path: '/home/test/project',
+        project_path: path.resolve('/home/test/project'),
       }),
       getSessionByProviderSessionId: () => null,
       createAppSession: () => { throw new Error('a continued session must not create a row'); },

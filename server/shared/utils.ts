@@ -206,14 +206,21 @@ export const FORBIDDEN_WORKSPACE_PATHS = [
 ];
 
 /**
+ * The system temp directories: readable through `READ_ONLY_ROOTS`, never usable
+ * as a workspace through `validateWorkspacePath`. `/tmp` is listed literally as
+ * well as via `os.tmpdir()` because the two differ on macOS (`/var/folders`)
+ * and on Windows (`%LOCALAPPDATA%\Temp`).
+ */
+const TEMPORARY_DIRECTORY_ROOTS = [...new Set(['/tmp', os.tmpdir()])];
+
+/**
  * Roots the file browser and viewer may read from even though they are outside
  * every project.
  *
  * Claude writes a background agent's output file and a background command's log
  * under the system temp directory, and a transcript quotes those paths
  * verbatim, so the file browser and the file viewer have to be able to follow
- * them. `/tmp` is listed literally as well as via `os.tmpdir()` because the two
- * differ on macOS, where the temp directory is under `/var/folders`.
+ * them; `TEMPORARY_DIRECTORY_ROOTS` covers every spelling of that directory.
  *
  * A background agent's `.output` file is only a symlink to the agent's
  * transcript, `~/.claude/projects/<project>/<session>/subagents/agent-<id>.jsonl`.
@@ -225,13 +232,12 @@ export const FORBIDDEN_WORKSPACE_PATHS = [
  * Being a read-only root grants reads only: the file-tree write paths resolve
  * against the project root alone, so nothing under these can be changed
  * through the file API. Whether one may become a workspace is decided
- * separately by `validateWorkspacePath` — the temp directories are on
- * `FORBIDDEN_WORKSPACE_PATHS`; the Claude projects directory is not, it is
- * simply wherever `WORKSPACES_ROOT` puts it.
+ * separately by `validateWorkspacePath` — it refuses the temp directories
+ * outright; the Claude projects directory is not refused, it is simply
+ * wherever `WORKSPACES_ROOT` puts it.
  */
 const READ_ONLY_ROOTS = [...new Set([
-  '/tmp',
-  os.tmpdir(),
+  ...TEMPORARY_DIRECTORY_ROOTS,
   path.join(os.homedir(), '.claude', 'projects'),
 ])];
 
@@ -341,6 +347,32 @@ export function normalizeProjectPath(inputPath: string): string {
 }
 
 /**
+ * Reports whether any of `candidatePaths` (already normalized) is `root` or
+ * lies under it. The root is compared both as written and resolved through
+ * `realpath`, so a symlinked or 8.3 short-name spelling of it still matches; a
+ * root that does not exist on this machine (`/tmp` on Windows) is compared as
+ * written only. On Windows the comparison ignores case, as the filesystem does.
+ */
+async function isPathAtOrUnderRoot(candidatePaths: string[], root: string): Promise<boolean> {
+  const rootForms = [normalizeProjectPath(root)];
+  try {
+    rootForms.push(normalizeProjectPath(await realpath(root)));
+  } catch {
+    // Not present here; the written form is still checked.
+  }
+
+  const foldCase = (value: string) => (process.platform === 'win32' ? value.toLowerCase() : value);
+  return candidatePaths.some((candidatePath) => {
+    const candidate = foldCase(candidatePath);
+    return rootForms.some((rootForm) => {
+      const folded = foldCase(rootForm);
+      const prefix = folded.endsWith(path.sep) ? folded : `${folded}${path.sep}`;
+      return candidate === folded || candidate.startsWith(prefix);
+    });
+  });
+}
+
+/**
  * Validates that a user-supplied workspace path is safe to use.
  *
  * Call this before any filesystem mutation that creates or registers projects.
@@ -407,6 +439,20 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
         if (parentFileError.code !== 'ENOENT') {
           throw parentFileError;
         }
+      }
+    }
+
+    // `/tmp` is caught by the list above, but `os.tmpdir()` is not on it and on
+    // Windows it lives under the user's home — the default `WORKSPACES_ROOT` —
+    // so the temp directory has to be refused explicitly. Both the requested
+    // and the resolved form are checked, because a path whose parent does not
+    // exist yet is not resolved and may still spell the temp root differently.
+    for (const temporaryRoot of TEMPORARY_DIRECTORY_ROOTS) {
+      if (await isPathAtOrUnderRoot([normalizedPath, resolvedPath], temporaryRoot)) {
+        return {
+          valid: false,
+          error: `Cannot create workspace in the system temp directory: ${temporaryRoot}`,
+        };
       }
     }
 
