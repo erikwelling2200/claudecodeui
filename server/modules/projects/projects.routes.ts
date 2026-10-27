@@ -1,6 +1,10 @@
 import express from 'express';
 
-import { createProject, updateProjectDisplayName } from '@/modules/projects/services/project-management.service.js';
+import {
+  createProject,
+  updateProjectDisplayName,
+  updateProjectSettings,
+} from '@/modules/projects/services/project-management.service.js';
 import { createProjectCloneRouter } from '@/modules/projects/project-clone.routes.js';
 import { createPendingCloneRequests } from '@/modules/projects/services/project-clone-request.service.js';
 import { startCloneProject } from '@/modules/projects/services/project-clone.service.js';
@@ -39,6 +43,20 @@ function readOptionalNumericQueryValue(value: unknown): number | null {
 
   const parsedValue = Number.parseInt(rawValue, 10);
   return Number.isNaN(parsedValue) ? null : parsedValue;
+}
+
+/** `undefined` when absent; anything but an array of strings is a client error. */
+function readOptionalFolderList(value: unknown): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
+    throw new AppError('additionalFolders must be an array of folder paths', {
+      code: 'INVALID_ADDITIONAL_FOLDERS',
+      statusCode: 400,
+    });
+  }
+  return value;
 }
 
 function parseNonNegativeIntQuery(value: unknown, name: string, fallback: number): number {
@@ -119,6 +137,7 @@ router.post(
     const projectCreationResult = await createProject({
       projectPath,
       customName,
+      additionalFolders: readOptionalFolderList(requestBody.additionalFolders),
     });
 
     res.json({
@@ -159,6 +178,34 @@ router.get(
     const projectId = typeof req.params.projectId === 'string' ? req.params.projectId : '';
     const taskMasterDetails = await getProjectTaskMaster(projectId);
     res.json(taskMasterDetails);
+  }),
+);
+
+router.patch(
+  '/:projectId',
+  asyncHandler(async (req, res) => {
+    const projectId = typeof req.params.projectId === 'string' ? req.params.projectId : '';
+    const requestBody = (req.body ?? {}) as Record<string, unknown>;
+    if (requestBody.displayName !== undefined && typeof requestBody.displayName !== 'string') {
+      throw new AppError('displayName must be a string', {
+        code: 'INVALID_PROJECT_SETTINGS',
+        statusCode: 400,
+      });
+    }
+    const primaryFolder = requestBody.fullPath ?? requestBody.path;
+    if (primaryFolder !== undefined && typeof primaryFolder !== 'string') {
+      throw new AppError('path must be a string', {
+        code: 'INVALID_PROJECT_SETTINGS',
+        statusCode: 400,
+      });
+    }
+
+    const project = await updateProjectSettings(projectId, {
+      displayName: requestBody.displayName,
+      additionalFolders: readOptionalFolderList(requestBody.additionalFolders),
+      primaryFolder,
+    });
+    res.json({ success: true, project });
   }),
 );
 

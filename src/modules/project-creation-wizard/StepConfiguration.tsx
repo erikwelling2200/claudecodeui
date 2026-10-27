@@ -1,13 +1,17 @@
 import { useTranslation } from 'react-i18next';
 
 import { Input } from '@/shared/ui';
-import { shouldShowGithubAuthentication } from '@/modules/project-creation-wizard/utils/pathUtils';
+import { getFolderName } from '@/shared/utils';
+import { isCloneWorkflow, shouldShowGithubAuthentication } from '@/modules/project-creation-wizard/utils/pathUtils';
 import type { GithubTokenCredential, TokenMode } from '@/shared/types';
 import GithubAuthenticationCard from '@/modules/project-creation-wizard/GithubAuthenticationCard';
+import ProjectFolderListField from '@/modules/project-creation-wizard/ProjectFolderListField';
 import WorkspacePathField from '@/modules/project-creation-wizard/WorkspacePathField';
 
 type StepConfigurationProps = {
   workspacePath: string;
+  projectName: string;
+  additionalFolders: string[];
   githubUrl: string;
   tokenMode: TokenMode;
   selectedGithubToken: string;
@@ -17,6 +21,8 @@ type StepConfigurationProps = {
   tokenLoadError: string | null;
   isCreating: boolean;
   onWorkspacePathChange: (workspacePath: string) => void;
+  onProjectNameChange: (projectName: string) => void;
+  onAdditionalFoldersChange: (additionalFolders: string[]) => void;
   onGithubUrlChange: (githubUrl: string) => void;
   onTokenModeChange: (tokenMode: TokenMode) => void;
   onSelectedGithubTokenChange: (tokenId: string) => void;
@@ -24,9 +30,11 @@ type StepConfigurationProps = {
   onAdvanceToConfirm: () => void;
 };
 
-/** Rendered by ProjectCreationWizard as step 1, collecting the workspace path, clone URL and GitHub authentication. */
+/** Rendered by ProjectCreationWizard as step 1, collecting the workspace path, clone URL, GitHub authentication and, unless cloning, the project name and extra folders. */
 export default function StepConfiguration({
   workspacePath,
+  projectName,
+  additionalFolders,
   githubUrl,
   tokenMode,
   selectedGithubToken,
@@ -36,6 +44,8 @@ export default function StepConfiguration({
   tokenLoadError,
   isCreating,
   onWorkspacePathChange,
+  onProjectNameChange,
+  onAdditionalFoldersChange,
   onGithubUrlChange,
   onTokenModeChange,
   onSelectedGithubTokenChange,
@@ -44,6 +54,8 @@ export default function StepConfiguration({
 }: StepConfigurationProps) {
   const { t } = useTranslation();
   const showGithubAuth = shouldShowGithubAuthentication(githubUrl);
+  // A clone creates a single-folder project named after the repository folder.
+  const showProjectDetails = !isCloneWorkflow(githubUrl);
 
   return (
     <div className="space-y-4">
@@ -93,6 +105,34 @@ export default function StepConfiguration({
           onSelectedGithubTokenChange={onSelectedGithubTokenChange}
           onNewGithubTokenChange={onNewGithubTokenChange}
         />
+      )}
+
+      {showProjectDetails && (
+        <>
+          <div>
+            <label
+              htmlFor="project-wizard-name"
+              className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+            >
+              {t('projectWizard.name.label')}
+            </label>
+            <Input
+              id="project-wizard-name"
+              type="text"
+              value={projectName}
+              onChange={(event) => onProjectNameChange(event.target.value)}
+              placeholder={workspacePath.trim() ? getFolderName(workspacePath) : ''}
+              className="w-full"
+              disabled={isCreating}
+            />
+          </div>
+
+          <ProjectFolderListField
+            folders={additionalFolders}
+            disabled={isCreating}
+            onChange={onAdditionalFoldersChange}
+          />
+        </>
       )}
     </div>
   );

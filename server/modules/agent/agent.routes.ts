@@ -27,7 +27,11 @@ type AgentRouterDependencies = {
   users: { getFirstUser(): unknown };
   apiKeys: { validateApiKey(apiKey: string): unknown };
   githubTokens: { getActiveGithubToken(userId: number): string | null };
-  projects: { createProjectPath(projectPath: string, customName: string | null): unknown };
+  projects: {
+    createProjectPath(projectPath: string, customName: string | null): unknown;
+    /** The project's extra folders that still exist, for the run to work in besides its cwd. */
+    listRunAdditionalDirectories(projectPath: string): Promise<string[]>;
+  };
   models: typeof import('../providers/index.js').providerModelsService;
   /** The session gateway: an API run gets an app session row like a chat send, so the UI can list, open and subscribe to it. */
   sessions: {
@@ -1037,6 +1041,8 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
         ? providerModels.DEFAULT
         : undefined;
 
+      const additionalDirectories = await projectsDb.listRunAdditionalDirectories(finalProjectPath);
+
       // Start the appropriate session
       if (provider === 'claude') {
         console.log('🤖 Starting Claude SDK session');
@@ -1044,6 +1050,7 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
         await queryClaudeSDK(message.trim(), {
           projectPath: finalProjectPath,
           cwd: finalProjectPath,
+          additionalDirectories,
           sessionId: appSessionId,
           model: model || providerModels?.DEFAULT,
           effort,
@@ -1066,6 +1073,7 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
         await queryCodex(message.trim(), {
           projectPath: finalProjectPath,
           cwd: finalProjectPath,
+          additionalDirectories,
           sessionId: appSessionId,
           model: model || providerModels?.DEFAULT,
           effort,

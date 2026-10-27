@@ -652,7 +652,8 @@ export type ProviderRuntimeContext = {
    * and background-work paths can be driven without a CLI process.
    */
   createQuery?: (input: { prompt: AsyncIterable<unknown>; options: AnyRecord }) => AsyncIterable<unknown> & {
-    interrupt(): Promise<void>;
+    // Newer SDKs resolve interrupt() with a control response; callers only await it.
+    interrupt(): Promise<unknown>;
     stopTask?(taskId: string): Promise<void>;
   };
 };
@@ -1043,6 +1044,21 @@ export type WorkspacePathValidationResult = {
   error?: string;
 };
 
+/**
+ * Filesystem and git capabilities the project-folder validator needs.
+ *
+ * Production wires `validateWorkspacePath`, a directory stat and
+ * `git -C <outer> check-ignore -q <inner>`; the Projects create/update flow and
+ * the one-time folder import share the defaults, and tests inject fakes so no
+ * real directory or repository is needed.
+ */
+export type ProjectFolderValidationDependencies = {
+  validatePath(folderPath: string): Promise<WorkspacePathValidationResult>;
+  isDirectory(folderPath: string): Promise<boolean>;
+  /** Whether git in `outerFolder` ignores `innerFolder`; `false` when `outerFolder` is not a repository. */
+  isIgnoredByGit(outerFolder: string, innerFolder: string): Promise<boolean>;
+};
+
 // ---------------------------
 //----------------- GIT COMMAND EXECUTION AND WORKTREE MANAGEMENT ------------
 /**
@@ -1331,6 +1347,15 @@ export type FileTreeNode = {
   permissions: string;
   permissionsRwx: string;
   isSymlink?: boolean;
+  /**
+   * Set on the top-level node of each folder when a project has several
+   * folders; such a node is never renamed or deleted through the API.
+   */
+  isProjectRoot?: true;
+  /** A project folder that is missing on disk; its `children` are empty. */
+  isUnavailable?: true;
+  /** A project folder over the entry limit by itself; listed with empty `children`. */
+  isTooLarge?: true;
   children?: FileTreeNode[];
 };
 
@@ -1389,10 +1414,11 @@ export type FileTreeFileSystem = {
  * Project lookup boundary consumed by File Tree workflows.
  *
  * File Tree services resolve DB-assigned project ids through this contract and
- * never import the Database module or its repositories directly.
+ * never import the Database module or its repositories directly. The result is
+ * `[primary, ...extra folders]`, or `null` when the project does not exist.
  */
 export type FileTreeProjectGateway = {
-  getProjectPathById(projectId: string): string | null | Promise<string | null>;
+  getProjectFolderPathsById(projectId: string): string[] | null | Promise<string[] | null>;
 };
 
 /**

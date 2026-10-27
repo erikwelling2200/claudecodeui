@@ -15,6 +15,19 @@ function normalizeProjectDisplayName(projectPath: string, customProjectName: str
     return directoryName || projectPath;
 }
 
+/** Must run inside a transaction: the delete and the inserts belong together. */
+function writeAdditionalFolderPaths(projectId: string, folderPaths: string[]): void {
+    const db = getConnection();
+    db.prepare('DELETE FROM project_folders WHERE project_id = ?').run(projectId);
+    const insert = db.prepare(`
+        INSERT INTO project_folders (project_id, folder_path, sort_order)
+        VALUES (?, ?, ?)
+    `);
+    folderPaths.forEach((folderPath, index) => {
+        insert.run(projectId, normalizeProjectPath(folderPath), index);
+    });
+}
+
 export const projectsDb = {
     createProjectPath(projectPath: string, customProjectName: string | null = null): CreateProjectPathResult {
         const db = getConnection();
@@ -175,6 +188,95 @@ export const projectsDb = {
             SET isArchived = ?
             WHERE project_id = ?
         `).run(isArchived ? 1 : 0, projectId);
+    },
+
+    /** Extra folders of one project in display order; `[]` for a single-folder project. */
+    getAdditionalFolderPaths(projectId: string): string[] {
+        const db = getConnection();
+        const rows = db.prepare(`
+            SELECT folder_path
+            FROM project_folders
+            WHERE project_id = ?
+            ORDER BY sort_order, rowid
+        `).all(projectId) as Array<{ folder_path: string }>;
+
+        return rows.map((row) => row.folder_path);
+    },
+
+    /**
+     * Extra folders of the project whose primary folder is `projectPath`.
+     * Chat dispatch only knows a session's `project_path`, not its project id.
+     */
+    getAdditionalFolderPathsByProjectPath(projectPath: string): string[] {
+        const db = getConnection();
+        const rows = db.prepare(`
+            SELECT project_folders.folder_path
+            FROM project_folders
+            JOIN projects ON projects.project_id = project_folders.project_id
+            WHERE projects.project_path = ?
+            ORDER BY project_folders.sort_order, project_folders.rowid
+        `).all(normalizeProjectPath(projectPath)) as Array<{ folder_path: string }>;
+
+        return rows.map((row) => row.folder_path);
+    },
+
+    /** Every project's extra folders in one query, keyed by project id; projects without any are absent. */
+    listAdditionalFolderPathsByProjectId(): Map<string, string[]> {
+        const db = getConnection();
+        const rows = db.prepare(`
+            SELECT project_id, folder_path
+            FROM project_folders
+            ORDER BY project_id, sort_order, rowid
+        `).all() as Array<{ project_id: string; folder_path: string }>;
+
+        const foldersByProjectId = new Map<string, string[]>();
+        for (const row of rows) {
+            const folders = foldersByProjectId.get(row.project_id);
+            if (folders) {
+                folders.push(row.folder_path);
+            } else {
+                foldersByProjectId.set(row.project_id, [row.folder_path]);
+            }
+        }
+        return foldersByProjectId;
+    },
+
+    /** `[primary, ...extra]` for a project, or `null` when the project does not exist. */
+    getProjectFolderPathsById(projectId: string): string[] | null {
+        const primaryPath = projectsDb.getProjectPathById(projectId);
+        if (primaryPath === null) {
+            return null;
+        }
+        return [primaryPath, ...projectsDb.getAdditionalFolderPaths(projectId)];
+    },
+
+    /** Replaces a project's extra folders with `folderPaths`, keeping their order. */
+    replaceAdditionalFolderPaths(projectId: string, folderPaths: string[]): void {
+        const db = getConnection();
+        const replace = db.transaction(() => {
+            writeAdditionalFolderPaths(projectId, folderPaths);
+        });
+        replace();
+    },
+
+    /**
+     * Applies a project settings edit atomically. An omitted field is left as
+     * it is; `customProjectName: null` clears the custom name.
+     */
+    updateProjectSettingsById(
+        projectId: string,
+        settings: { customProjectName?: string | null; additionalFolderPaths?: string[] },
+    ): void {
+        const db = getConnection();
+        const update = db.transaction(() => {
+            if (settings.customProjectName !== undefined) {
+                projectsDb.updateCustomProjectNameById(projectId, settings.customProjectName);
+            }
+            if (settings.additionalFolderPaths !== undefined) {
+                writeAdditionalFolderPaths(projectId, settings.additionalFolderPaths);
+            }
+        });
+        update();
     },
 
     deleteProjectPath(projectPath: string): void {

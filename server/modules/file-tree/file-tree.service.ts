@@ -12,6 +12,9 @@ import type {
 import {
   AppError,
   FORBIDDEN_WORKSPACE_PATHS,
+  getPathComparisonKey,
+  isPathInsideFolder,
+  isSameFolderPath,
   normalizeProjectPath,
   resolvePathUnderRoots,
 } from '@/shared/utils.js';
@@ -42,6 +45,9 @@ const COMMON_WORKSPACE_DIRECTORY_NAMES = [
 // broad workspace (for example, a user's home directory) cannot exhaust the
 // server heap before the browser has a chance to switch to a narrower project.
 const MAXIMUM_FILE_TREE_ENTRIES = 10_000;
+// Each folder of a multi-folder project keeps the per-folder limit above; this
+// caps what all folders together may add to one listing.
+const MAXIMUM_MULTI_FOLDER_FILE_TREE_ENTRIES = 50_000;
 
 type FileTreeEntryFilter = (entryPath: string, isDirectory: boolean) => boolean;
 
@@ -93,17 +99,56 @@ function validateFilename(name: string): void {
   }
 }
 
-function resolvePathInsideProject(projectRoot: string, targetPath: string): string {
-  const resolvedPath = path.isAbsolute(targetPath)
-    ? path.resolve(targetPath)
-    : path.resolve(projectRoot, targetPath);
-  const normalizedProjectRoot = path.resolve(projectRoot) + path.sep;
+type ProjectFolders = {
+  primary: string;
+  /** The primary folder first, then the extra folders in order. */
+  all: string[];
+};
 
-  if (!resolvedPath.startsWith(normalizedProjectRoot)) {
+function isProjectFolder(folders: ProjectFolders, candidatePath: string): boolean {
+  return folders.all.some((folder) => isSameFolderPath(folder, candidatePath));
+}
+
+/**
+ * Resolves a client path to an absolute path inside one of the project's
+ * folders. A relative path resolves against the primary folder, as it did
+ * when a project had only one; an absolute path may point into any folder.
+ * `allowFolderRoot` also accepts a project folder itself (an upload target).
+ */
+function resolvePathInsideProjectFolders(
+  folders: ProjectFolders,
+  targetPath: string,
+  { allowFolderRoot }: { allowFolderRoot: boolean } = { allowFolderRoot: false },
+): string {
+  const isAbsoluteTarget = path.isAbsolute(targetPath);
+  const resolvedPath = isAbsoluteTarget
+    ? path.resolve(targetPath)
+    : path.resolve(folders.primary, targetPath);
+  const candidateFolders = isAbsoluteTarget ? folders.all : [folders.primary];
+  const isInsideProject = candidateFolders.some((folder) => isPathInsideFolder(folder, resolvedPath)
+    || (allowFolderRoot && isSameFolderPath(folder, resolvedPath)));
+
+  if (!isInsideProject) {
     throw createFileTreeError('Path must be under project root', 403, 'PATH_OUTSIDE_PROJECT');
   }
 
   return resolvedPath;
+}
+
+/**
+ * Top-level node names: the folder name, or `parent/name` when two folders of
+ * the project share a name, so the user can tell them apart.
+ */
+function createProjectRootNames(folderPaths: string[]): string[] {
+  const baseNames = folderPaths.map((folderPath) => path.basename(folderPath) || folderPath);
+  return folderPaths.map((folderPath, index) => {
+    const baseNameKey = baseNames[index].toLowerCase();
+    const isAmbiguous = baseNames.some((baseName, otherIndex) => (
+      otherIndex !== index && baseName.toLowerCase() === baseNameKey
+    ));
+    const parentName = path.basename(path.dirname(folderPath));
+    return isAmbiguous && parentName ? `${parentName}/${baseNames[index]}` : baseNames[index];
+  });
 }
 
 function expandWorkspacePath(workspaceRoot: string, inputPath: string): string {
@@ -185,12 +230,120 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     : 1;
   const { acquire, release } = createConcurrencyLimiter(concurrencyLimit);
 
-  async function resolveProjectRoot(projectId: string): Promise<string> {
-    const projectRoot = await dependencies.projects.getProjectPathById(projectId);
-    if (!projectRoot) {
+  async function resolveProjectFolders(projectId: string): Promise<ProjectFolders> {
+    const folderPaths = await dependencies.projects.getProjectFolderPathsById(projectId);
+    if (!folderPaths || folderPaths.length === 0) {
       throw createFileTreeError('Project not found', 404, 'PROJECT_NOT_FOUND');
     }
-    return projectRoot;
+    return { primary: folderPaths[0], all: folderPaths };
+  }
+
+  /** Fills size, mtime and permission bits; a metadata failure leaves the defaults. */
+  async function applyEntryMetadata(item: FileTreeNode): Promise<void> {
+    try {
+      await acquire();
+      try {
+        const stats = await fileSystem.lstat(item.path);
+        const ownerPermissions = (stats.mode >> 6) & 7;
+        const groupPermissions = (stats.mode >> 3) & 7;
+        const otherPermissions = stats.mode & 7;
+
+        item.size = stats.size;
+        item.modified = stats.mtime.toISOString();
+        item.permissions = `${ownerPermissions}${groupPermissions}${otherPermissions}`;
+        item.permissionsRwx = permissionBitsToRwx(ownerPermissions)
+          + permissionBitsToRwx(groupPermissions)
+          + permissionBitsToRwx(otherPermissions);
+        if (stats.isSymbolicLink()) {
+          item.isSymlink = true;
+        }
+      } finally {
+        release();
+      }
+    } catch {
+      // Metadata failures should not hide an otherwise readable tree entry.
+    }
+  }
+
+  async function createFolderEntryFilter(
+    folderPath: string,
+    respectGitignore: boolean,
+  ): Promise<FileTreeEntryFilter | undefined> {
+    if (!respectGitignore) {
+      return undefined;
+    }
+
+    try {
+      const gitignoreContent = await fileSystem.readTextFile(path.join(folderPath, '.gitignore'));
+      return createGitignoreEntryFilter(folderPath, gitignoreContent);
+    } catch (error) {
+      if (readErrorCode(error) !== 'ENOENT') {
+        dependencies.logger.error(`Error reading .gitignore in "${folderPath}"`, error);
+      }
+      return undefined;
+    }
+  }
+
+  /**
+   * One top-level node per project folder, primary first. Each folder has the
+   * single-folder entry limit, drawn from a total for the whole listing; a
+   * folder over its limit is listed empty with `isTooLarge`. A directory that is
+   * itself another project folder is left out of the subtree it sits in, so a
+   * nested folder shows only as its own node.
+   */
+  async function listMultiFolderProjectFiles(
+    folders: ProjectFolders,
+    respectGitignore: boolean,
+  ): Promise<FileTreeNode[]> {
+    let remainingTotalEntries = MAXIMUM_MULTI_FOLDER_FILE_TREE_ENTRIES;
+    const folderKeys = new Set(folders.all.map(getPathComparisonKey));
+    const rootNames = createProjectRootNames(folders.all);
+    const rootNodes: FileTreeNode[] = [];
+
+    // Sequential so the primary folder is charged against the budget first.
+    for (const [index, folderPath] of folders.all.entries()) {
+      const rootNode: FileTreeNode = {
+        name: rootNames[index],
+        path: folderPath,
+        type: 'directory',
+        size: 0,
+        modified: null,
+        permissions: '000',
+        permissionsRwx: '---------',
+        isProjectRoot: true,
+        children: [],
+      };
+      rootNodes.push(rootNode);
+
+      try {
+        await fileSystem.access(folderPath);
+      } catch {
+        rootNode.isUnavailable = true;
+        continue;
+      }
+
+      await applyEntryMetadata(rootNode);
+      const baseFilter = await createFolderEntryFilter(folderPath, respectGitignore)
+        ?? includeEntryByFallbackDirectoryNames;
+      const includeEntry: FileTreeEntryFilter = (entryPath, isDirectory) => (
+        !(isDirectory && folderKeys.has(getPathComparisonKey(entryPath))) && baseFilter(entryPath, isDirectory)
+      );
+      // A fresh counter per folder: sibling walks of a folder that overflowed keep
+      // running after the rejection and may only drain that folder's own counter.
+      const folderBudget = Math.min(MAXIMUM_FILE_TREE_ENTRIES, remainingTotalEntries);
+      const remainingEntries = { value: folderBudget };
+      try {
+        rootNode.children = await buildFileTree(folderPath, 10, 0, includeEntry, remainingEntries);
+        remainingTotalEntries -= folderBudget - remainingEntries.value;
+      } catch (error) {
+        if (!(error instanceof AppError) || error.code !== 'FILE_TREE_TOO_LARGE') {
+          throw error;
+        }
+        rootNode.isTooLarge = true;
+      }
+    }
+
+    return rootNodes;
   }
 
   /**
@@ -266,29 +419,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
         permissionsRwx: '---------',
       };
 
-      try {
-        await acquire();
-        try {
-          const stats = await fileSystem.lstat(itemPath);
-          const ownerPermissions = (stats.mode >> 6) & 7;
-          const groupPermissions = (stats.mode >> 3) & 7;
-          const otherPermissions = stats.mode & 7;
-
-          item.size = stats.size;
-          item.modified = stats.mtime.toISOString();
-          item.permissions = `${ownerPermissions}${groupPermissions}${otherPermissions}`;
-          item.permissionsRwx = permissionBitsToRwx(ownerPermissions)
-            + permissionBitsToRwx(groupPermissions)
-            + permissionBitsToRwx(otherPermissions);
-          if (stats.isSymbolicLink()) {
-            item.isSymlink = true;
-          }
-        } finally {
-          release();
-        }
-      } catch {
-        // Metadata failures should not hide an otherwise readable tree entry.
-      }
+      await applyEntryMetadata(item);
 
       // Skip recursing into pseudo-filesystems and other system-critical
       // directories (e.g. /proc, /sys) — they're never valid project roots,
@@ -352,10 +483,10 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
    * The agent may also point at a file in another folder of the workspace, the
    * same tree `browseWorkspace` lists, so anything under the workspace root is
    * readable too. Symlinks are resolved before that comparison. The writing
-   * endpoints keep using `resolvePathInsideProject` alone, so nothing outside
-   * the project can be changed.
+   * endpoints keep using `resolvePathInsideProjectFolders` alone, so nothing
+   * outside the project's folders can be changed.
    */
-  async function resolveReadablePath(projectRoot: string, targetPath: string): Promise<string> {
+  async function resolveReadablePath(folders: ProjectFolders, targetPath: string): Promise<string> {
     if (path.isAbsolute(targetPath)) {
       const readOnlyPath = await dependencies.workspace.resolveReadOnlyRootPath(targetPath);
       if (readOnlyPath) {
@@ -368,7 +499,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       }
     }
 
-    return resolvePathInsideProject(projectRoot, targetPath);
+    return resolvePathInsideProjectFolders(folders, targetPath);
   }
 
   async function cleanupTemporaryFiles(files: FileTreeUploadedFile[]): Promise<void> {
@@ -463,8 +594,8 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     },
 
     async readTextFile(projectId, filePath) {
-      const projectRoot = await resolveProjectRoot(projectId);
-      const resolvedPath = await resolveReadablePath(projectRoot, filePath);
+      const folders = await resolveProjectFolders(projectId);
+      const resolvedPath = await resolveReadablePath(folders, filePath);
       try {
         const content = await fileSystem.readTextFile(resolvedPath);
         return { content, path: resolvedPath };
@@ -478,8 +609,8 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     },
 
     async openFile(projectId, filePath) {
-      const projectRoot = await resolveProjectRoot(projectId);
-      const resolvedPath = await resolveReadablePath(projectRoot, filePath);
+      const folders = await resolveProjectFolders(projectId);
+      const resolvedPath = await resolveReadablePath(folders, filePath);
       try {
         await fileSystem.access(resolvedPath);
       } catch {
@@ -493,8 +624,8 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     },
 
     async saveTextFile(projectId, filePath, content) {
-      const projectRoot = await resolveProjectRoot(projectId);
-      const resolvedPath = resolvePathInsideProject(projectRoot, filePath);
+      const folders = await resolveProjectFolders(projectId);
+      const resolvedPath = resolvePathInsideProjectFolders(folders, filePath);
       try {
         await fileSystem.writeTextFile(resolvedPath, content);
       } catch (error) {
@@ -508,35 +639,30 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     },
 
     async listProjectFiles(projectId, options) {
-      const projectRoot = await resolveProjectRoot(projectId);
+      const folders = await resolveProjectFolders(projectId);
+      const respectGitignore = options?.respectGitignore === true;
+      if (folders.all.length > 1) {
+        return listMultiFolderProjectFiles(folders, respectGitignore);
+      }
+
+      const projectRoot = folders.primary;
       try {
         await fileSystem.access(projectRoot);
       } catch {
         throw createFileTreeError(`Project path not found: ${projectRoot}`, 404, 'PROJECT_PATH_NOT_FOUND');
       }
 
-      let includeEntry: FileTreeEntryFilter | undefined;
-      if (options?.respectGitignore) {
-        try {
-          const gitignoreContent = await fileSystem.readTextFile(path.join(projectRoot, '.gitignore'));
-          includeEntry = createGitignoreEntryFilter(projectRoot, gitignoreContent);
-        } catch (error) {
-          if (readErrorCode(error) !== 'ENOENT') {
-            dependencies.logger.error(`Error reading .gitignore in "${projectRoot}"`, error);
-          }
-        }
-      }
-
+      const includeEntry = await createFolderEntryFilter(projectRoot, respectGitignore);
       return buildFileTree(projectRoot, 10, 0, includeEntry);
     },
 
     async createEntry(input) {
       validateFilename(input.name);
-      const projectRoot = await resolveProjectRoot(input.projectId);
+      const folders = await resolveProjectFolders(input.projectId);
       const targetPath = input.parentPath
         ? path.join(input.parentPath, input.name)
         : input.name;
-      const resolvedPath = resolvePathInsideProject(projectRoot, targetPath);
+      const resolvedPath = resolvePathInsideProjectFolders(folders, targetPath);
 
       try {
         await fileSystem.access(resolvedPath);
@@ -579,8 +705,11 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
 
     async renameEntry(input) {
       validateFilename(input.newName);
-      const projectRoot = await resolveProjectRoot(input.projectId);
-      const resolvedOldPath = resolvePathInsideProject(projectRoot, input.oldPath);
+      const folders = await resolveProjectFolders(input.projectId);
+      const resolvedOldPath = resolvePathInsideProjectFolders(folders, input.oldPath, { allowFolderRoot: true });
+      if (isProjectFolder(folders, resolvedOldPath)) {
+        throw createFileTreeError('Cannot rename a project folder', 403, 'PROJECT_ROOT_RENAME_FORBIDDEN');
+      }
 
       try {
         await fileSystem.access(resolvedOldPath);
@@ -589,7 +718,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       }
 
       const resolvedNewPath = path.join(path.dirname(resolvedOldPath), input.newName);
-      resolvePathInsideProject(projectRoot, resolvedNewPath);
+      resolvePathInsideProjectFolders(folders, resolvedNewPath);
       try {
         await fileSystem.access(resolvedNewPath);
         throw createFileTreeError(
@@ -621,17 +750,17 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     },
 
     async deleteEntry(input) {
-      const projectRoot = await resolveProjectRoot(input.projectId);
-      const resolvedPath = resolvePathInsideProject(projectRoot, input.targetPath);
+      const folders = await resolveProjectFolders(input.projectId);
+      const resolvedPath = resolvePathInsideProjectFolders(folders, input.targetPath, { allowFolderRoot: true });
+      if (isProjectFolder(folders, resolvedPath)) {
+        throw createFileTreeError('Cannot delete project root directory', 403, 'PROJECT_ROOT_DELETE_FORBIDDEN');
+      }
+
       let stats;
       try {
         stats = await fileSystem.stat(resolvedPath);
       } catch {
         throw createFileTreeError('File or directory not found', 404, 'FILE_TREE_ENTRY_NOT_FOUND');
-      }
-
-      if (resolvedPath === path.resolve(projectRoot)) {
-        throw createFileTreeError('Cannot delete project root directory', 403, 'PROJECT_ROOT_DELETE_FORBIDDEN');
       }
 
       try {
@@ -663,12 +792,12 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       }
 
       try {
-        const projectRoot = await resolveProjectRoot(input.projectId);
+        const folders = await resolveProjectFolders(input.projectId);
         const resolvedTargetDirectory = !input.targetPath
           || input.targetPath === '.'
           || input.targetPath === './'
-          ? path.resolve(projectRoot)
-          : resolvePathInsideProject(projectRoot, input.targetPath);
+          ? path.resolve(folders.primary)
+          : resolvePathInsideProjectFolders(folders, input.targetPath, { allowFolderRoot: true });
 
         try {
           await fileSystem.access(resolvedTargetDirectory);
@@ -683,7 +812,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
           const destinationPath = path.join(resolvedTargetDirectory, fileName);
 
           try {
-            resolvePathInsideProject(projectRoot, destinationPath);
+            resolvePathInsideProjectFolders(folders, destinationPath);
           } catch (error) {
             if (error instanceof AppError && error.statusCode === 403) {
               await cleanupTemporaryFiles([file]);

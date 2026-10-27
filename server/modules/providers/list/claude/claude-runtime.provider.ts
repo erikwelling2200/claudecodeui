@@ -298,8 +298,18 @@ export function buildClaudeSdkEnv(hostEnv: NodeJS.ProcessEnv = process.env): Nod
   };
 }
 
-function mapCliOptionsToSDK(options: AnyRecord = {}) {
-  const { providerSessionId, cwd, toolsSettings, permissionMode, effort, resumeAnchorId, resumeFromScratch } = options;
+/** Exported for the Providers tests; the runtime below is its only production caller. */
+export function mapCliOptionsToSDK(options: AnyRecord = {}) {
+  const {
+    providerSessionId,
+    cwd,
+    additionalDirectories,
+    toolsSettings,
+    permissionMode,
+    effort,
+    resumeAnchorId,
+    resumeFromScratch,
+  } = options;
 
   const sdkOptions: AnyRecord = {};
 
@@ -316,6 +326,11 @@ function mapCliOptionsToSDK(options: AnyRecord = {}) {
 
   if (cwd) {
     sdkOptions.cwd = cwd;
+  }
+
+  // The project's extra folders, so file tools may work there without a prompt.
+  if (Array.isArray(additionalDirectories) && additionalDirectories.length > 0) {
+    sdkOptions.additionalDirectories = additionalDirectories;
   }
 
   if (permissionMode && permissionMode !== 'default') {

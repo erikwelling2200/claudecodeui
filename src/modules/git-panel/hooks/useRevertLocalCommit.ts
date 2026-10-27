@@ -7,6 +7,8 @@ type UseRevertLocalCommitOptions = {
   // DB primary key for the project; forwarded to the git API via the
   // `project` body param.
   projectId: string | null;
+  // The project folder whose repository is reverted; absent for the primary.
+  folder?: string | null;
   onSuccess?: () => void;
 };
 
@@ -14,7 +16,7 @@ async function readJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function useRevertLocalCommit({ projectId, onSuccess }: UseRevertLocalCommitOptions) {
+export function useRevertLocalCommit({ projectId, folder, onSuccess }: UseRevertLocalCommitOptions) {
   const [isRevertingLocalCommit, setIsRevertingLocalCommit] = useState(false);
 
   const revertLatestLocalCommit = useCallback(async () => {
@@ -24,7 +26,7 @@ export function useRevertLocalCommit({ projectId, onSuccess }: UseRevertLocalCom
 
     setIsRevertingLocalCommit(true);
     try {
-      const response = await api.git.revertLocalCommit(projectId);
+      const response = await api.git.revertLocalCommit({ projectId, folder });
       const data = await readJson<GitOperationResponse>(response);
 
       if (!data.success) {
@@ -38,7 +40,7 @@ export function useRevertLocalCommit({ projectId, onSuccess }: UseRevertLocalCom
     } finally {
       setIsRevertingLocalCommit(false);
     }
-  }, [onSuccess, projectId]);
+  }, [folder, onSuccess, projectId]);
 
   return {
     isRevertingLocalCommit,

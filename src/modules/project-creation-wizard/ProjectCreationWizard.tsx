@@ -9,7 +9,12 @@ import WizardFooter from '@/modules/project-creation-wizard/WizardFooter';
 import WizardProgress from '@/modules/project-creation-wizard/WizardProgress';
 import { useGithubTokens } from '@/modules/project-creation-wizard/hooks/useGithubTokens';
 import { cloneWorkspaceWithProgress, createProjectRequest } from '@/modules/project-creation-wizard/utils/workspaceApi';
-import { isCloneWorkflow, shouldShowGithubAuthentication } from '@/modules/project-creation-wizard/utils/pathUtils';
+import {
+  getSubmittedFolders,
+  isCloneWorkflow,
+  shouldShowGithubAuthentication,
+} from '@/modules/project-creation-wizard/utils/pathUtils';
+import { ApiRequestError } from '@/shared/api';
 import type { TokenMode, WizardFormState, WizardStep } from '@/shared/types';
 
 type ProjectCreationWizardProps = {
@@ -19,6 +24,8 @@ type ProjectCreationWizardProps = {
 
 const initialFormState: WizardFormState = {
   workspacePath: '',
+  projectName: '',
+  additionalFolders: [],
   githubUrl: '',
   tokenMode: 'stored',
   selectedGithubToken: '',
@@ -109,13 +116,23 @@ export default function ProjectCreationWizard({
         return;
       }
 
+      const customName = formState.projectName.trim();
+      const additionalFolders = getSubmittedFolders(formState.additionalFolders);
       const project = await createProjectRequest({
         path: formState.workspacePath.trim(),
+        ...(customName ? { customName } : {}),
+        ...(additionalFolders.length > 0 ? { additionalFolders } : {}),
       });
 
       onProjectCreated?.(project);
       onClose();
     } catch (createError) {
+      // An existing project cannot be re-created with more folders; the folders
+      // are added to that project instead.
+      if (createError instanceof ApiRequestError && createError.code === 'PROJECT_ALREADY_EXISTS') {
+        setError(t('projectWizard.errors.projectExists'));
+        return;
+      }
       const errorMessage =
         createError instanceof Error
           ? createError.message
@@ -160,6 +177,8 @@ export default function ProjectCreationWizard({
           {step === 1 && (
             <StepConfiguration
               workspacePath={formState.workspacePath}
+              projectName={formState.projectName}
+              additionalFolders={formState.additionalFolders}
               githubUrl={formState.githubUrl}
               tokenMode={formState.tokenMode}
               selectedGithubToken={formState.selectedGithubToken}
@@ -169,6 +188,8 @@ export default function ProjectCreationWizard({
               tokenLoadError={tokenLoadError}
               isCreating={isCreating}
               onWorkspacePathChange={(workspacePath) => updateField('workspacePath', workspacePath)}
+              onProjectNameChange={(projectName) => updateField('projectName', projectName)}
+              onAdditionalFoldersChange={(additionalFolders) => updateField('additionalFolders', additionalFolders)}
               onGithubUrlChange={(githubUrl) => updateField('githubUrl', githubUrl)}
               onTokenModeChange={updateTokenMode}
               onSelectedGithubTokenChange={(selectedGithubToken) =>

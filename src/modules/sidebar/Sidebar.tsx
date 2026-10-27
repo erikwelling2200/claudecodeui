@@ -84,6 +84,7 @@ function Sidebar({
     isProjectExpanded,
     activeRename,
     showNewProject,
+    editingProjectSettingsId,
     initialSessionsLoaded,
     currentTime,
     isRefreshing,
@@ -143,6 +144,7 @@ function Sidebar({
     collapseSidebar: handleCollapseSidebar,
     expandSidebar: handleExpandSidebar,
     setShowNewProject,
+    setEditingProjectSettingsId,
     setSearchFilter,
     setPendingDeletion,
     setShowVersionModal,
@@ -186,6 +188,10 @@ function Sidebar({
     void saveProjectName(projectId, nextName);
   }, [saveProjectName]);
 
+  const handleEditProjectSettings = useCallback((project: Project) => {
+    setEditingProjectSettingsId(project.projectId);
+  }, [setEditingProjectSettingsId]);
+
   const handleSaveSessionName = useCallback(
     (projectName: string, sessionId: string, summary: string, provider: LLMProvider) => {
       void updateSessionSummary(projectName, sessionId, summary, provider);
@@ -220,6 +226,7 @@ function Sidebar({
     onStartEditingProject: startEditingProject,
     onCancelEditingProject: cancelRename,
     onSaveProjectName: handleSaveProjectName,
+    onEditProjectSettings: handleEditProjectSettings,
     onDeleteProject: requestProjectDelete,
     onSessionSelect: handleSessionClick,
     onDeleteSession: showDeleteSessionConfirmation,
@@ -247,6 +254,9 @@ function Sidebar({
         showNewProject={showNewProject}
         onCloseNewProject={() => setShowNewProject(false)}
         onProjectCreated={handleProjectCreated}
+        editingProject={projects.find((project) => project.projectId === editingProjectSettingsId) ?? null}
+        onCloseEditProject={() => setEditingProjectSettingsId(null)}
+        onProjectUpdated={handleProjectCreated}
         pendingDeletion={pendingDeletion}
         onCancelDeletion={() => setPendingDeletion(null)}
         onConfirmDeleteProject={confirmDeleteProject}

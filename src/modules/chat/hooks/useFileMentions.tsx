@@ -10,6 +10,8 @@ type ProjectFileNode = {
   type: 'file' | 'directory';
   path?: string;
   children?: ProjectFileNode[];
+  // Top-level node of one folder of a multi-folder project (primary first).
+  isProjectRoot?: boolean;
 };
 
 export type MentionableFile = {
@@ -45,6 +47,33 @@ const flattenFileTree = (files: ProjectFileNode[], basePath = ''): MentionableFi
   });
 
   return flattened;
+};
+
+// Files of an extra folder are mentioned by their absolute path, since the
+// agent resolves a relative mention against the primary folder (its cwd).
+const flattenAbsoluteFileTree = (files: ProjectFileNode[]): MentionableFile[] =>
+  files.flatMap((file) => {
+    if (file.type === 'directory') {
+      return file.children ? flattenAbsoluteFileTree(file.children) : [];
+    }
+    return file.path ? [{ name: file.name, path: file.path, relativePath: file.path }] : [];
+  });
+
+/**
+ * Turns the file listing into mentionable files. A single-folder project lists
+ * its entries directly; a multi-folder one lists one root node per folder,
+ * primary first, whose files keep relative paths (`src/x.ts`) while the other
+ * folders' files use absolute paths.
+ */
+const flattenProjectFiles = (files: ProjectFileNode[]): MentionableFile[] => {
+  if (!files.some((file) => file.isProjectRoot)) {
+    return flattenFileTree(files);
+  }
+  return files.flatMap((root, index) => (
+    index === 0
+      ? flattenFileTree(root.children ?? [])
+      : flattenAbsoluteFileTree(root.children ?? [])
+  ));
 };
 
 // True when both flattened lists hold the same files in the same order.
@@ -86,7 +115,7 @@ export function useFileMentions({ selectedProject, input, setInput, textareaRef 
       if (abortController.signal.aborted) {
         return;
       }
-      const nextFileList = flattenFileTree(files);
+      const nextFileList = flattenProjectFiles(files);
       // Keeping the same array when nothing changed stops the filter effect
       // below from re-running and resetting the highlighted row.
       setFileList((previousFileList) =>

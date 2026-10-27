@@ -8,7 +8,7 @@ import { Settings } from '@/modules/settings';
 import { VersionUpgradeModal } from '@/modules/version-upgrade';
 import type { InstallMode, PendingSidebarDeletion, Project, ReleaseInfo, SettingsProject } from '@/shared/types';
 import { normalizeProjectForSettings } from '@/modules/sidebar/utils/sidebarProjectFormatting';
-import { ProjectCreationWizard } from '@/modules/project-creation-wizard';
+import { EditProjectModal, ProjectCreationWizard } from '@/modules/project-creation-wizard';
 
 type SidebarModalsProps = {
   projects: Project[];
@@ -18,6 +18,10 @@ type SidebarModalsProps = {
   showNewProject: boolean;
   onCloseNewProject: () => void;
   onProjectCreated: () => void;
+  /** The project whose edit dialog is open, or null while it is closed. */
+  editingProject: Project | null;
+  onCloseEditProject: () => void;
+  onProjectUpdated: () => void;
   pendingDeletion: PendingSidebarDeletion | null;
   onCancelDeletion: () => void;
   onConfirmDeleteProject: (deleteData?: boolean) => void;
@@ -46,7 +50,7 @@ function TypedSettings(props: TypedSettingsProps) {
   return <SettingsComponent {...props} />;
 }
 
-/** Rendered by Sidebar to host its settings, new-project, delete-confirmation and version modals in one place. */
+/** Rendered by Sidebar to host its settings, new-project, edit-project, delete-confirmation and version modals in one place. */
 export default function SidebarModals({
   projects,
   showSettings,
@@ -55,6 +59,9 @@ export default function SidebarModals({
   showNewProject,
   onCloseNewProject,
   onProjectCreated,
+  editingProject,
+  onCloseEditProject,
+  onProjectUpdated,
   pendingDeletion,
   onCancelDeletion,
   onConfirmDeleteProject,
@@ -81,6 +88,17 @@ export default function SidebarModals({
           <ProjectCreationWizard
             onClose={onCloseNewProject}
             onProjectCreated={onProjectCreated}
+          />,
+          document.body,
+        )}
+
+      {editingProject &&
+        ReactDOM.createPortal(
+          <EditProjectModal
+            key={editingProject.projectId}
+            project={editingProject}
+            onClose={onCloseEditProject}
+            onProjectUpdated={onProjectUpdated}
           />,
           document.body,
         )}

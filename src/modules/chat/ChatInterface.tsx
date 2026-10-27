@@ -9,6 +9,8 @@ import PermissionContext from '@/modules/chat/context/PermissionContext';
 import { MarkdownWorkspaceContext } from '@/modules/chat/context/MarkdownWorkspaceContext';
 import { TranscriptSessionContext } from '@/modules/chat/context/TranscriptSessionContext';
 import { api } from '@/shared/api';
+import { useSingleFolderProviders } from '@/shared/hooks/useProviderCapabilities';
+import { getFolderName } from '@/shared/utils';
 import type {
   ChatMessage,
   Project,
@@ -428,6 +430,7 @@ function ChatInterface({
   // reserve enough bottom space to keep the floating status tab from
   // overlapping the last message.
   const hasActivityIndicator = Boolean(sessionActivity && pendingPermissionRequests.length === 0);
+  const singleFolderProviders = useSingleFolderProviders();
 
   const selectedProviderLabel =
     provider === 'cursor'
@@ -437,6 +440,14 @@ function ChatInterface({
         : provider === 'opencode'
             ? t('messageTypes.opencode', { defaultValue: 'OpenCode' })
           : t('messageTypes.claude');
+
+  // A provider without extra-folder support runs in the primary folder only;
+  // the composer names that folder when the project has others it cannot see.
+  const primaryOnlyFolderName = selectedProject
+    && (selectedProject.additionalFolders?.length ?? 0) > 0
+    && singleFolderProviders.has(provider)
+    ? getFolderName(selectedProject.fullPath)
+    : null;
 
   if (!selectedProject) {
     return (
@@ -544,6 +555,7 @@ function ChatInterface({
           availablePermissionModes={availablePermissionModes}
           onSelectPermissionMode={selectPermissionMode}
           providerLabel={selectedProviderLabel}
+          primaryOnlyFolderName={primaryOnlyFolderName}
           effort={currentProviderEffort}
           availableEffortOptions={currentProviderEffortOptions}
           onSelectEffort={handleSelectComposerEffort}

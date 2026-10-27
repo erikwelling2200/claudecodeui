@@ -16,7 +16,7 @@ export function createGitModule(externalDependencies: GitExternalDependencies) {
   return createGitRouter({
     fileSystem: fs,
     spawnProcess: spawn,
-    resolveProjectPathById: (projectId) => projectsDb.getProjectPathById(projectId),
+    resolveProjectFolderPathsById: (projectId) => projectsDb.getProjectFolderPathsById(projectId),
     ...externalDependencies,
   });
 }

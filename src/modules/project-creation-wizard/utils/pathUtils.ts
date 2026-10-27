@@ -40,9 +40,7 @@ export const getParentPath = (currentPath: string): string | null => {
   return currentPath.slice(0, lastSeparatorIndex);
 };
 
-export const joinFolderPath = (basePath: string, folderName: string): string => {
-  const normalizedBasePath = basePath.trim().replace(/[\\/]+$/, '');
-  const separator =
-    normalizedBasePath.includes('\\') && !normalizedBasePath.includes('/') ? '\\' : '/';
-  return `${normalizedBasePath}${separator}${folderName.trim()}`;
-};
+// The extra folders a form actually submits: trimmed, blank rows dropped and
+// exact repeats removed. The server does the real validation.
+export const getSubmittedFolders = (folders: string[]): string[] =>
+  Array.from(new Set(folders.map((folder) => folder.trim()).filter(Boolean)));

@@ -59,10 +59,10 @@ const fileTreeFileSystem: FileTreeFileSystem = {
 /**
  * Database boundary used only by File Tree production composition.
  * The Database module is consumed through its barrel; services and routes see
- * only the narrow project-path lookup contract.
+ * only the narrow project-folders lookup contract.
  */
 const fileTreeProjects: FileTreeProjectGateway = {
-  getProjectPathById: (projectId) => projectsDb.getProjectPathById(projectId),
+  getProjectFolderPathsById: (projectId) => projectsDb.getProjectFolderPathsById(projectId),
 };
 
 /**

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { closeConnection, initializeDatabase, sessionsDb } from '@/modules/database/index.js';
+import { closeConnection, initializeDatabase, projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { sessionsService } from '@/modules/providers/index.js';
 import { handleChatConnection } from '@/modules/websocket/services/chat-websocket.service.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
@@ -306,4 +306,35 @@ test('a provider that has to branch to rewind is rewound before the run, not dur
     assert.ok(socket.frames.some((frame) => frame.kind === 'history_truncated'));
     assert.equal(truncatedBeforeRewind, true);
   }, CODEX_TRANSCRIPT_ROWS);
+});
+
+test('a run gets the extra folders of the session project that still exist, not the client cwd', async () => {
+  await withGateway('claude', async ({ socket, runs }) => {
+    const projectPath = sessionsDb.getSessionById(SESSION_ID)?.project_path as string;
+    const projectId = projectsDb.getProjectPath(projectPath)?.project_id as string;
+    const existingFolder = path.join(projectPath, 'second-folder');
+    await mkdir(existingFolder);
+    projectsDb.replaceAdditionalFolderPaths(projectId, [path.join(projectPath, 'removed-folder'), existingFolder]);
+
+    socket.emit('message', JSON.stringify({
+      type: 'chat.send',
+      sessionId: SESSION_ID,
+      content: 'look at both folders',
+      options: { cwd: path.join(projectPath, 'elsewhere'), additionalDirectories: ['/client/supplied'] },
+    }));
+    await settle();
+
+    assert.equal(runs.length, 1);
+    assert.deepEqual(runs[0].options.additionalDirectories, [existingFolder]);
+  });
+});
+
+test('a run in a single-folder project gets no extra folders', async () => {
+  await withGateway('claude', async ({ socket, runs }) => {
+    socket.emit('message', JSON.stringify({ type: 'chat.send', sessionId: SESSION_ID, content: 'hello' }));
+    await settle();
+
+    assert.equal(runs.length, 1);
+    assert.deepEqual(runs[0].options.additionalDirectories, []);
+  });
 });

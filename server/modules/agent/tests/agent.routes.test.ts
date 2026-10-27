@@ -29,7 +29,7 @@ function createDependencies(
     users: { getFirstUser: () => ({ id: 1, username: 'test-user' }) },
     apiKeys: { validateApiKey: () => undefined },
     githubTokens: { getActiveGithubToken: () => null },
-    projects: { createProjectPath: () => ({ outcome: 'created' }) },
+    projects: { createProjectPath: () => ({ outcome: 'created' }), listRunAdditionalDirectories: async () => [] },
     models: {} as AgentDependencies['models'],
     sessions: {
       getSessionById: () => null,

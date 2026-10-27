@@ -111,7 +111,11 @@ export default function FileTreeNode({
   const nameClassName = cn(
     'text-[13px] leading-tight truncate',
     isDirectory ? 'font-medium text-foreground' : 'text-foreground/90',
+    // A project folder that no longer exists on disk stays listed, greyed out.
+    item.isUnavailable && 'text-muted-foreground line-through',
+    item.isTooLarge && 'text-muted-foreground',
   );
+  const nameTitle = item.isTooLarge ? t('fileTree.folderTooLarge', 'Too many files to list') : undefined;
 
   // View mode only changes the row layout; selection, expansion, and recursion stay shared.
   const rowClassName = cn(
@@ -157,7 +161,7 @@ export default function FileTreeNode({
     );
   }
 
-  const uploadHoverButton = isDirectory && onUpload && (
+  const uploadHoverButton = isDirectory && !item.isUnavailable && onUpload && (
     <button
       type="button"
       onClick={(event) => {
@@ -187,7 +191,7 @@ export default function FileTreeNode({
         <>
           <div className="col-span-5 flex min-w-0 items-center gap-1.5">
             <TreeItemIcon item={item} isOpen={isOpen} renderFileIcon={renderFileIcon} />
-            <span className={nameClassName}>{item.name}</span>
+            <span className={nameClassName} title={nameTitle}>{item.name}</span>
           </div>
           <div className="col-span-2 text-sm tabular-nums text-muted-foreground">
             {item.type === 'file' ? formatFileSize(item.size) : ''}
@@ -199,7 +203,7 @@ export default function FileTreeNode({
         <>
           <div className="flex min-w-0 items-center gap-1.5">
             <TreeItemIcon item={item} isOpen={isOpen} renderFileIcon={renderFileIcon} />
-            <span className={nameClassName}>{item.name}</span>
+            <span className={nameClassName} title={nameTitle}>{item.name}</span>
           </div>
           <div className="ml-2 flex flex-shrink-0 items-center gap-3 text-sm text-muted-foreground">
             {item.type === 'file' && (
@@ -213,7 +217,7 @@ export default function FileTreeNode({
       ) : (
         <>
           <TreeItemIcon item={item} isOpen={isOpen} renderFileIcon={renderFileIcon} />
-          <span className={nameClassName}>{item.name}</span>
+          <span className={nameClassName} title={nameTitle}>{item.name}</span>
         </>
       )}
       {uploadHoverButton}

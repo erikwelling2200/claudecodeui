@@ -2,7 +2,7 @@ import type { Project } from '@/shared/types';
 
 export type ProjectSelectionMetadata = Pick<
   Project,
-  'projectId' | 'displayName' | 'fullPath' | 'path' | 'isStarred' | 'taskmaster'
+  'projectId' | 'displayName' | 'fullPath' | 'path' | 'isStarred' | 'taskmaster' | 'additionalFolders'
 >;
 
 const valuesMatch = (left: unknown, right: unknown): boolean => (
@@ -25,6 +25,9 @@ export function mergeProjectSelectionMetadata(
   const nextPath = incoming.path ?? current.path;
   const nextIsStarred = incoming.isStarred ?? current.isStarred;
   const nextTaskmaster = incoming.taskmaster ?? current.taskmaster;
+  // `session_upserted` payloads carry no folder list; only a full project
+  // payload may change it.
+  const nextAdditionalFolders = incoming.additionalFolders ?? current.additionalFolders;
 
   if (
     current.displayName === incoming.displayName
@@ -32,6 +35,7 @@ export function mergeProjectSelectionMetadata(
     && current.path === nextPath
     && current.isStarred === nextIsStarred
     && valuesMatch(current.taskmaster, nextTaskmaster)
+    && valuesMatch(current.additionalFolders, nextAdditionalFolders)
   ) {
     return current;
   }
@@ -43,5 +47,6 @@ export function mergeProjectSelectionMetadata(
     path: nextPath,
     isStarred: nextIsStarred,
     taskmaster: nextTaskmaster,
+    additionalFolders: nextAdditionalFolders,
   };
 }

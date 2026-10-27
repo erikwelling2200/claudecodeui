@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -233,9 +234,22 @@ export class CursorSessionsProvider implements IProviderSessions {
     // Lazy-import better-sqlite3 so the module doesn't fail if it's unavailable
     const { default: Database } = await import('better-sqlite3');
 
-    const cwdId = crypto.createHash('md5').update(projectPath || process.cwd()).digest('hex');
     const safeSessionId = sanitizeLeafDirectoryName(sessionId, 'cursor session id');
-    const baseChatsPath = path.join(os.homedir(), '.cursor', 'chats', cwdId);
+    const workingDirectory = projectPath || process.cwd();
+    // Cursor keys its chats by a hash of the exact path it ran in, while project paths are stored with an
+    // upper-case drive letter, so a chat run in `c:\repo` is found under the lower-case spelling.
+    const chatsDirectoryCandidates = [...new Set([
+      workingDirectory,
+      workingDirectory.replace(/^[A-Z](?=:)/, (driveLetter) => driveLetter.toLowerCase()),
+    ])].map((candidate) => path.join(
+      os.homedir(),
+      '.cursor',
+      'chats',
+      crypto.createHash('md5').update(candidate).digest('hex'),
+    ));
+    const baseChatsPath = chatsDirectoryCandidates.find(
+      (candidate) => fs.existsSync(path.join(candidate, safeSessionId, 'store.db')),
+    ) ?? chatsDirectoryCandidates[0];
     const storeDbPath = path.join(baseChatsPath, safeSessionId, 'store.db');
     const resolvedBaseChatsPath = path.resolve(baseChatsPath);
     const resolvedStoreDbPath = path.resolve(storeDbPath);

@@ -3,6 +3,7 @@ import {
   getStoredAuthToken,
   storeAuthToken,
 } from '@/shared/authToken';
+import type { GitTarget } from '@/shared/types';
 import { IS_PLATFORM } from '@/shared/utils';
 import { readVoiceConfig, voiceConfigHeaders } from '@/shared/voiceConfig';
 
@@ -114,7 +115,9 @@ export async function readApiJson<T>(response: Response): Promise<T> {
     const payload = raw && typeof raw === 'object' ? raw : {};
     const message = (typeof raw === 'string' ? raw : payload?.message) || data.details || `Request failed (${response.status})`;
     throw new ApiRequestError(message, {
-      code: typeof payload?.code === 'string' ? payload.code : undefined,
+      code: typeof payload?.code === 'string'
+        ? payload.code
+        : typeof data.code === 'string' ? data.code : undefined,
       details: payload?.details ?? data.details,
       status: response.status,
     });
@@ -190,6 +193,11 @@ export const sessionMessagesUrl = (
 const fileContentPath = (projectId: string, filePath: string) =>
   `/api/file-tree/projects/${projectId}/files/content${query({ path: filePath })}`;
 
+// The body fields that address a git request. `folder` is left out for the
+// primary folder so single-folder requests keep their exact former shape.
+const gitBody = ({ projectId, folder }: GitTarget): { project: string; folder?: string } =>
+  (folder ? { project: projectId, folder } : { project: projectId });
+
 const pluginAssetPath = (pluginName: string, assetFile: string) =>
   `/api/plugins/${encodeURIComponent(pluginName)}/assets/${encodeURIComponent(assetFile)}`;
 
@@ -234,6 +242,11 @@ export const api = {
     get(`/api/projects/${encodeURIComponent(projectId)}/taskmaster`),
   renameProject: (projectId: string, displayName: string) =>
     put(`/api/projects/${projectId}/rename`, { displayName }),
+  // Edits a project's name and/or its extra folders; the primary folder is fixed.
+  updateProject: (
+    projectId: string,
+    changes: { displayName?: string; additionalFolders?: string[] },
+  ) => patch(`/api/projects/${encodeURIComponent(projectId)}`, changes),
   restoreProject: (projectId: string) =>
     post(`/api/projects/${encodeURIComponent(projectId)}/restore`),
   // `hardDelete` => server `?force=true` (remove DB row + Claude *.jsonl + sessions rows for path).
@@ -336,62 +349,64 @@ export const api = {
 
   createFolder: (folderPath: string) => post('/api/file-tree/create-folder', { path: folderPath }),
 
-  // Git endpoints. The `project` param carries the DB projectId post-migration.
+  // Git endpoints. Each takes a GitTarget: `project` carries the DB projectId
+  // and `folder` (absent for the primary) picks one folder of a multi-folder
+  // project. Both ride in the query for GETs and in the body otherwise.
   git: {
-    status: (projectId: string, options: ApiRequestOptions = {}) =>
-      get(`/api/git/status${query({ project: projectId })}`, options),
-    diff: (projectId: string, filePath: string, options: ApiRequestOptions = {}) =>
-      get(`/api/git/diff${query({ project: projectId, file: filePath })}`, options),
-    commitDiff: (projectId: string, commit: string) =>
-      get(`/api/git/commit-diff${query({ project: projectId, commit })}`),
-    fileWithDiff: (projectId: string, filePath: string) =>
-      get(`/api/git/file-with-diff${query({ project: projectId, file: filePath })}`),
-    branches: (projectId: string, options: ApiRequestOptions = {}) =>
-      get(`/api/git/branches${query({ project: projectId })}`, options),
-    branchDiff: (projectId: string, base: string, options: ApiRequestOptions = {}) =>
-      get(`/api/git/branch-diff${query({ project: projectId, base })}`, options),
+    status: ({ projectId, folder }: GitTarget, options: ApiRequestOptions = {}) =>
+      get(`/api/git/status${query({ project: projectId, folder })}`, options),
+    diff: ({ projectId, folder }: GitTarget, filePath: string, options: ApiRequestOptions = {}) =>
+      get(`/api/git/diff${query({ project: projectId, folder, file: filePath })}`, options),
+    commitDiff: ({ projectId, folder }: GitTarget, commit: string) =>
+      get(`/api/git/commit-diff${query({ project: projectId, folder, commit })}`),
+    fileWithDiff: ({ projectId, folder }: GitTarget, filePath: string) =>
+      get(`/api/git/file-with-diff${query({ project: projectId, folder, file: filePath })}`),
+    branches: ({ projectId, folder }: GitTarget, options: ApiRequestOptions = {}) =>
+      get(`/api/git/branches${query({ project: projectId, folder })}`, options),
+    branchDiff: ({ projectId, folder }: GitTarget, base: string, options: ApiRequestOptions = {}) =>
+      get(`/api/git/branch-diff${query({ project: projectId, folder, base })}`, options),
     // `oldPath` is the pre-rename path of a renamed file so the server can diff the rename itself.
     branchDiffFile: (
-      projectId: string,
+      { projectId, folder }: GitTarget,
       base: string,
       filePath: string,
       oldPath?: string,
       options: ApiRequestOptions = {},
-    ) => get(`/api/git/branch-diff/file${query({ project: projectId, base, file: filePath, oldPath })}`, options),
-    remoteStatus: (projectId: string) =>
-      get(`/api/git/remote-status${query({ project: projectId })}`),
+    ) => get(`/api/git/branch-diff/file${query({ project: projectId, folder, base, file: filePath, oldPath })}`, options),
+    remoteStatus: ({ projectId, folder }: GitTarget) =>
+      get(`/api/git/remote-status${query({ project: projectId, folder })}`),
     commits: (
-      projectId: string,
+      { projectId, folder }: GitTarget,
       { limit }: { limit?: number } = {},
       options: ApiRequestOptions = {},
-    ) => get(`/api/git/commits${query({ project: projectId, limit })}`, options),
-    checkout: (projectId: string, branch: string) =>
-      post('/api/git/checkout', { project: projectId, branch }),
-    createBranch: (projectId: string, branch: string) =>
-      post('/api/git/create-branch', { project: projectId, branch }),
-    deleteBranch: (projectId: string, branch: string, force = false) =>
-      post('/api/git/delete-branch', { project: projectId, branch, force }),
-    fetch: (projectId: string) => post('/api/git/fetch', { project: projectId }),
-    pull: (projectId: string) => post('/api/git/pull', { project: projectId }),
-    push: (projectId: string) => post('/api/git/push', { project: projectId }),
-    publish: (projectId: string, branch: string) =>
-      post('/api/git/publish', { project: projectId, branch }),
-    discard: (projectId: string, file: string) =>
-      post('/api/git/discard', { project: projectId, file }),
-    deleteUntracked: (projectId: string, file: string) =>
-      post('/api/git/delete-untracked', { project: projectId, file }),
-    stage: (projectId: string, files: string[]) =>
-      post('/api/git/stage', { project: projectId, files }),
-    unstage: (projectId: string, files: string[]) =>
-      post('/api/git/unstage', { project: projectId, files }),
-    commit: (projectId: string, message: string, files: string[]) =>
-      post('/api/git/commit', { project: projectId, message, files }),
-    initialCommit: (projectId: string) => post('/api/git/initial-commit', { project: projectId }),
-    init: (projectId: string) => post('/api/git/init', { project: projectId }),
-    revertLocalCommit: (projectId: string) =>
-      post('/api/git/revert-local-commit', { project: projectId }),
-    generateCommitMessage: (projectId: string, files: string[], provider: string) =>
-      post('/api/git/generate-commit-message', { project: projectId, files, provider }),
+    ) => get(`/api/git/commits${query({ project: projectId, folder, limit })}`, options),
+    checkout: (target: GitTarget, branch: string) =>
+      post('/api/git/checkout', { ...gitBody(target), branch }),
+    createBranch: (target: GitTarget, branch: string) =>
+      post('/api/git/create-branch', { ...gitBody(target), branch }),
+    deleteBranch: (target: GitTarget, branch: string, force = false) =>
+      post('/api/git/delete-branch', { ...gitBody(target), branch, force }),
+    fetch: (target: GitTarget) => post('/api/git/fetch', gitBody(target)),
+    pull: (target: GitTarget) => post('/api/git/pull', gitBody(target)),
+    push: (target: GitTarget) => post('/api/git/push', gitBody(target)),
+    publish: (target: GitTarget, branch: string) =>
+      post('/api/git/publish', { ...gitBody(target), branch }),
+    discard: (target: GitTarget, file: string) =>
+      post('/api/git/discard', { ...gitBody(target), file }),
+    deleteUntracked: (target: GitTarget, file: string) =>
+      post('/api/git/delete-untracked', { ...gitBody(target), file }),
+    stage: (target: GitTarget, files: string[]) =>
+      post('/api/git/stage', { ...gitBody(target), files }),
+    unstage: (target: GitTarget, files: string[]) =>
+      post('/api/git/unstage', { ...gitBody(target), files }),
+    commit: (target: GitTarget, message: string, files: string[]) =>
+      post('/api/git/commit', { ...gitBody(target), message, files }),
+    initialCommit: (target: GitTarget) => post('/api/git/initial-commit', gitBody(target)),
+    init: (target: GitTarget) => post('/api/git/init', gitBody(target)),
+    revertLocalCommit: (target: GitTarget) =>
+      post('/api/git/revert-local-commit', gitBody(target)),
+    generateCommitMessage: (target: GitTarget, files: string[], provider: string) =>
+      post('/api/git/generate-commit-message', { ...gitBody(target), files, provider }),
   },
 
   worktrees: {

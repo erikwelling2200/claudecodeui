@@ -112,6 +112,7 @@ const projectsHaveChanges = (
       nextProject.projectId !== prevProject.projectId ||
       nextProject.displayName !== prevProject.displayName ||
       nextProject.fullPath !== prevProject.fullPath ||
+      serialize(nextProject.additionalFolders) !== serialize(prevProject.additionalFolders) ||
       Boolean(nextProject.isStarred) !== Boolean(prevProject.isStarred) ||
       serialize(nextProject.sessionMeta) !== serialize(prevProject.sessionMeta) ||
       serialize(nextProject.sessions) !== serialize(prevProject.sessions) ||
@@ -318,6 +319,7 @@ const projectFromRegistration = (project: Project): Project => ({
   path: project.path || project.fullPath,
   fullPath: project.fullPath || project.path || '',
   displayName: project.displayName,
+  additionalFolders: project.additionalFolders,
   isStarred: project.isStarred,
   sessions: project.sessions ?? [],
   sessionMeta: project.sessionMeta ?? { hasMore: false, total: countLoadedProjectSessions(project) },

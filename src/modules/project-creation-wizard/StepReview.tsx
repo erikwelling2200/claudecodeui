@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { isSshGitUrl } from '@/modules/project-creation-wizard/utils/pathUtils';
+import { getSubmittedFolders, isSshGitUrl } from '@/modules/project-creation-wizard/utils/pathUtils';
 import type { WizardFormState } from '@/shared/types';
 
 type StepReviewProps = {
@@ -36,6 +36,11 @@ export default function StepReview({
     return t('projectWizard.step3.noAuthentication');
   }, [formState, selectedTokenName, t]);
 
+  const extraFolders = useMemo(
+    () => getSubmittedFolders(formState.additionalFolders),
+    [formState.additionalFolders],
+  );
+
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900/50">
@@ -50,6 +55,28 @@ export default function StepReview({
               {formState.workspacePath}
             </span>
           </div>
+
+          {!formState.githubUrl && formState.projectName.trim() && (
+            <div className="flex justify-between gap-4 text-sm">
+              <span className="text-gray-600 dark:text-gray-400">{t('projectWizard.step3.name')}</span>
+              <span className="break-all text-xs text-gray-900 dark:text-white">
+                {formState.projectName.trim()}
+              </span>
+            </div>
+          )}
+
+          {!formState.githubUrl && extraFolders.length > 0 && (
+            <div className="flex justify-between gap-4 text-sm">
+              <span className="shrink-0 text-gray-600 dark:text-gray-400">{t('projectWizard.step3.folders')}</span>
+              <ul className="space-y-1 text-right">
+                {extraFolders.map((folder) => (
+                  <li key={folder} className="break-all font-mono text-xs text-gray-900 dark:text-white">
+                    {folder}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {formState.githubUrl && (
             <>

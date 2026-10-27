@@ -1,15 +1,17 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useGitPanelController } from '@/modules/git-panel/hooks/useGitPanelController';
 import { useRevertLocalCommit } from '@/modules/git-panel/hooks/useRevertLocalCommit';
 import type { ConfirmationRequest, FileOpenHandler, GitPanelView, Project } from '@/shared/types';
 import { getChangedFileCount } from '@/modules/git-panel/utils/gitPanelUtils';
+import { getProjectFolderPaths } from '@/shared/utils';
 import ChangesView from '@/modules/git-panel/changes/ChangesView';
 import CompareView from '@/modules/git-panel/compare/CompareView';
 import HistoryView from '@/modules/git-panel/history/HistoryView';
 import BranchesView from '@/modules/git-panel/branches/BranchesView';
 import WorktreesView from '@/modules/git-panel/worktrees/WorktreesView';
+import GitFolderSelect from '@/modules/git-panel/GitFolderSelect';
 import GitPanelHeader from '@/modules/git-panel/GitPanelHeader';
 import GitRepositoryErrorState from '@/modules/git-panel/GitRepositoryErrorState';
 import GitViewTabs from '@/modules/git-panel/GitViewTabs';
@@ -38,6 +40,31 @@ export default function GitPanel({
   const [wrapText, setWrapText] = useState(true);
   const [hasExpandedFiles, setHasExpandedFiles] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmationRequest | null>(null);
+  // The folder picked in the folder switcher, tagged with its project so that
+  // selecting another project (or removing the folder) falls back to the primary.
+  const [selectedGitFolder, setSelectedGitFolder] = useState<{ projectId: string; folder: string } | null>(null);
+
+  const projectFolders = useMemo(
+    () => (selectedProject ? getProjectFolderPaths(selectedProject) : []),
+    [selectedProject],
+  );
+  const primaryFolder = projectFolders[0] ?? '';
+  const activeGitFolder = selectedGitFolder
+    && selectedGitFolder.projectId === selectedProject?.projectId
+    && projectFolders.includes(selectedGitFolder.folder)
+    ? selectedGitFolder.folder
+    : primaryFolder;
+  const isPrimaryGitFolder = activeGitFolder === primaryFolder;
+  // Requests leave `folder` out for the primary so single-folder projects are untouched.
+  const gitFolder = isPrimaryGitFolder ? null : activeGitFolder;
+  // Worktrees belong to the primary repository; another folder shows Changes instead.
+  const visibleView: GitPanelView = activeView === 'worktrees' && !isPrimaryGitFolder ? 'changes' : activeView;
+
+  const handleGitFolderChange = useCallback((folder: string) => {
+    if (selectedProject) {
+      setSelectedGitFolder({ projectId: selectedProject.projectId, folder });
+    }
+  }, [selectedProject]);
 
   const {
     gitStatus,
@@ -80,7 +107,8 @@ export default function GitPanel({
     openFile,
   } = useGitPanelController({
     selectedProject,
-    activeView,
+    gitFolder,
+    activeView: visibleView,
     onFileOpen,
   });
 
@@ -88,6 +116,7 @@ export default function GitPanel({
     // `projectId` (DB primary key) is forwarded to the revert API which uses it
     // as the `project` body param.
     projectId: selectedProject?.projectId ?? null,
+    folder: gitFolder,
     onSuccess: refreshAll,
   });
 
@@ -120,9 +149,25 @@ export default function GitPanel({
 
   return (
     <div className="flex h-full flex-col bg-background">
+      {/* Without a repository the header is hidden, but the folder switcher
+          stays so the other folders remain reachable. */}
+      {isMissingRepository && projectFolders.length > 1 && (
+        <div className={`border-b border-border/60 ${isMobile ? 'px-3 py-2' : 'px-4 py-3'}`}>
+          <GitFolderSelect
+            folders={projectFolders}
+            activeFolder={activeGitFolder}
+            isMobile={isMobile}
+            onChange={handleGitFolderChange}
+          />
+        </div>
+      )}
+
       {!isMissingRepository && (
         <GitPanelHeader
           isMobile={isMobile}
+          folders={projectFolders}
+          activeFolder={activeGitFolder}
+          onFolderChange={handleGitFolderChange}
           currentBranch={currentBranch}
           branches={branches}
           remoteStatus={remoteStatus}
@@ -162,17 +207,19 @@ export default function GitPanel({
       ) : (
         <>
           <GitViewTabs
-            activeView={activeView}
+            activeView={visibleView}
             isHidden={hasExpandedFiles}
             changeCount={changeCount}
+            showWorktrees={isPrimaryGitFolder}
             onChange={setActiveView}
           />
 
-          {activeView === 'changes' && (
+          {visibleView === 'changes' && (
             <ChangesView
-              key={selectedProject.fullPath}
+              key={activeGitFolder}
               isMobile={isMobile}
-              projectPath={selectedProject.fullPath}
+              // Keys the commit-message draft cache, so each folder keeps its own.
+              projectPath={activeGitFolder}
               gitStatus={gitStatus}
               gitDiff={gitDiff}
               isLoading={isLoading}
@@ -191,10 +238,11 @@ export default function GitPanel({
             />
           )}
 
-          {activeView === 'compare' && (
+          {visibleView === 'compare' && (
             <CompareView
-              key={selectedProject.fullPath}
+              key={activeGitFolder}
               projectId={selectedProject.projectId}
+              folder={gitFolder}
               currentBranch={currentBranch}
               localBranches={localBranches}
               remoteRefs={remoteRefs}
@@ -206,7 +254,7 @@ export default function GitPanel({
             />
           )}
 
-          {activeView === 'history' && (
+          {visibleView === 'history' && (
             <HistoryView
               isMobile={isMobile}
               // Treat an in-flight commits request as loading only while the
@@ -220,9 +268,9 @@ export default function GitPanel({
             />
           )}
 
-          {activeView === 'worktrees' && (
+          {visibleView === 'worktrees' && (
             <WorktreesView
-              key={selectedProject.fullPath}
+              key={activeGitFolder}
               isMobile={isMobile}
               selectedProject={selectedProject}
               localBranches={localBranches}
@@ -231,7 +279,7 @@ export default function GitPanel({
             />
           )}
 
-          {activeView === 'branches' && (
+          {visibleView === 'branches' && (
             <BranchesView
               isMobile={isMobile}
               isLoading={isLoading}
