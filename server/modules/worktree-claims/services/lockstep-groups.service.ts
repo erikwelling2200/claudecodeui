@@ -1,3 +1,4 @@
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -6,7 +7,6 @@ import {
   AppError,
   getPathComparisonKey,
   readJsonConfig,
-  writeJsonConfig,
 } from '@/shared/utils.js';
 
 /**
@@ -15,6 +15,14 @@ import {
  * by hand and preserved on save.
  */
 const DEFAULT_GROUPS_FILE = path.join(os.homedir(), '.claude', 'worktree-groups.json');
+
+/** Writes through a temporary file and a rename, so the hook never reads a half-written groups file. */
+async function writeGroupsFileAtomically(groupsFile: string, config: Record<string, unknown>): Promise<void> {
+  await mkdir(path.dirname(groupsFile), { recursive: true });
+  const temporaryFile = `${groupsFile}.${process.pid}.tmp`;
+  await writeFile(temporaryFile, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  await rename(temporaryFile, groupsFile);
+}
 
 function readGroupList(config: Record<string, unknown>): LockstepGroup[] {
   const groups = Array.isArray(config.groups) ? config.groups : [];
@@ -84,6 +92,6 @@ export async function saveProjectLockstepGroups(
     return { name, repos };
   });
 
-  await writeJsonConfig(groupsFile, { ...config, groups: [...otherGroups, ...cleanedGroups] });
+  await writeGroupsFileAtomically(groupsFile, { ...config, groups: [...otherGroups, ...cleanedGroups] });
   return { folders, groups: cleanedGroups };
 }

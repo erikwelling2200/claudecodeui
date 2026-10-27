@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { projectsDb } from '@/modules/database/index.js';
+import { projectsDb, sessionsDb } from '@/modules/database/index.js';
 import type { WorktreeClaimsServices } from '@/shared/types.js';
 import { AppError, isSameFolderPath } from '@/shared/utils.js';
 import {
@@ -52,7 +52,8 @@ const worktreeClaimsServices: WorktreeClaimsServices = {
     }
     return readFindWorktreeJob(jobId);
   },
-  listClaims: (sessionId) => runFindWorktree(['claims', '--session', sessionId]),
+  // Locks are keyed by the provider's session id, which a chat started in the app only gets once its CLI reports it.
+  listClaims: (sessionId) => runFindWorktree(['claims', '--session', sessionsDb.getSessionById(sessionId)?.provider_session_id ?? sessionId]),
   release: (unitKey, suffix) => runFindWorktree(['release', '--force', '--key', readUnitKey(unitKey), '--suffix', suffix]),
 };
 
