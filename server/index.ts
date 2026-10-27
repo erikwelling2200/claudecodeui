@@ -391,6 +391,13 @@ async function startServer() {
         closeScheduledMessageDispatcher();
         // Clean up plugin processes on shutdown
         const shutdownRuntimeServices = async () => {
+            // Session CLI processes (and their MCP servers) live as long as their
+            // chat is open, so they would outlive the server without this.
+            try {
+                providerRuntimeService.closeAll();
+            } catch (err) {
+                console.error('[Providers] Error closing session processes during shutdown:', getErrorMessage(err));
+            }
             try {
                 await browserUseService.stopAllSessions();
             } catch (err) {

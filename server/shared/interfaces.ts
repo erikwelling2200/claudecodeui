@@ -49,11 +49,19 @@ export interface IProviderRuntime {
   listBackgroundWork?(): Array<{ sessionId: string; tasks: BackgroundTaskSummary[]; liveTurn?: LiveTurnTerms }>;
   /**
    * Whether a turn with these `chat.send` options would be delivered into the
-   * process the session's previous turn left running for its background work,
-   * instead of replacing that process (and stopping the work). Only a runtime
-   * that can take a new turn as streaming input implements it.
+   * process the session keeps between turns, instead of replacing that process
+   * (and stopping any background work). Only a runtime that can take a new
+   * turn as streaming input implements it.
    */
   acceptsLiveTurn?(sessionId: string, options: AnyRecord): boolean;
+  /**
+   * Lets go of the process a session keeps between turns, when no turn is in
+   * flight. Returns false when there is none, or a turn is running. Only a
+   * runtime that keeps its process past a turn implements it.
+   */
+  releaseIdleProcess?(sessionId: string): boolean;
+  /** Ends every process the runtime keeps, for server shutdown. */
+  closeAll?(): void;
   /**
    * Stops one outstanding background task. Resolves false when the session has
    * no live process or that process is not tracking the task — it already
