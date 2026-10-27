@@ -1941,3 +1941,38 @@ type TaskStatus =
 
 /** A TaskMaster task's priority; high, medium and low are the known values and the string fallback tolerates anything else TaskMaster emits. */
 type TaskPriority = 'high' | 'medium' | 'low' | string;
+
+// ---------------------------
+//----------------- WORKTREE CLAIMS ------------
+/**
+ * Repositories worked on together: a chat writing in one of them claims the
+ * same worktree (same folder suffix) of all of them. `repos` are project
+ * folder paths. Edited in the project dialog, saved by the worktree-claims API.
+ */
+export type LockstepGroup = {
+  name: string;
+  repos: string[];
+};
+
+/**
+ * A chat's hold on a worktree as the find-worktree script reports it. Shown by
+ * the chat's worktree sidebar and the project dialog's worktree list.
+ */
+export type WorktreeLockInfo = {
+  sessionId: string;
+  claimedAt: string;
+  lastActivity: string;
+  /** Set once the holder's turn ended; the claim then runs out at `expiresAt`. */
+  turnEndedAt: string | null;
+  expiresAt: string;
+};
+
+/** One repository's checkout within a worktree, with what is checked out there. */
+export type WorktreeCheckoutState = {
+  repo: string;
+  path: string;
+  exists?: boolean;
+  branch?: string | null;
+  head?: string | null;
+  changedFiles?: number;
+};

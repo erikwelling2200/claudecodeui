@@ -1358,6 +1358,64 @@ export type WorktreeServices = {
 };
 
 // ---------------------------
+//----------------- WORKTREE CLAIMS MODULE CONTRACTS ------------
+/**
+ * A set of repositories that are worked on together: a chat writing in one of
+ * them claims the same worktree (same folder suffix) of all of them. `repos`
+ * holds main-checkout paths, which are project folders. Stored in
+ * `~/.claude/worktree-groups.json`, where the worktree-lock hook reads it.
+ */
+export type LockstepGroup = {
+  name: string;
+  repos: string[];
+};
+
+/** A project's lockstep groups together with the folders they may be built from. */
+export type ProjectLockstepGroups = {
+  folders: string[];
+  groups: LockstepGroup[];
+};
+
+/** Input for adding a worktree to a lockstep group or a single repository. */
+export type CreateGroupWorktreeInput = {
+  projectId: string;
+  /** Group name, or the main-checkout path of a repository in no group. */
+  unit: string;
+  /** Folder suffix of the new worktree: `C:/x/Repo` gets `C:/x/Repo-<suffix>`. */
+  suffix: string;
+  /** Suffix of the worktree whose HEAD and ignored files are copied; '' is the main checkout. */
+  from: string;
+};
+
+/**
+ * Progress of a background worktree creation, as the find-worktree script
+ * writes it. `state` is absent while the script has not reported yet.
+ */
+export type GroupWorktreeJob = {
+  jobId: string;
+  state?: 'running' | 'done' | 'failed';
+  step?: string;
+  error?: string;
+  updatedAt?: string;
+  [key: string]: unknown;
+};
+
+/**
+ * Worktree-claims application services consumed by the routes. Listings and
+ * claims are passed through as the find-worktree script reports them, so the
+ * hook, the agents' skill and this UI read worktrees the same way.
+ */
+export type WorktreeClaimsServices = {
+  getGroups(projectId: string): Promise<ProjectLockstepGroups>;
+  saveGroups(projectId: string, groups: LockstepGroup[]): Promise<ProjectLockstepGroups>;
+  listWorktrees(projectId: string): Promise<unknown>;
+  startCreate(input: CreateGroupWorktreeInput): Promise<{ jobId: string }>;
+  readJob(jobId: string): Promise<GroupWorktreeJob | null>;
+  listClaims(sessionId: string): Promise<unknown>;
+  release(unitKey: string, suffix: string): Promise<unknown>;
+};
+
+// ---------------------------
 //----------------- FILE TREE MODULE CONTRACTS ------------
 /**
  * One filesystem item returned by the File Tree API.

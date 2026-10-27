@@ -411,5 +411,31 @@
     "taskRowNotLoaded": "Launched earlier in this conversation; click to load it",
     "taskOfAgent": "Launched by one of this session's agents"
   },
-  "cancel": "Cancel"
+  "cancel": "Cancel",
+  "worktreeClaims": {
+    "detached": "detached",
+    "changed": "{{count}} changed",
+    "sidebar": {
+      "title": "Worktrees",
+      "release": "Release",
+      "confirmRelease": "Release {{worktree}}? Another chat can then write there.",
+      "freeAt": "Free at {{time}}"
+    },
+    "groups": {
+      "title": "Lockstep groups",
+      "namePlaceholder": "Group name",
+      "add": "Add group",
+      "remove": "Remove group",
+      "save": "Save groups"
+    },
+    "worktrees": {
+      "title": "Worktrees",
+      "suffixPlaceholder": "suffix",
+      "copyFrom": "Copy from",
+      "copyFromOption": "copy from {{worktree}}",
+      "create": "New worktree",
+      "claimed": "claimed",
+      "skippedNested": "Not copied, nested repositories outside the group: {{folders}}"
+    }
+  }
 }

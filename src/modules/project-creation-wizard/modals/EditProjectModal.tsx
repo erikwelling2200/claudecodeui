@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Button, Input } from '@/shared/ui';
 import { getFolderName } from '@/shared/utils';
 import type { Project } from '@/shared/types';
+import { ProjectWorktreesSection } from '@/modules/worktree-claims';
 import ErrorBanner from '@/modules/project-creation-wizard/ErrorBanner';
 import ProjectFolderListField from '@/modules/project-creation-wizard/ProjectFolderListField';
 import { getSubmittedFolders } from '@/modules/project-creation-wizard/utils/pathUtils';
@@ -118,6 +119,8 @@ export default function EditProjectModal({ project, onClose, onProjectUpdated }:
             disabled={isSaving}
             onChange={setAdditionalFolders}
           />
+
+          <ProjectWorktreesSection projectId={project.projectId} />
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-gray-200 p-6 dark:border-gray-700">

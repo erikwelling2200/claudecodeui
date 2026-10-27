@@ -3,7 +3,7 @@ import {
   getStoredAuthToken,
   storeAuthToken,
 } from '@/shared/authToken';
-import type { GitTarget } from '@/shared/types';
+import type { GitTarget, LockstepGroup } from '@/shared/types';
 import { IS_PLATFORM } from '@/shared/utils';
 import { readVoiceConfig, voiceConfigHeaders } from '@/shared/voiceConfig';
 
@@ -427,6 +427,19 @@ export const api = {
       worktreePath: string,
       options: { force?: boolean; deleteBranch?: boolean },
     ) => post('/api/worktrees/remove', { project: projectId, worktreePath, ...options }),
+  },
+
+  // Lockstep groups, their worktrees, and the worktrees each chat has claimed.
+  worktreeClaims: {
+    groups: (projectId: string) => get(`/api/worktree-claims/groups${query({ project: projectId })}`),
+    saveGroups: (projectId: string, groups: LockstepGroup[]) =>
+      put('/api/worktree-claims/groups', { project: projectId, groups }),
+    worktrees: (projectId: string) => get(`/api/worktree-claims/worktrees${query({ project: projectId })}`),
+    createWorktree: (projectId: string, unit: string, suffix: string, from: string) =>
+      post('/api/worktree-claims/worktrees', { project: projectId, unit, suffix, from }),
+    job: (jobId: string) => get(`/api/worktree-claims/jobs/${encodeURIComponent(jobId)}`),
+    claims: (sessionId: string) => get(`/api/worktree-claims/claims${query({ session: sessionId })}`),
+    release: (unitKey: string, suffix: string) => post('/api/worktree-claims/release', { unit: unitKey, suffix }),
   },
 
   // Provider (coding agent) endpoints — models, capabilities, sessions, MCP, skills.
