@@ -22,13 +22,12 @@ function projectFolders(projectId: string): string[] {
   return folders;
 }
 
-/** `group:<name>` / `repo:<path>` as lock files key a unit, turned into the script's `--unit` value. */
-function unitArgument(unitKey: string): string {
-  const match = unitKey.match(/^(group|repo):(.+)$/);
-  if (!match) {
+/** `group:<name>` / `repo:<path>`, as lock files and claims key a unit; it survives renaming the group. */
+function readUnitKey(unitKey: string): string {
+  if (!/^(group|repo):.+$/.test(unitKey)) {
     throw new AppError(`"${unitKey}" is not a worktree unit key`, { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
   }
-  return match[2];
+  return unitKey;
 }
 
 /** Production composition of the worktree-claims services. */
@@ -54,7 +53,7 @@ const worktreeClaimsServices: WorktreeClaimsServices = {
     return readFindWorktreeJob(jobId);
   },
   listClaims: (sessionId) => runFindWorktree(['claims', '--session', sessionId]),
-  release: (unitKey, suffix) => runFindWorktree(['release', '--force', '--unit', unitArgument(unitKey), '--suffix', suffix]),
+  release: (unitKey, suffix) => runFindWorktree(['release', '--force', '--key', readUnitKey(unitKey), '--suffix', suffix]),
 };
 
 /** Worktree-claims router, mounted by the server entrypoint at `/api/worktree-claims`. */

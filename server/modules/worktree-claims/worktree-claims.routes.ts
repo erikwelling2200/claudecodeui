@@ -11,12 +11,13 @@ function readRequiredString(value: unknown, name: string): string {
   return parsed;
 }
 
-/** A worktree suffix; '' names the main checkout, so it is required to be a string but may be empty. */
+/** A worktree suffix, the `<x>` of `<repo>-<x>`; '' names the main checkout. */
 function readSuffix(value: unknown, name: string): string {
-  if (typeof value !== 'string') {
-    throw new AppError(`${name} must be a string`, { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
+  const suffix = typeof value === 'string' ? value.trim() : null;
+  if (suffix === null || (suffix !== '' && !/^[\w.-]+$/.test(suffix))) {
+    throw new AppError(`${name} must be a worktree suffix of letters, digits, ".", "_" or "-"`, { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
   }
-  return value.trim();
+  return suffix;
 }
 
 function readGroups(value: unknown): LockstepGroup[] {
@@ -58,7 +59,7 @@ export function createWorktreeClaimsRouter(services: WorktreeClaimsServices): ex
     const result = await services.startCreate({
       projectId: readRequiredString(body.project, 'project'),
       unit: readRequiredString(body.unit, 'unit'),
-      suffix: readRequiredString(body.suffix, 'suffix'),
+      suffix: readRequiredString(readSuffix(body.suffix, 'suffix'), 'suffix'),
       from: readSuffix(body.from ?? '', 'from'),
     });
     res.json(createApiSuccessResponse(result));

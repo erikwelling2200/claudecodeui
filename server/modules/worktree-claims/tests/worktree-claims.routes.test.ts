@@ -83,6 +83,7 @@ test('POST /worktrees defaults "from" to the main checkout and requires a suffix
   await withServer(services, async (baseUrl) => {
     const post = (body: unknown) => fetch(`${baseUrl}/worktrees`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     assert.equal((await post({ project: 'p1', unit: 'g' })).status, 400);
+    assert.equal((await post({ project: 'p1', unit: 'g', suffix: 'w2', from: '../../x' })).status, 400);
     const response = await post({ project: 'p1', unit: 'g', suffix: 'w2' });
     assert.equal(response.status, 200);
   });
