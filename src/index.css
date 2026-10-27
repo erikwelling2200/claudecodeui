@@ -588,20 +588,12 @@
     clip-path: inset(-8px -8px 0 -8px);
   }
 
+  /* No content-visibility here: LazyMessageRow already skips off-screen rows,
+     and a freshly mounted row above the viewport would otherwise render at its
+     intrinsic-size estimate and then snap to its real height, moving the
+     history the user is reading. */
   .chat-message {
     contain: layout style paint;
-    content-visibility: auto;
-    contain-intrinsic-size: auto 180px;
-  }
-
-  .chat-message.assistant {
-    contain-intrinsic-size: auto 240px;
-  }
-
-  .chat-message.user,
-  .chat-message.tool,
-  .chat-message.error {
-    contain-intrinsic-size: auto 96px;
   }
 
   /* Mobile touch optimization and safe areas */

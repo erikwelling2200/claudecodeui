@@ -33,9 +33,8 @@ function findAnchorRow(container: HTMLElement): ScrollAnchor | null {
 /**
  * Keeps the transcript row the user is reading at the same screen position
  * while content above it changes height: an older page prepended, the
- * loading indicator swapped for the "showing X of Y" line, a lazy row mounting
- * over its estimated placeholder, or a `content-visibility: auto` row getting
- * its real height.
+ * loading indicator swapped for the "showing X of Y" line, or a lazy row
+ * mounting over its estimated placeholder.
  *
  * Browser scroll anchoring covers some of this, but not at scrollTop 0 (which
  * is exactly where an older page loads) and not in Safari, so the transcript
