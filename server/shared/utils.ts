@@ -411,8 +411,12 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
     }
 
     const resolvedWorkspaceRoot = normalizeProjectPath(await realpath(WORKSPACES_ROOT));
+    // A drive or filesystem root (`C:\`, `/`) already ends in a separator.
+    const workspaceRootPrefix = resolvedWorkspaceRoot.endsWith(path.sep)
+      ? resolvedWorkspaceRoot
+      : `${resolvedWorkspaceRoot}${path.sep}`;
     if (
-      !resolvedPath.startsWith(`${resolvedWorkspaceRoot}${path.sep}`)
+      !resolvedPath.startsWith(workspaceRootPrefix)
       && resolvedPath !== resolvedWorkspaceRoot
     ) {
       return {
@@ -429,7 +433,7 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
         const resolvedSymlinkPath = path.resolve(path.dirname(absolutePath), symlinkTarget);
         const realSymlinkPath = await realpath(resolvedSymlinkPath);
         if (
-          !realSymlinkPath.startsWith(`${resolvedWorkspaceRoot}${path.sep}`)
+          !realSymlinkPath.startsWith(workspaceRootPrefix)
           && realSymlinkPath !== resolvedWorkspaceRoot
         ) {
           return {
