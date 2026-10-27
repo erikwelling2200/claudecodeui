@@ -77,6 +77,7 @@ export default function LazyMessageRow({
   return (
     <div
       ref={elementRef}
+      data-transcript-row
       data-message-timestamp={timestamp || undefined}
       style={isMounted ? undefined : { height: measuredHeight ?? ESTIMATED_ROW_HEIGHT_PX }}
     >
