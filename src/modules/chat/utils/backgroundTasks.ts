@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next';
 
-import type { BackgroundTaskStatus, BackgroundTaskSummary, ChatMessage, WorkflowAgentProgress } from '@/shared/types';
+import type { BackgroundTaskStatus, BackgroundTaskSummary, ChatMessage, LiveTurnTerms, QueuedSendOptions, WorkflowAgentProgress } from '@/shared/types';
 
 /**
  * Settles one background task's status from its two sources.
@@ -152,4 +152,34 @@ export function describeBackgroundTask(task: BackgroundTaskSummary, t: TFunction
     default:
       return t('claudeStatus.backgroundTask.agent', { description: task.description, defaultValue: 'Agent {{description}}' });
   }
+}
+
+const readToolList = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
+
+/**
+ * Whether a send with these options goes into the process holding a session's
+ * background work, so the work keeps running and there is nothing to ask.
+ *
+ * Mirrors the server's rule for the terms it reports: the model and the
+ * ordinary permission modes can change on a running process; effort, bypass
+ * and plan mode cannot, and the tool lists may only allow more and must deny
+ * the same. Anything else replaces the process, which is what the
+ * send-over-background-work prompt is about.
+ */
+export function sendFitsLiveTurn(terms: LiveTurnTerms, options: QueuedSendOptions): boolean {
+  const toolsSettings = (options.toolsSettings ?? {}) as Record<string, unknown>;
+  const { permissionMode } = options;
+  const effort = typeof options.effort === 'string' && options.effort !== 'default' ? options.effort : null;
+  const bypassPermissions = permissionMode === 'bypassPermissions'
+    || (Boolean(toolsSettings.skipPermissions) && permissionMode !== 'plan');
+  const allowed = new Set(readToolList(toolsSettings.allowedTools));
+  const denied = new Set(readToolList(toolsSettings.disallowedTools));
+
+  return terms.effort === effort
+    && terms.bypassPermissions === bypassPermissions
+    && terms.planMode === (permissionMode === 'plan')
+    && terms.allowedTools.every((tool) => allowed.has(tool))
+    && new Set(terms.disallowedTools).size === denied.size
+    && terms.disallowedTools.every((tool) => denied.has(tool));
 }

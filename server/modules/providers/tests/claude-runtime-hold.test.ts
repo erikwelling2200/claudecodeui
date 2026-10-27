@@ -104,7 +104,7 @@ async function withRun(
 
 const settle = () => new Promise((resolve) => { setTimeout(resolve, 25); });
 
-// A fixed settle can be too short on a loaded machine; the supersede tests
+// A fixed settle can be too short on a loaded machine; these tests
 // wait for the run to have actually processed its turn instead.
 async function waitFor(condition: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) {
@@ -138,7 +138,7 @@ test('stopping the last outstanding task releases the held process', async () =>
     script.emit(taskStarted('wf1', 'toolu_wf', 'local_workflow'));
     script.emit(ack('toolu_wf', 'Workflow launched in background. Task ID: wf1', { status: 'async_launched', taskId: 'wf1', taskType: 'local_workflow' }));
     script.emit(result());
-    await settle();
+    await waitFor(() => sent.some((message) => message.kind === 'complete'));
 
     // The turn is over for the client, the process is held for the workflow.
     assert.ok(sent.some((message) => message.kind === 'complete'));
@@ -190,7 +190,7 @@ test('an agent that ran in the foreground and settled before the result does not
     script.emit(taskNotification('a1', 'toolu_agent', 'completed'));
     script.emit(ack('toolu_agent', 'FOUR', { status: 'completed', agentId: 'a1' }));
     script.emit(result());
-    await settle();
+    await waitFor(() => script.released());
 
     assert.deepEqual(listClaudeSDKBackgroundWork(), []);
     assert.equal(script.released(), true, 'nothing is outstanding, so nothing to hold for');
@@ -229,8 +229,9 @@ test('a new turn stops the tasks the held process still has going before letting
     // superseded process would live on next to the new one for as long as
     // the agent runs. The stop has to reach it before stdin ends, because the
     // SDK drops control requests written to an ended stdin.
-    const secondRun = queryClaudeSDK('Continue', { sessionId: SESSION_ID, cwd }, writer as never, { ...context, createQuery: second.createQuery });
-    await settle();
+    // An effort change can only be made by a new process.
+    const secondRun = queryClaudeSDK('Continue', { sessionId: SESSION_ID, cwd, effort: 'high' }, writer as never, { ...context, createQuery: second.createQuery });
+    await waitFor(() => first.script.released());
     assert.deepEqual(first.script.stopped, ['a1'], 'the held process is told to stop its agent');
     assert.equal(first.script.released(), true, 'and is then let go');
     assert.deepEqual(second.script.stopped, [], 'the new process is untouched');
@@ -280,8 +281,9 @@ test('a held process is still let go when stopping its tasks throws', async () =
     await waitFor(() => sent.some((message) => message.kind === 'complete'));
     assert.equal(first.script.released(), false, 'the first process is held for its agent');
 
-    const secondRun = queryClaudeSDK('Continue', { sessionId: SESSION_ID, cwd }, writer as never, { ...context, createQuery: second.createQuery });
-    await settle();
+    // An effort change can only be made by a new process.
+    const secondRun = queryClaudeSDK('Continue', { sessionId: SESSION_ID, cwd, effort: 'high' }, writer as never, { ...context, createQuery: second.createQuery });
+    await waitFor(() => first.script.released());
     assert.equal(first.script.released(), true, 'the held process is let go anyway');
 
     first.script.end();

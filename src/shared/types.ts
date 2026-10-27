@@ -189,6 +189,21 @@ export type BackgroundTaskSummary = {
   nested?: boolean;
 };
 
+/**
+ * What the process holding a session's background work was launched with, as
+ * the server reports it while that process can take the next turn (see
+ * `LiveTurnTerms` in the server's shared types). A send whose options fit
+ * these goes into that process and the work keeps running; any other send
+ * replaces the process and stops the work.
+ */
+export type LiveTurnTerms = {
+  effort: string | null;
+  bypassPermissions: boolean;
+  planMode: boolean;
+  allowedTools: string[];
+  disallowedTools: string[];
+};
+
 /** What a busy session is doing, as shown by the activity indicator: producing a response, or only running background tasks. */
 export type SessionActivity = {
   /** Provider-supplied status line; null renders the default activity label. */
@@ -208,6 +223,8 @@ export type SessionActivity = {
   background?: boolean;
   /** The background tasks the session still has running, with or without a response in flight. */
   tasks?: BackgroundTaskSummary[];
+  /** Set on background-only work whose process can take the next turn; absent when a send would replace it. */
+  liveTurn?: LiveTurnTerms;
 };
 
 /** Every busy session, keyed by session id. Read it to tell whether a session is busy; check `background` to tell how. */
@@ -225,10 +242,16 @@ export type MarkSessionIdle = (
   opts?: { ifStartedBefore?: number },
 ) => void;
 
-/** Records the background tasks a session still has once its turn ended; an empty list marks it idle. */
+/**
+ * Records the background tasks a session still has once its turn ended; an
+ * empty list marks it idle. `liveTurn` is what the turn's `complete` said
+ * about the process (null: it cannot take a turn); leave it out to keep what
+ * is known.
+ */
 export type MarkSessionBackground = (
   sessionId: string,
   tasks: BackgroundTaskSummary[],
+  liveTurn?: LiveTurnTerms | null,
 ) => void;
 
 /** Reads one session's current activity without subscribing to the map, for logic that runs on a websocket frame. */
@@ -251,6 +274,7 @@ export type SessionActivitySnapshot = {
   /** True when the server lists the session for its background tasks alone, with no chat run. */
   background?: boolean;
   tasks?: BackgroundTaskSummary[];
+  liveTurn?: LiveTurnTerms;
 };
 
 // ---------------------------

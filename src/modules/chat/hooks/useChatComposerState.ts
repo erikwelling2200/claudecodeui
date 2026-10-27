@@ -27,7 +27,7 @@ import {
   writeDraftText,
 } from '@/shared/chatDrafts';
 import { escapeRegExp } from '@/modules/chat/utils/chatFormatting';
-import { describeBackgroundTask, ownBackgroundTasks } from '@/modules/chat/utils/backgroundTasks';
+import { describeBackgroundTask, ownBackgroundTasks, sendFitsLiveTurn } from '@/modules/chat/utils/backgroundTasks';
 import { useFileMentions } from '@/modules/chat/hooks/useFileMentions';
 import { useInputHistory } from '@/modules/chat/hooks/useInputHistory';
 import { useSlashCommands } from '@/modules/chat/hooks/useSlashCommands';
@@ -1013,13 +1013,21 @@ export function useChatComposerState({
         });
       }
 
-      // A new turn replaces the CLI process a session's background work runs
-      // under: the agents, workflows and commands it still has going are
-      // stopped, or finish where nothing is listening. Sending is the user's
-      // call, but not one to make for them — and queueing behind the work,
-      // which the server holds until it finishes, is the safe alternative.
+      // When the process a session's background work runs under can take the
+      // turn, the turn goes into it and the work keeps running. Otherwise the
+      // new turn replaces that process: the agents, workflows and commands it
+      // still has going are stopped, or finish where nothing is listening.
+      // Sending is then the user's call, but not one to make for them — and
+      // queueing behind the work, which the server holds until it finishes,
+      // is the safe alternative.
       const backgroundActivity = processingSessionsRef.current?.get(targetSessionId);
-      if (backgroundActivity?.background) {
+      // An edit resumes the conversation partway, which only a new process does.
+      const goesIntoLiveProcess = Boolean(
+        backgroundActivity?.liveTurn
+        && !editingAnchorId
+        && sendFitsLiveTurn(backgroundActivity.liveTurn, queuedSubmission?.options ?? buildSendOptions(currentInput)),
+      );
+      if (backgroundActivity?.background && !goesIntoLiveProcess) {
         const work = ownBackgroundTasks(backgroundActivity.tasks ?? [])
           .map((task) => describeBackgroundTask(task, t));
         const choice = await askBeforeSendingOverBackgroundWork(work);

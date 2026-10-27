@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
-import type { ServerEvent,MarkSessionIdle,MarkSessionProcessing,PendingPermissionRequest,ProjectSession,LLMProvider,NormalizedMessage,GetSessionActivity,MarkSessionBackground } from '@/shared/types';
+import type { ServerEvent,MarkSessionIdle,MarkSessionProcessing,PendingPermissionRequest,ProjectSession,LLMProvider,NormalizedMessage,GetSessionActivity,LiveTurnTerms,MarkSessionBackground } from '@/shared/types';
 import { showCompletionTitleIndicator } from '@/modules/chat/utils/pageTitleNotification';
-import { playChatCompletionSound, playNotificationSound } from '@/shared/utils';
+import { parseLiveTurnTerms, playChatCompletionSound, playNotificationSound } from '@/shared/utils';
 import type { SessionStore } from '@/modules/chat/hooks/useSessionStore';
 import { normalizedToChatMessages } from '@/modules/chat/hooks/useChatMessages';
 import { collectRunningBackgroundTasks, listRunningBackgroundLaunches, readBackgroundTaskId, readBackgroundTaskStatus } from '@/modules/chat/utils/backgroundTasks';
@@ -103,8 +103,8 @@ export function useChatRealtimeHandlers({
     // launched that are still running, or nothing, which marks it idle. The
     // store's records are what the transcript's cards fold their live status
     // from, so this reads the same answer they draw.
-    const reportRemainingBackgroundWork = (sid: string) => {
-      onSessionBackground?.(sid, collectRunningBackgroundTasks(normalizedToChatMessages(sessionStore.getMessages(sid))));
+    const reportRemainingBackgroundWork = (sid: string, liveTurn?: LiveTurnTerms | null) => {
+      onSessionBackground?.(sid, collectRunningBackgroundTasks(normalizedToChatMessages(sessionStore.getMessages(sid))), liveTurn);
     };
 
     const handleEvent = (msg: ServerEvent) => {
@@ -308,8 +308,10 @@ export function useChatRealtimeHandlers({
           // running leaves the session as background work — the CLI is held
           // open for them — and any other leaves it idle. An abort releases
           // the CLI and takes that work down with it.
+          // The `complete` also says whether the next turn can go into the
+          // process that work runs under.
           if (sid && !msg.aborted) {
-            reportRemainingBackgroundWork(sid);
+            reportRemainingBackgroundWork(sid, parseLiveTurnTerms(msg.liveTurn) ?? null);
           } else {
             onSessionIdle?.(sid);
           }

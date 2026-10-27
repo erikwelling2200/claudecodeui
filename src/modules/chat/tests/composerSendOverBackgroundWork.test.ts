@@ -15,7 +15,8 @@ import type { BackgroundSendChoice, PermissionMode, Project, ProjectSession, Ses
  * runs under, so the work is stopped or finishes where nothing listens. The
  * composer says so and asks before sending: send anyway, queue the message
  * until the work finishes (the server holds it while the work runs), or
- * cancel.
+ * cancel. When the server reports that the process can take the turn
+ * instead, and the send's options fit it, there is nothing to ask.
  */
 
 const { appendQueuedMessage } = vi.hoisted(() => ({ appendQueuedMessage: vi.fn() }));
@@ -215,4 +216,31 @@ test('a session with nothing in the background sends without asking', async () =
 
   assert.equal(view.result.current.backgroundSendPrompt, null);
   assert.equal(sends().length, 1);
+});
+
+// The process that work runs under can take the next turn: the server reports
+// what it was launched with, and a send that fits goes into it.
+const liveTurn = { effort: 'medium', bypassPermissions: false, planMode: false, allowedTools: [], disallowedTools: [] };
+const withLiveTurn = (terms: typeof liveTurn): SessionActivityMap => new Map([[
+  'session-1',
+  { ...backgroundOnly.get('session-1')!, liveTurn: terms },
+]]);
+
+test('a session whose held process can take the turn sends without asking', async () => {
+  const { view, sends } = render(withLiveTurn(liveTurn));
+  await act(async () => { view.result.current.setInput('how is it going?'); });
+  await act(async () => { await view.result.current.handleSubmit({ preventDefault: () => undefined } as never); });
+
+  assert.equal(view.result.current.backgroundSendPrompt, null);
+  assert.equal(sends().length, 1);
+  assert.equal(appendQueuedMessage.mock.calls.length, 0, 'nothing is queued behind the work');
+});
+
+test('a send the held process cannot take still asks first', async () => {
+  // Launched at another effort: only a new process can change that.
+  const { view, sends } = render(withLiveTurn({ ...liveTurn, effort: 'high' }));
+  await act(async () => { view.result.current.setInput('hello'); });
+
+  await submitAndAnswer(view, 'cancel');
+  assert.equal(sends().length, 0);
 });

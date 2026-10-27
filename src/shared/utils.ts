@@ -1,7 +1,7 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
-import type { Project, ProjectSession, QuickSettingsTab, SlashCommand } from '@/shared/types';
+import type { LiveTurnTerms, Project, ProjectSession, QuickSettingsTab, SlashCommand } from '@/shared/types';
 
 //----------------- DEPLOYMENT MODE ------------
 
@@ -250,3 +250,37 @@ export const getQuickSettingsTabId = (tab: QuickSettingsTab): string => `quick-s
 
 /** DOM id of the tabpanel a quick settings tab controls; pairs with `getQuickSettingsTabId`. */
 export const getQuickSettingsTabPanelId = (tab: QuickSettingsTab): string => `quick-settings-tabpanel-${tab}`;
+
+// ---------------------------
+
+//----------------- LIVE TURNS ------------
+
+const isStringList = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+
+/**
+ * Reads the `liveTurn` terms the server puts on a running-sessions entry and
+ * on a turn's `complete`. Anything not in the expected shape reads as absent,
+ * which keeps the composer on the cautious path of asking before a send.
+ */
+export const parseLiveTurnTerms = (value: unknown): LiveTurnTerms | undefined => {
+  const terms = value as Partial<Record<keyof LiveTurnTerms, unknown>> | null;
+  if (
+    !terms
+    || typeof terms !== 'object'
+    || (terms.effort !== null && typeof terms.effort !== 'string')
+    || typeof terms.bypassPermissions !== 'boolean'
+    || typeof terms.planMode !== 'boolean'
+    || !isStringList(terms.allowedTools)
+    || !isStringList(terms.disallowedTools)
+  ) {
+    return undefined;
+  }
+  return {
+    effort: terms.effort,
+    bypassPermissions: terms.bypassPermissions,
+    planMode: terms.planMode,
+    allowedTools: terms.allowedTools,
+    disallowedTools: terms.disallowedTools,
+  };
+};

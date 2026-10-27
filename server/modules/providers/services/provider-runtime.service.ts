@@ -97,6 +97,11 @@ export function createProviderRuntimeService(
       return Boolean(await runtime.stopBackgroundTask?.(sessionId, taskId));
     },
 
+    acceptsLiveTurn(sessionId: string, options: AnyRecord): boolean {
+      return dependencies.listProviders().some((provider) =>
+        Boolean(provider.runtime.acceptsLiveTurn?.(sessionId, options)));
+    },
+
     hasBackgroundWork(sessionId: string): boolean {
       return dependencies.listProviders().some((provider) =>
         (provider.runtime.listBackgroundWork?.() ?? []).some((entry) => entry.sessionId === sessionId));

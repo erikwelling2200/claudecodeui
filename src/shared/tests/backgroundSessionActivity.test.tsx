@@ -131,3 +131,34 @@ test('a poll that changes what it says about a listed task is not dropped as a r
   assert.equal(listed?.nested, true);
   assert.equal(listed?.description, 'Audit the whole frontend');
 });
+
+test('whether the held process can take a turn comes from the turn\'s end and the poll, not from a task settling', () => {
+  const { result } = renderHook(() => useSessionProtection());
+  const terms = { effort: null, bypassPermissions: false, planMode: false, allowedTools: [], disallowedTools: [] };
+  const first = task();
+  const second = task({ taskId: 'a2', toolUseId: 'toolu_agent_2', taskType: 'local_agent', description: 'Survey' });
+
+  act(() => {
+    result.current.markSessionBackground('session-1', [first, second], terms);
+  });
+  assert.deepEqual(result.current.getSessionActivity('session-1')?.liveTurn, terms);
+
+  act(() => {
+    // One task settles; the process is unchanged.
+    result.current.markSessionBackground('session-1', [second]);
+  });
+  assert.deepEqual(result.current.getSessionActivity('session-1')?.liveTurn, terms);
+
+  act(() => {
+    // A turn ended in a process that cannot take another.
+    result.current.markSessionBackground('session-1', [second], null);
+  });
+  assert.equal(result.current.getSessionActivity('session-1')?.liveTurn, undefined);
+
+  act(() => {
+    result.current.syncProcessingSessions([
+      { sessionId: 'session-1', startedAt: second.startedAt, canInterrupt: false, background: true, tasks: [second], liveTurn: terms },
+    ]);
+  });
+  assert.deepEqual(result.current.getSessionActivity('session-1')?.liveTurn, terms, 'the poll reports it too');
+});

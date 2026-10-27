@@ -2,6 +2,7 @@ import type {
   AnyRecord,
   BackgroundTaskSummary,
   CliVersionProbe,
+  LiveTurnTerms,
   FetchHistoryOptions,
   FetchHistoryResult,
   LLMProvider,
@@ -45,7 +46,14 @@ export interface IProviderRuntime {
    * such work has anything to report; the others leave this undefined and the
    * running-sessions list falls back to chat runs alone.
    */
-  listBackgroundWork?(): Array<{ sessionId: string; tasks: BackgroundTaskSummary[] }>;
+  listBackgroundWork?(): Array<{ sessionId: string; tasks: BackgroundTaskSummary[]; liveTurn?: LiveTurnTerms }>;
+  /**
+   * Whether a turn with these `chat.send` options would be delivered into the
+   * process the session's previous turn left running for its background work,
+   * instead of replacing that process (and stopping the work). Only a runtime
+   * that can take a new turn as streaming input implements it.
+   */
+  acceptsLiveTurn?(sessionId: string, options: AnyRecord): boolean;
   /**
    * Stops one outstanding background task. Resolves false when the session has
    * no live process or that process is not tracking the task — it already

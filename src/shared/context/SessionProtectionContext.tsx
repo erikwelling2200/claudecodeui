@@ -12,6 +12,7 @@ import {
 } from '@/shared/hooks/useSessionProtection';
 import type { BackgroundTaskSummary, GetSessionActivity, IsSessionProcessing, MarkSessionBackground, MarkSessionIdle, MarkSessionProcessing, SessionActivity, SessionActivityMap, SyncProcessingSessions } from '@/shared/types';
 import { api } from '@/shared/api';
+import { parseLiveTurnTerms } from '@/shared/utils';
 
 type RunningSessionApiItem = {
   sessionId?: unknown;
@@ -20,6 +21,7 @@ type RunningSessionApiItem = {
   canInterrupt?: unknown;
   background?: unknown;
   tasks?: unknown;
+  liveTurn?: unknown;
 };
 
 type RunningSessionsApiPayload = {
@@ -156,6 +158,7 @@ export function SessionProtectionProvider({ children }: { children: ReactNode })
               canInterrupt: typeof session.canInterrupt === 'boolean' ? session.canInterrupt : undefined,
               background: session.background === true,
               tasks: parseBackgroundTasks(session.tasks),
+              liveTurn: parseLiveTurnTerms(session.liveTurn),
             };
           })
           .filter((session): session is NonNullable<typeof session> => Boolean(session)),
