@@ -683,6 +683,7 @@ export type ProviderRuntimeContext = {
     stopTask?(taskId: string): Promise<void>;
     setModel?(model?: string): Promise<void>;
     setPermissionMode?(mode: string): Promise<void>;
+    close?(): void;
   };
 };
 

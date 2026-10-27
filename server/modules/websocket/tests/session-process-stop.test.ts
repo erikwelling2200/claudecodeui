@@ -14,15 +14,23 @@ import { handleShellConnection } from '@/modules/websocket/services/shell-websoc
 
 type AbortCall = { provider: string; sessionId: string };
 
-function createRuntime(hasBackgroundWork = false) {
+function createRuntime(hasBackgroundWork = false, hasIdleProcess = false) {
   const aborts: AbortCall[] = [];
+  const released: string[] = [];
   return {
     aborts,
+    released,
     abort: async (provider: string, sessionId: string) => {
       aborts.push({ provider, sessionId });
       return true;
     },
     hasBackgroundWork: () => hasBackgroundWork,
+    releaseIdleProcess: (sessionId: string) => {
+      if (hasIdleProcess) {
+        released.push(sessionId);
+      }
+      return hasIdleProcess;
+    },
   };
 }
 
@@ -118,6 +126,16 @@ test('only the shell ptys opened on the session are killed', async () => {
   assert.equal(otherPty.killed, false);
   assert.deepEqual(runtime.aborts, []);
   otherPty.kill();
+});
+
+test('a process kept between turns with nothing outstanding is let go', async () => {
+  const runtime = createRuntime(false, true);
+
+  const stopped = await stopAppSessionProcesses('idle-live-session', runtime as never);
+
+  assert.equal(stopped, true);
+  assert.deepEqual(runtime.released, ['idle-live-session']);
+  assert.deepEqual(runtime.aborts, []);
 });
 
 test('a session with nothing running reports that nothing was stopped', async () => {

@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { closeConnection, initializeDatabase, sessionsDb } from '@/modules/database/index.js';
+import { providerRegistry } from '@/modules/providers/provider.registry.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 
 async function withIsolatedDatabase(runTest: (tempDirectory: string) => Promise<void>): Promise<void> {
@@ -71,5 +72,21 @@ test('a plain archive leaves running processes alone', { concurrency: false }, a
 
     assert.equal(stopperCalls, 0);
     assert.equal(sessionsDb.getSessionById('plain')?.isArchived, 1);
+  });
+});
+
+test('archiving or deleting a chat lets go of the process it keeps between turns', { concurrency: false }, async (t) => {
+  await withIsolatedDatabase(async (tempDirectory) => {
+    const released: string[] = [];
+    t.mock.method(providerRegistry, 'listProviders', () => [
+      { id: 'claude', runtime: { releaseIdleProcess: (sessionId: string) => { released.push(sessionId); return true; } } },
+    ]);
+    sessionsDb.createAppSession('closed-chat', 'claude', tempDirectory);
+    sessionsDb.createAppSession('deleted-chat', 'claude', tempDirectory);
+
+    await sessionsService.deleteOrArchiveSessionById('closed-chat');
+    await sessionsService.deleteOrArchiveSessionById('deleted-chat', { force: true });
+
+    assert.deepEqual(released, ['closed-chat', 'deleted-chat']);
   });
 });

@@ -740,6 +740,12 @@ export const sessionsService = {
 
     if (options.stopProcesses) {
       await sessionsService.stopSessionProcesses(sessionId);
+    } else {
+      // A closed chat does not keep its CLI process (and MCP servers) alive.
+      // A turn still running is left to finish, as a plain archive always has.
+      for (const provider of providerRegistry.listProviders()) {
+        provider.runtime.releaseIdleProcess?.(sessionId);
+      }
     }
 
     if (!options.force) {

@@ -96,7 +96,7 @@ type LiveTurnDelivery = {
 type LiveProcess = {
   /** The launch options the SDK cannot change on a running query. */
   terms: LiveTurnTerms;
-  /** True while the process sits between turns, held open for background work. */
+  /** True while the process sits between turns with nothing in flight. */
   canTakeTurn(): boolean;
   /**
    * Pushes the turn into the process. Resolves null without touching the
@@ -108,11 +108,10 @@ type LiveProcess = {
   /**
    * Interrupts a turn that was delivered into the process without tearing
    * the process down: the turn settles on the `result` the interrupt ends it
-   * with, and the hold is decided from whatever is still outstanding then.
-   * The CLI's interrupt stops the background tasks it has running (seen
-   * through SDK 0.3.165 against a real CLI), so usually the process is let
-   * go right after; anything that survives keeps reporting. False when the
-   * turn in flight is the one the process was started for, which an abort
+   * with, and the process then waits for the next turn. The CLI's interrupt
+   * stops the background tasks it has running (seen through SDK 0.3.165
+   * against a real CLI); anything that survives keeps reporting. False when
+   * the turn in flight is the one the process was started for, which an abort
    * stops as it always has.
    */
   interruptTurn(): Promise<boolean>;
@@ -154,24 +153,19 @@ const supersededInstances = new WeakSet<ClaudeQuery>();
 
 const TOOL_APPROVAL_TIMEOUT_MS = parseInt(process.env.CLAUDE_TOOL_APPROVAL_TIMEOUT_MS ?? '', 10) || 55000;
 
-// How long background work is allowed to keep running after a turn ends. This drives
-// two halves of the same behaviour:
+// Passed to the spawned CLI as CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: how long, once
+// its stdin has ended, it waits for still-running background *agents* before
+// killing them.
 //
-//  1. Passed to the spawned CLI as CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS, which is how
-//     long it waits for still-running background *agents* before killing them.
-//  2. A backstop on how long we hold the SDK's stdin open after a turn's `result`.
-//     The SDK closes stdin as soon as a turn ends, and the CLI reads that EOF as
-//     "print wind-down" — killing background *shells* after a short grace period,
-//     which the ceiling above does not cover. Holding stdin open also lets the CLI
-//     push follow-up turns (background-task completions, Monitor notifications,
-//     scheduled wake-ups).
-//
-// The hold normally ends long before this: a turn with nothing outstanding closes
-// stdin immediately, background work releases it as soon as it reports back, and a
-// new turn either goes into the held process or supersedes it. This ceiling only
-// catches background work
-// that never reports at all, so an abandoned session cannot leak a CLI process
-// forever. The timer resets on every message, so it measures silence, not total time.
+// Stdin itself is never ended on a timer. A session's process stays up between
+// turns for as long as the chat is open, so its MCP servers and background work
+// survive and every later turn goes into it as streaming input (see LiveProcess).
+// It is let go only when the chat is archived or deleted
+// (`releaseClaudeSDKIdleProcess`), when a turn needs a process launched with other
+// options (`releaseHeldSession`), on an abort of the turn it was started for, and
+// at server shutdown (`closeAllClaudeSDKProcesses`). Ending stdin is what the CLI
+// reads as "print wind-down", which also kills background *shells* after a short
+// grace period.
 const BG_WAIT_CEILING_MS = 30 * 60 * 1000;
 
 const TOOLS_REQUIRING_INTERACTION = new Set(['AskUserQuestion', 'ExitPlanMode']);
@@ -817,12 +811,11 @@ const DEFERRED_WORK_TOOLS = new Set(['Monitor', 'ScheduleWakeup', 'CronCreate', 
 /**
  * Detects tool calls that keep working after the turn's `result` arrives.
  *
- * Only turns that start background work need their CLI process held open; every
- * other turn can let it exit immediately, as it did before the hold existed.
+ * The process stays up after every turn; this only decides whether a later
+ * `result` is that work reporting back (for tools whose work emits no task
+ * events, which the tracker would otherwise know about).
  *
- * Used by the providers module's tests, which pin the tool matching directly:
- * the alternative is driving a whole SDK run to observe whether stdin was held,
- * and the cost of getting this wrong is silently killed background work.
+ * Used by the providers module's tests, which pin the tool matching directly.
  *
  * @param {Object} sdkMessage - SDK stream message
  * @returns {boolean} True when the message launches work that outlives the turn
@@ -841,7 +834,7 @@ export function startsBackgroundWork(sdkMessage: AnyRecord | null | undefined) {
       return block.input?.run_in_background === true;
     }
     // A backgrounded subagent outlives the turn exactly like a backgrounded
-    // Bash does, so the process has to be held open for it to report back.
+    // Bash does, and reports back in a follow-up turn the same way.
     // Agents background by default — `run_in_background` is optional and only
     // an explicit `false` opts out — hence `!== false` rather than `=== true`.
     // A foreground agent must stay out of DEFERRED_WORK_TOOLS: it never pushes
@@ -1186,11 +1179,10 @@ async function loadMcpConfig(cwd: string | undefined): Promise<AnyRecord | null>
 /**
  * Executes a Claude query using the SDK.
  *
- * When the session's previous turn left its process held open for background
- * work, the turn is pushed into that process as streaming input instead (see
- * LiveProcess): the parent answers at once and the work keeps running. Edits
- * and option changes the SDK cannot apply to a running query still start a
- * new process.
+ * A session's process stays up between turns, so a later turn is pushed into
+ * it as streaming input (see LiveProcess): its MCP servers stay connected and
+ * any background work keeps running. Edits and option changes the SDK cannot
+ * apply to a running query still start a new process.
  * @param {string} command - User prompt/command
  * @param {Object} options - Query options
  * @param {Object} ws - WebSocket connection
@@ -1241,20 +1233,22 @@ async function queryClaudeSDK(
   // Pushes a later turn into the held stdin stream; false once it is closed.
   let pushPrompt: (messages: unknown[]) => boolean = () => false;
   let promptReleased = false;
-  let idleReleaseTimer: ReturnType<typeof setTimeout> | null = null;
-  // The client is told the turn is over as soon as `result` lands, even though
-  // the process lingers, so the UI never waits out the idle hold.
+  // True from a turn's `result` until the next turn is pushed in: the process
+  // is up with nothing in flight and can take the next turn.
+  let betweenTurns = false;
+  // The client is told the turn is over as soon as `result` lands; the process
+  // stays up for the next one.
   let turnCompleteSent = false;
   // Set when a turn starts background work, cleared when the next `result`
-  // arrives — only turns with work still outstanding hold their process open.
+  // arrives.
   let backgroundWorkPending = false;
   // Set when the stream reports a task starting during this turn. Task events
   // are the exact word on what is still running, so when the turn produced
-  // any, the tracker decides the hold; `startsBackgroundWork` is the fallback
+  // any, the tracker decides; `startsBackgroundWork` is the fallback
   // for tools that emit none (Monitor, ScheduleWakeup, CronCreate, TaskCreate)
   // and for an SDK that does not report tasks at all.
   let sawTaskEventThisTurn = false;
-  // True while the process is being held open for background work, so a later
+  // True while the turn that ended left background work going, so a later
   // `result` can be recognised as that work reporting back.
   let heldForBackgroundWork = false;
   // Set once a turn publishes a budget read from an assistant message, so the
@@ -1268,54 +1262,22 @@ async function queryClaudeSDK(
   let mainThreadModel: string | null = null;
   let lastSentTokenBudget: TokenBudget | null = null;
 
-  // Arms (or re-arms) the idle countdown that eventually closes stdin.
-  const scheduleRelease = () => {
-    if (idleReleaseTimer) {
-      clearTimeout(idleReleaseTimer);
-      idleReleaseTimer = null;
-    }
-    idleReleaseTimer = setTimeout(() => {
-      idleReleaseTimer = null;
-      releasePromptStream();
-    }, BG_WAIT_CEILING_MS);
-    // Never let the hold keep the server process alive on its own.
-    idleReleaseTimer?.unref?.();
-  };
-
-  // Decides, once a turn is over, whether the process stays up for the work
-  // it still has going. Returns true when it is held.
+  // Marks the process as between turns once a turn is over, and notes whether
+  // that turn left background work going. The process stays up either way.
   //
   // Work started during this turn, or work from an earlier turn that has not
   // settled yet (a follow-up turn reports one task in while another is still
-  // going), is still running. Hold the process open so it can finish and
-  // report back in a follow-up turn; the ceiling is only a backstop for work
-  // that never reports.
-  //
-  // The release when the last task settles is this same decision on the
-  // follow-up turn the CLI pushes for it, not the settling event itself:
-  // closing stdin at that moment would cut the turn that relays the task's
-  // result.
-  //
-  // When the turn reported its tasks, the tracker is the whole truth: an Agent
-  // call without `run_in_background` is scored as background by
+  // going), is still running and reports back in a follow-up turn the CLI
+  // pushes. When the turn reported its tasks, the tracker is the whole truth:
+  // an Agent call without `run_in_background` is scored as background by
   // `startsBackgroundWork`, but the CLI runs it in the foreground and it has
-  // settled before this `result` — holding for it kept a process alive for
-  // the full ceiling with nothing outstanding.
-  const decideHold = () => {
+  // settled before this `result`.
+  const settleBetweenTurns = () => {
     const stillOutstanding = backgroundWork.hasOutstanding(sessionKey()!);
-    const holdForTurn = sawTaskEventThisTurn ? stillOutstanding : backgroundWorkPending || stillOutstanding;
+    heldForBackgroundWork = sawTaskEventThisTurn ? stillOutstanding : backgroundWorkPending || stillOutstanding;
     backgroundWorkPending = false;
     sawTaskEventThisTurn = false;
-    if (holdForTurn) {
-      heldForBackgroundWork = true;
-      scheduleRelease();
-    } else {
-      // Either nothing was backgrounded, or the background work just
-      // reported in — let the CLI exit now, as it always has.
-      heldForBackgroundWork = false;
-      releasePromptStream();
-    }
-    return holdForTurn;
+    betweenTurns = true;
   };
 
   // Ends a delivered turn's run promise, and an interrupt's wait for the
@@ -1545,7 +1507,7 @@ async function queryClaudeSDK(
         return Boolean(
           key
           && capturedSessionId
-          && (heldForBackgroundWork || deliveredTurnInterrupted)
+          && (betweenTurns || deliveredTurnInterrupted)
           && !promptReleased
           && !abortedSessionIds.has(key)
           && getSession(key)?.instance === instance
@@ -1612,13 +1574,9 @@ async function queryClaudeSDK(
         planModeGrants.clear();
         syncPlanModeTools(sdkOptions.allowedTools, planModeGrants, turn.options.permissionMode);
 
-        // The turn takes the process over: no idle countdown while it runs,
-        // and its own `result` decides the hold afresh.
-        if (idleReleaseTimer) {
-          clearTimeout(idleReleaseTimer);
-          idleReleaseTimer = null;
-        }
+        // The turn takes the process over until its own `result`.
         settleTurn();
+        betweenTurns = false;
         heldForBackgroundWork = false;
         backgroundWorkPending = false;
         sawTaskEventThisTurn = false;
@@ -1657,12 +1615,12 @@ async function queryClaudeSDK(
           return false;
         }
         // The interrupted turn normally ends with a `result`, which settles
-        // it and decides the hold. Should none come, settle here, so the run
-        // is not left open and the process not held without a countdown.
+        // it and puts the process between turns. Should none come, settle
+        // here, so the run is not left open and the process can take a turn.
         const fallback = setTimeout(() => {
           if (deliveredTurnInterrupted) {
             settleTurn();
-            decideHold();
+            settleBetweenTurns();
           }
         }, INTERRUPT_SETTLE_MS);
         fallback.unref?.();
@@ -1777,23 +1735,6 @@ async function queryClaudeSDK(
       }
       backgroundWork.apply(sessionKey()!, message);
 
-      // A task the user stopped gets no follow-up turn from the CLI — only its
-      // `stopped` notification — so when that was the last outstanding task
-      // nothing will ever push the `result` the release below waits for, and
-      // the process would sit until the idle ceiling. Release it here. A
-      // completed task is different: the CLI relays its result in a turn of
-      // its own, which closing stdin now would cut short.
-      if (
-        heldForBackgroundWork
-        && message.type === 'system'
-        && message.subtype === 'task_notification'
-        && message.status === 'stopped'
-        && !backgroundWork.hasOutstanding(sessionKey()!)
-      ) {
-        heldForBackgroundWork = false;
-        releasePromptStream();
-      }
-
       if (message.type === 'result') {
         // The turn is done as far as the client is concerned.
         const abortPending = sessionKey() ? abortedSessionIds.has(sessionKey()) : false;
@@ -1806,14 +1747,14 @@ async function queryClaudeSDK(
           && !abortPending
           && !backgroundWork.hasOutstanding(sessionKey()!);
 
-        const held = decideHold();
+        settleBetweenTurns();
 
         if (completesTurn) {
           turnCompleteSent = true;
           turnWriter.send({
             ...createCompleteMessage({ provider: 'claude', sessionId: capturedSessionId || sessionId || null, exitCode: 0 }),
             // Tells the composer the next turn can go into this process.
-            ...(held && liveProcess.canTakeTurn() ? { liveTurn: launchTerms } : {}),
+            ...(liveProcess.canTakeTurn() ? { liveTurn: launchTerms } : {}),
           });
           notifyRunStopped({
             userId: turnWriter?.userId || null,
@@ -1833,9 +1774,6 @@ async function queryClaudeSDK(
         // A delivered turn's run ends with its `result` (after the `complete`
         // above), as does an interrupt's wait for it.
         settleTurn();
-      } else if (idleReleaseTimer) {
-        // Background activity after the turn — push the countdown back out.
-        scheduleRelease();
       }
     }
 
@@ -1914,10 +1852,6 @@ async function queryClaudeSDK(
   } finally {
     // Always close stdin — otherwise an aborted or failed run leaves the CLI
     // process (and its MCP servers) alive until the server exits.
-    if (idleReleaseTimer) {
-      clearTimeout(idleReleaseTimer);
-      idleReleaseTimer = null;
-    }
     releasePromptStream();
     // A turn delivered into this process ends with it.
     settleTurn();
@@ -1937,8 +1871,8 @@ async function abortClaudeSDKSession(sessionId: string) {
     return false;
   }
 
-  // A turn delivered into a process held for background work is interrupted
-  // in place and settles on its own `result`; see LiveProcess.interruptTurn.
+  // A turn delivered into a live process is interrupted in place and settles
+  // on its own `result`; see LiveProcess.interruptTurn.
   if (await session.liveProcess?.interruptTurn()) {
     return true;
   }
@@ -1975,10 +1909,10 @@ async function abortClaudeSDKSession(sessionId: string) {
 /**
  * Sessions whose background tasks are still outstanding, with the tasks.
  *
- * A session stays here after its turn's `result` for as long as the process
- * is held open for the work — which is exactly the window in which nothing
- * else (the chat run registry marks the run completed at `result`) knows the
- * session is still busy.
+ * A session stays here after its turn's `result` for as long as the work is
+ * outstanding — which is exactly the window in which nothing else (the chat
+ * run registry marks the run completed at `result`) knows the session is
+ * still busy. A process with nothing outstanding is idle and not listed.
  */
 function listClaudeSDKBackgroundWork(): Array<{
   sessionId: string;
@@ -2003,6 +1937,42 @@ function listClaudeSDKBackgroundWork(): Array<{
 function acceptsClaudeSDKLiveTurn(sessionId: string, options: AnyRecord): boolean {
   const liveProcess = getSession(sessionId)?.liveProcess;
   return Boolean(liveProcess?.canTakeTurn() && liveTurnTermsAccept(liveProcess.terms, readLiveTurnTerms(options)));
+}
+
+/**
+ * Lets go of the process a session keeps between turns, when no turn is in
+ * flight: its background tasks are stopped and stdin is ended, so the CLI and
+ * its MCP servers exit. A session with a turn running is left alone; the
+ * caller aborts that first if it means to.
+ *
+ * Used by the providers module's sessions service when a chat is archived or
+ * deleted, and by the websocket module's session-process stopper.
+ * @param {string} sessionId - Session identifier
+ * @returns {boolean} True when a process was let go
+ */
+function releaseClaudeSDKIdleProcess(sessionId: string): boolean {
+  if (!getSession(sessionId)?.liveProcess?.canTakeTurn()) {
+    return false;
+  }
+  releaseHeldSession(sessionId);
+  return true;
+}
+
+/**
+ * Ends every session process at once, for server shutdown. `close()` kills the
+ * CLI subprocess (and with it its MCP servers) synchronously, which is what a
+ * shutdown about to exit needs; ending stdin would leave the CLI waiting for
+ * its background agents with nobody listening.
+ */
+function closeAllClaudeSDKProcesses(): void {
+  for (const [sessionId, session] of activeSessions) {
+    try {
+      session.instance.close?.();
+    } catch (error) {
+      console.error(`Error closing the Claude process for session ${sessionId}:`, (error as Error)?.message || error);
+    }
+    session.releaseInput?.();
+  }
 }
 
 /**
@@ -2119,6 +2089,8 @@ export const claudeRuntime = {
   stopBackgroundTask: stopClaudeSDKTask,
   acceptsLiveTurn: acceptsClaudeSDKLiveTurn,
   setPermissionMode: setClaudeSDKPermissionMode,
+  releaseIdleProcess: releaseClaudeSDKIdleProcess,
+  closeAll: closeAllClaudeSDKProcesses,
 };
 
 // Export public API
@@ -2129,6 +2101,8 @@ export {
   stopClaudeSDKTask,
   acceptsClaudeSDKLiveTurn,
   setClaudeSDKPermissionMode,
+  releaseClaudeSDKIdleProcess,
+  closeAllClaudeSDKProcesses,
   isClaudeSDKSessionActive,
   getClaudeSDKSessionStartTime,
   getActiveClaudeSDKSessions,

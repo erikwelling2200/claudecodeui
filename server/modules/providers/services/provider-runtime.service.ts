@@ -97,6 +97,20 @@ export function createProviderRuntimeService(
       return Boolean(await runtime.stopBackgroundTask?.(sessionId, taskId));
     },
 
+    releaseIdleProcess(sessionId: string): boolean {
+      // Every provider is asked: the session row may be gone by the time a
+      // delete gets here, and a runtime without the process answers false.
+      return dependencies.listProviders()
+        .map((provider) => Boolean(provider.runtime.releaseIdleProcess?.(sessionId)))
+        .some(Boolean);
+    },
+
+    closeAll(): void {
+      for (const provider of dependencies.listProviders()) {
+        provider.runtime.closeAll?.();
+      }
+    },
+
     acceptsLiveTurn(sessionId: string, options: AnyRecord): boolean {
       return dependencies.listProviders().some((provider) =>
         Boolean(provider.runtime.acceptsLiveTurn?.(sessionId, options)));

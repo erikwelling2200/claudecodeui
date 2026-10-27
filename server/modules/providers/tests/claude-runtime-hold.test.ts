@@ -14,11 +14,12 @@ import {
 import type { NormalizedMessage, ProviderRuntimeContext } from '@/shared/types.js';
 
 /**
- * The runtime keeps the CLI's stdin open after a turn's `result` while the
- * turn's background work is outstanding, and lets go when that work has
- * reported. These drive `queryClaudeSDK` with a scripted SDK stream — the
- * seam is `context.createQuery` — and watch the held prompt stream: the CLI
- * exits when it ends, so "released" is the whole outcome.
+ * The runtime keeps the CLI's stdin open after every turn's `result`, so the
+ * process and its MCP servers stay up for the next turn whether or not
+ * background work is outstanding; only closing the chat or a turn that needs
+ * another process lets it go. These drive `queryClaudeSDK` with a scripted SDK
+ * stream — the seam is `context.createQuery` — and watch the held prompt
+ * stream: the CLI exits when it ends, so "released" is the whole outcome.
  */
 
 const SESSION_ID = 'app-hold-session';
@@ -131,7 +132,7 @@ const taskNotification = (taskId: string, toolUseId: string, status: string) => 
 });
 const result = () => ({ type: 'result', subtype: 'success', session_id: NATIVE_ID, result: 'launched', duration_ms: 1, num_turns: 1 });
 
-test('stopping the last outstanding task releases the held process', async () => {
+test('stopping the last outstanding task leaves the process up for the next turn', async () => {
   await withRun(async ({ script, sent, done }) => {
     script.emit(init());
     script.emit(toolUse('toolu_wf', 'Workflow', { script: 'export const meta = {}' }));
@@ -152,12 +153,12 @@ test('stopping the last outstanding task releases the held process', async () =>
     await settle();
 
     assert.deepEqual(listClaudeSDKBackgroundWork(), []);
-    assert.equal(script.released(), true, 'the process is let go once nothing is outstanding');
+    assert.equal(script.released(), false, 'nothing is outstanding, and the process stays for the next turn');
     void done;
   });
 });
 
-test('a task that reported completed keeps the hold for the turn that relays its result', async () => {
+test('the turn that relays a completed task\'s result leaves the process up', async () => {
   await withRun(async ({ script }) => {
     script.emit(init());
     script.emit(toolUse('toolu_wf', 'Workflow', { script: 'export const meta = {}' }));
@@ -174,11 +175,12 @@ test('a task that reported completed keeps the hold for the turn that relays its
 
     script.emit(result());
     await settle();
-    assert.equal(script.released(), true, 'the follow-up turn\'s result ends the hold');
+    assert.deepEqual(listClaudeSDKBackgroundWork(), []);
+    assert.equal(script.released(), false, 'the work is done, and the process stays for the next turn');
   });
 });
 
-test('an agent that ran in the foreground and settled before the result does not hold the process', async () => {
+test('an agent that ran in the foreground and settled before the result is not listed as background work', async () => {
   await withRun(async ({ script, sent }) => {
     // An Agent call without `run_in_background` is scored as background by
     // the static rule, but the CLI ran it in the foreground: its task started
@@ -189,10 +191,10 @@ test('an agent that ran in the foreground and settled before the result does not
     script.emit(taskNotification('a1', 'toolu_agent', 'completed'));
     script.emit(ack('toolu_agent', 'FOUR', { status: 'completed', agentId: 'a1' }));
     script.emit(result());
-    await waitFor(() => script.released());
+    await waitFor(() => sent.some((message) => message.kind === 'complete'));
 
     assert.deepEqual(listClaudeSDKBackgroundWork(), []);
-    assert.equal(script.released(), true, 'nothing is outstanding, so nothing to hold for');
+    assert.equal(script.released(), false, 'the process stays up anyway');
   });
 });
 
@@ -291,13 +293,15 @@ test('a held process is still let go when stopping its tasks throws', async () =
     second.script.emit(result());
     second.script.end();
     await secondRun;
+    // Its stdin ends once its stream does, not at its `result`.
+    await waitFor(() => second.script.released());
     assert.equal(second.script.released(), true, 'the new turn ran to completion');
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test('a turn whose tool emits no task events still holds on the static rule', async () => {
+test('a turn whose tool emits no task events leaves the process up', async () => {
   await withRun(async ({ script }) => {
     script.emit(init());
     script.emit(toolUse('toolu_monitor', 'Monitor', { command: 'tail -f x', description: 'watch', timeout_ms: 1000 }));
@@ -305,6 +309,6 @@ test('a turn whose tool emits no task events still holds on the static rule', as
     script.emit(result());
     await settle();
 
-    assert.equal(script.released(), false, 'Monitor reports no task, so the launch rule decides');
+    assert.equal(script.released(), false);
   });
 });

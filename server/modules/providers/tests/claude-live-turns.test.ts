@@ -9,17 +9,20 @@ import { CLAUDE_PREDEFINED_MODELS } from '@/modules/providers/list/claude/claude
 import {
   abortClaudeSDKSession,
   acceptsClaudeSDKLiveTurn,
+  closeAllClaudeSDKProcesses,
   listClaudeSDKBackgroundWork,
   queryClaudeSDK,
+  releaseClaudeSDKIdleProcess,
 } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import type { NormalizedMessage, ProviderRuntimeContext } from '@/shared/types.js';
 
 /**
- * A turn sent while the previous one's background work still holds the CLI
- * process open goes into that process as streaming input, the way the CLI
- * takes a new prompt while its agents run: no interrupt, no new process, and
- * the work keeps running and reporting. Options only a launch can set still
- * start a new process. Driven with a scripted SDK stream through
+ * A session's CLI process stays up between turns, whether or not background
+ * work is outstanding, and every later turn goes into it as streaming input,
+ * the way the CLI takes a new prompt: no interrupt, no new process, MCP
+ * servers stay connected and any work keeps running and reporting. Options
+ * only a launch can set still start a new process, and closing the chat lets
+ * the process go. Driven with a scripted SDK stream through
  * `context.createQuery`, which also records what reaches the CLI's stdin.
  */
 
@@ -94,6 +97,7 @@ function createScriptedQuery(): { createQuery: NonNullable<ProviderRuntimeContex
       stopTask: async (taskId: string) => { calls.push(`stopTask:${taskId}`); },
       setModel: async (model?: string) => { calls.push(`setModel:${model}`); },
       setPermissionMode: async (mode: string) => { calls.push(`setPermissionMode:${mode}`); },
+      close: () => { calls.push('close'); },
     });
   };
 
@@ -137,9 +141,9 @@ const createWriter = (): Writer => {
 };
 
 /**
- * Starts a session whose first turn launches a background agent and ends,
- * leaving the process held for it. Hands the test the pieces to send the
- * next turn with, and winds everything down afterwards.
+ * Starts a session whose first turn ends, by default with a background agent
+ * still running. Hands the test the pieces to send the next turn with, and
+ * winds everything down afterwards.
  */
 async function withHeldSession(
   sessionId: string,
@@ -151,6 +155,7 @@ async function withHeldSession(
     send: (command: string, options?: Record<string, unknown>) => { writer: Writer; run: Promise<void> };
   }) => Promise<void>,
   firstOptions: Record<string, unknown> = {},
+  { withBackgroundAgent = true }: { withBackgroundAgent?: boolean } = {},
 ): Promise<void> {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'claude-live-turns-'));
   const { createQuery, script, queries } = createScriptedQuery();
@@ -171,12 +176,16 @@ async function withHeldSession(
   try {
     await settle();
     script.emit(init());
-    script.emit(toolUse('toolu_agent', 'Agent', { prompt: 'sleep 60', subagent_type: 'general-purpose', run_in_background: true }));
-    script.emit(taskStarted('a1', 'toolu_agent'));
+    if (withBackgroundAgent) {
+      script.emit(toolUse('toolu_agent', 'Agent', { prompt: 'sleep 60', subagent_type: 'general-purpose', run_in_background: true }));
+      script.emit(taskStarted('a1', 'toolu_agent'));
+    } else {
+      script.emit(text('Hello.'));
+    }
     script.emit(result());
     await waitFor(() => first.completes().length === 1);
     providerSessionId = NATIVE_ID;
-    assert.equal(script.released(), false, 'the process is held for the agent');
+    assert.equal(script.released(), false, 'the process stays up after the turn');
 
     await runTest({
       script,
@@ -225,13 +234,15 @@ test('a turn sent while background work runs goes into the live process', async 
     assert.equal(first.completes().length, 1, 'the first turn is not completed again');
     assert.equal(script.released(), false, 'still held: the agent has not reported');
 
-    // The agent's report reaches the stream, then its follow-up turn ends the hold.
+    // The agent's report reaches the stream; the process stays up after it.
     script.emit(taskNotification('a1', 'toolu_agent', 'completed'));
     script.emit(text('The agent finished.'));
     script.emit(result());
-    await waitFor(() => script.released());
-    assert.ok(second.writer.sent.some((message) => message.kind === 'text' && message.content === 'The agent finished.'));
+    await waitFor(() => second.writer.sent.some((message) => message.kind === 'text' && message.content === 'The agent finished.'));
+    await settle();
     assert.equal(second.writer.completes().length, 1);
+    assert.equal(script.released(), false);
+    assert.equal(acceptsClaudeSDKLiveTurn('app-live-deliver', {}), true);
   });
 });
 
@@ -306,7 +317,7 @@ test('an interrupted delivered turn settles on its own result, and work that sur
   });
 });
 
-test('an interrupt that stops the background work lets the process go once the turn has ended', async () => {
+test('an interrupt that stops the background work leaves the process up for the next turn', async () => {
   // What the real CLI does: its interrupt stops the running tasks too, then
   // ends the turn with an `error_during_execution` result.
   await withHeldSession('app-live-abort-stops', async ({ script, send }) => {
@@ -318,12 +329,13 @@ test('an interrupt that stops the background work lets the process go once the t
     assert.equal(script.released(), false, 'not while the interrupted turn is still winding down');
     script.emit({ ...result(), subtype: 'error_during_execution' });
     await second.run;
-    await waitFor(() => script.released());
-    assert.equal(acceptsClaudeSDKLiveTurn('app-live-abort-stops', {}), false);
+    assert.equal(script.released(), false);
+    assert.deepEqual(listClaudeSDKBackgroundWork().filter((entry) => entry.sessionId === 'app-live-abort-stops'), []);
+    assert.equal(acceptsClaudeSDKLiveTurn('app-live-abort-stops', {}), true);
   });
 });
 
-test('a delivered turn whose work has all reported lets the process go', async () => {
+test('a delivered turn whose work has all reported leaves the process up', async () => {
   await withHeldSession('app-live-release', async ({ script, send }) => {
     const second = send('anything new?');
     await waitFor(() => script.prompts.length === 2);
@@ -331,7 +343,62 @@ test('a delivered turn whose work has all reported lets the process go', async (
     script.emit(text('Yes, it finished.'));
     script.emit(result());
     await second.run;
-    await waitFor(() => script.released());
-    assert.equal(second.writer.completes()[0]?.liveTurn, undefined, 'nothing left to deliver into');
+    await settle();
+    assert.equal(script.released(), false);
+    assert.ok(second.writer.completes()[0]?.liveTurn, 'the next turn can still go in');
   });
+});
+
+test('a turn with no background work leaves the process up, and the next turn goes into it', async () => {
+  await withHeldSession('app-live-idle', async ({ script, queries, first, send }) => {
+    assert.ok(first.completes()[0]?.liveTurn);
+    assert.deepEqual(listClaudeSDKBackgroundWork().filter((entry) => entry.sessionId === 'app-live-idle'), [], 'idle, not busy');
+
+    const second = send('and now?');
+    await waitFor(() => script.prompts.length === 2);
+    script.emit(text('Now this.'));
+    script.emit(result());
+    await second.run;
+    assert.equal(queries(), 1, 'one process for both turns');
+    assert.deepEqual(script.calls, []);
+    assert.equal(script.released(), false);
+  }, {}, { withBackgroundAgent: false });
+});
+
+test('closing the chat lets the idle process go', async () => {
+  await withHeldSession('app-live-close', async ({ script, firstRun }) => {
+    assert.equal(releaseClaudeSDKIdleProcess('app-live-close'), true);
+    await waitFor(() => script.released());
+    script.end();
+    await firstRun;
+    assert.equal(releaseClaudeSDKIdleProcess('app-live-close'), false, 'nothing left to close');
+    assert.equal(acceptsClaudeSDKLiveTurn('app-live-close', {}), false);
+  }, {}, { withBackgroundAgent: false });
+});
+
+test('closing the chat stops its background work before letting the process go', async () => {
+  await withHeldSession('app-live-close-work', async ({ script }) => {
+    assert.equal(releaseClaudeSDKIdleProcess('app-live-close-work'), true);
+    assert.deepEqual(script.calls, ['stopTask:a1']);
+    await waitFor(() => script.released());
+  });
+});
+
+test('closing the chat leaves a turn in flight alone', async () => {
+  await withHeldSession('app-live-close-busy', async ({ script, send }) => {
+    const second = send('busy');
+    await waitFor(() => script.prompts.length === 2);
+    assert.equal(releaseClaudeSDKIdleProcess('app-live-close-busy'), false);
+    assert.equal(script.released(), false);
+    script.emit(result());
+    await second.run;
+  }, {}, { withBackgroundAgent: false });
+});
+
+test('server shutdown closes every session process', async () => {
+  await withHeldSession('app-live-shutdown', async ({ script }) => {
+    closeAllClaudeSDKProcesses();
+    assert.deepEqual(script.calls, ['close']);
+    await waitFor(() => script.released());
+  }, {}, { withBackgroundAgent: false });
 });
