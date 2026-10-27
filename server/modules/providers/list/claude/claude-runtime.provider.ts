@@ -104,9 +104,14 @@ type LiveProcess = {
    */
   deliverTurn(turn: LiveTurnDelivery): Promise<{ settled: Promise<void> } | null>;
   /**
-   * Interrupts a turn that was delivered into the process, leaving its
-   * background work running. False when the turn in flight is the one the
-   * process was started for, which an abort stops as it always has.
+   * Interrupts a turn that was delivered into the process without tearing
+   * the process down: the turn settles on the `result` the interrupt ends it
+   * with, and the hold is decided from whatever is still outstanding then.
+   * The CLI's interrupt stops the background tasks it has running (seen
+   * through SDK 0.3.165 against a real CLI), so usually the process is let
+   * go right after; anything that survives keeps reporting. False when the
+   * turn in flight is the one the process was started for, which an abort
+   * stops as it always has.
    */
   interruptTurn(): Promise<boolean>;
 };
@@ -1871,8 +1876,8 @@ async function abortClaudeSDKSession(sessionId: string) {
     return false;
   }
 
-  // A turn delivered into a process held for background work stops on its
-  // own; the work it shares the process with keeps running.
+  // A turn delivered into a process held for background work is interrupted
+  // in place and settles on its own `result`; see LiveProcess.interruptTurn.
   if (await session.liveProcess?.interruptTurn()) {
     return true;
   }

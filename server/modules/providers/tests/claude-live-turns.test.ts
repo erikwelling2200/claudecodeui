@@ -282,7 +282,7 @@ test('an edit resumes partway in a new process', async () => {
   });
 });
 
-test('interrupting a delivered turn leaves the background work running', async () => {
+test('an interrupted delivered turn settles on its own result, and work that survives keeps the process', async () => {
   await withHeldSession('app-live-abort', async ({ script, send }) => {
     const second = send('long question');
     await waitFor(() => script.prompts.length === 2);
@@ -303,6 +303,23 @@ test('interrupting a delivered turn leaves the background work running', async (
     script.emit(result());
     await third.run;
     assert.equal(third.writer.completes().length, 1);
+  });
+});
+
+test('an interrupt that stops the background work lets the process go once the turn has ended', async () => {
+  // What the real CLI does: its interrupt stops the running tasks too, then
+  // ends the turn with an `error_during_execution` result.
+  await withHeldSession('app-live-abort-stops', async ({ script, send }) => {
+    const second = send('long question');
+    await waitFor(() => script.prompts.length === 2);
+
+    assert.equal(await abortClaudeSDKSession('app-live-abort-stops'), true);
+    script.emit(taskNotification('a1', 'toolu_agent', 'stopped'));
+    assert.equal(script.released(), false, 'not while the interrupted turn is still winding down');
+    script.emit({ ...result(), subtype: 'error_during_execution' });
+    await second.run;
+    await waitFor(() => script.released());
+    assert.equal(acceptsClaudeSDKLiveTurn('app-live-abort-stops', {}), false);
   });
 });
 
