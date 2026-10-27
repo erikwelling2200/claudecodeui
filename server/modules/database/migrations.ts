@@ -16,6 +16,7 @@ import {
   USER_NOTIFICATION_PREFERENCES_TABLE_SCHEMA_SQL,
   VAPID_KEYS_TABLE_SCHEMA_SQL,
 } from '@/modules/database/schema.js';
+import { normalizeProjectPath } from '@/shared/utils.js';
 
 const SQLITE_UUID_SQL = `
 lower(hex(randomblob(4))) || '-' ||
@@ -490,6 +491,95 @@ const ensureProjectsForSessionPaths = (db: Database): void => {
   `);
 };
 
+type ProjectMergeRow = {
+  project_id: string;
+  project_path: string;
+  custom_project_name: string | null;
+  isStarred: number;
+  isArchived: number;
+  session_count: number;
+  last_session_at: string | null;
+};
+
+/**
+ * Folds together projects whose paths become the same once normalized (for
+ * example `c:\repo` and `C:\repo`), and stores every project path in its
+ * normalized form. The project with the most sessions survives and keeps its
+ * id; the others hand it their sessions, name, star and extra folders. Runs on
+ * every start, so rows an older build created are merged on the next one.
+ */
+const mergeProjectsWithSameNormalizedPath = (db: Database): void => {
+  if (!tableExists(db, 'projects') || !tableExists(db, 'sessions')) {
+    return;
+  }
+
+  const rows = db.prepare(`
+    SELECT p.project_id, p.project_path, p.custom_project_name, p.isStarred, p.isArchived,
+      (SELECT COUNT(*) FROM sessions s WHERE s.project_path = p.project_path) AS session_count,
+      (SELECT MAX(updated_at) FROM sessions s WHERE s.project_path = p.project_path) AS last_session_at
+    FROM projects p
+  `).all() as ProjectMergeRow[];
+
+  const groups = new Map<string, ProjectMergeRow[]>();
+  for (const row of rows) {
+    const normalizedPath = normalizeProjectPath(row.project_path);
+    if (normalizedPath) {
+      groups.set(normalizedPath, [...(groups.get(normalizedPath) ?? []), row]);
+    }
+  }
+
+  const moveSessions = db.prepare('UPDATE sessions SET project_path = ? WHERE project_path = ?');
+  const moveFolders = db.prepare(`
+    INSERT OR IGNORE INTO project_folders (project_id, folder_path, sort_order, created_at)
+    SELECT ?, folder_path, sort_order, created_at FROM project_folders WHERE project_id = ?
+  `);
+  const countFolders = db.prepare('SELECT COUNT(*) AS count FROM project_folders WHERE project_id = ?');
+  const deleteProject = db.prepare('DELETE FROM projects WHERE project_id = ?');
+  const updateSurvivor = db.prepare(`
+    UPDATE projects SET custom_project_name = ?, isStarred = ?, isArchived = ? WHERE project_id = ?
+  `);
+  const renameProjectPath = db.prepare('UPDATE projects SET project_path = ? WHERE project_id = ?');
+
+  const merge = db.transaction(() => {
+    for (const [normalizedPath, group] of groups) {
+      if (group.length === 1 && group[0].project_path === normalizedPath) {
+        continue;
+      }
+
+      const [survivor, ...duplicates] = [...group].sort((left, right) => (
+        right.session_count - left.session_count
+        || (right.last_session_at ?? '').localeCompare(left.last_session_at ?? '')
+      ));
+      let customName = survivor.custom_project_name;
+      let isStarred = survivor.isStarred;
+      let isArchived = survivor.isArchived;
+
+      for (const duplicate of duplicates) {
+        moveSessions.run(survivor.project_path, duplicate.project_path);
+        if ((countFolders.get(survivor.project_id) as { count: number }).count === 0) {
+          moveFolders.run(survivor.project_id, duplicate.project_id);
+        }
+        customName ??= duplicate.custom_project_name;
+        isStarred = Math.max(isStarred, duplicate.isStarred);
+        isArchived = Math.min(isArchived, duplicate.isArchived);
+        deleteProject.run(duplicate.project_id);
+      }
+
+      updateSurvivor.run(customName, isStarred, isArchived, survivor.project_id);
+      if (survivor.project_path !== normalizedPath) {
+        renameProjectPath.run(normalizedPath, survivor.project_id);
+        // A no-op when the foreign key's ON UPDATE CASCADE already moved them.
+        moveSessions.run(normalizedPath, survivor.project_path);
+      }
+
+      if (duplicates.length > 0) {
+        console.log(`[projects] merged ${duplicates.length + 1} projects into ${normalizedPath}`);
+      }
+    }
+  });
+  merge();
+};
+
 export const runMigrations = (db: Database) => {
   try {
     const usersTableInfo = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
@@ -537,6 +627,7 @@ export const runMigrations = (db: Database) => {
     addSessionEffortColumn(db);
     addForkedFromSessionIdColumn(db);
     ensureProjectsForSessionPaths(db);
+    mergeProjectsWithSameNormalizedPath(db);
     db.exec(SCHEDULED_MESSAGES_TABLE_SCHEMA_SQL);
 
     db.exec('CREATE INDEX IF NOT EXISTS idx_session_ids_lookup ON sessions(session_id)');

@@ -309,6 +309,7 @@ function shouldUseWindowsPathNormalization(inputPath: string): boolean {
  * - trim whitespace
  * - strip Windows long-path prefixes (`\\?\` and `\\?\UNC\`)
  * - normalize path separators and dot segments
+ * - upper-case a Windows drive letter
  * - trim trailing separators except for filesystem roots
  */
 export function normalizeProjectPath(inputPath: string): string {
@@ -323,8 +324,9 @@ export function normalizeProjectPath(inputPath: string): string {
 
   const withoutLongPrefix = stripWindowsLongPathPrefix(trimmed);
   const useWindowsPathRules = shouldUseWindowsPathNormalization(withoutLongPrefix);
+  // VS Code reports `c:\...` where a terminal reports `C:\...`; one spelling keeps them one project.
   const normalized = useWindowsPathRules
-    ? path.win32.normalize(withoutLongPrefix)
+    ? path.win32.normalize(withoutLongPrefix).replace(/^[a-z](?=:)/, (driveLetter) => driveLetter.toUpperCase())
     : path.posix.normalize(withoutLongPrefix);
 
   if (!normalized) {
