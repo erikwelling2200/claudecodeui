@@ -317,7 +317,7 @@ export function useChatSessionState({
   const { captureAnchor, clearAnchor } = useTranscriptScrollAnchor(
     scrollContainerRef,
     () => isActiveRef.current && !pendingInitialScrollRef.current && !searchScrollActiveRef.current,
-    `${selectedProject?.projectId}:${selectedSession?.id}:${isActive}`,
+    `${selectedProject?.projectId}:${selectedSession?.id}`,
   );
 
   const latestRefreshExecutorRef = useRef<(sessionId: string) => Promise<boolean | void>>(
