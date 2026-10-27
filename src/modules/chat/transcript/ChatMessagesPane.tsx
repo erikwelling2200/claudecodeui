@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { memo, useCallback, useMemo } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 
 import type { BackgroundTaskSummary,
@@ -26,6 +26,14 @@ import { BackgroundTasksStrip } from '@/modules/chat/transcript/BackgroundTasksS
  * near the viewport. Covers a bit more than one screen of typical rows.
  */
 const INITIAL_MOUNTED_TAIL_ROWS = 30;
+
+/**
+ * An older page arriving adds up to this many rows, and they mount with real
+ * content too. A placeholder that was never measured guesses its height, and
+ * correcting that guess above the viewport moves the history being read. "Load
+ * all" adds far more rows and keeps the placeholders, which is what they are for.
+ */
+const MAX_EAGERLY_MOUNTED_NEW_ROWS = 60;
 
 type ChatMessagesPaneProps = {
   scrollContainerRef: RefObject<HTMLDivElement>;
@@ -179,6 +187,15 @@ function ChatMessagesPane({
     return keys;
   }, [groupedVisibleMessages]);
 
+  const committedRowCountRef = useRef(0);
+  const addedRowCount = groupedVisibleMessages.length - committedRowCountRef.current;
+  const mountNewRowsEagerly = committedRowCountRef.current > 0
+    && addedRowCount > 0
+    && addedRowCount <= MAX_EAGERLY_MOUNTED_NEW_ROWS;
+  useEffect(() => {
+    committedRowCountRef.current = groupedVisibleMessages.length;
+  });
+
   const getMessageKey = useCallback(
     (message: ChatMessage) =>
       messageKeyMap.get(message) ?? getIntrinsicMessageKey(message) ?? 'message-generated',
@@ -190,7 +207,7 @@ function ChatMessagesPane({
       ref={scrollContainerRef}
       onWheel={onWheel}
       onTouchMove={onTouchMove}
-      className={`chat-messages-pane relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden pt-3 sm:pt-4 ${
+      className={`chat-messages-pane relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden pt-3 [overflow-anchor:none] sm:pt-4 ${
         hasActivityIndicator ? 'pb-12 sm:pb-14' : 'pb-3 sm:pb-4'
       }`}
     >
@@ -300,8 +317,9 @@ function ChatMessagesPane({
             return groupedVisibleMessages.map((item, index) => {
               // Rows near the tail mount their content on first commit so the
               // initial scroll-to-bottom measures real heights; older rows
-              // start as placeholders and mount when scrolled toward.
-              const initiallyNearViewport = index >= rowCount - INITIAL_MOUNTED_TAIL_ROWS;
+              // start as placeholders and mount when scrolled toward. Only a
+              // row's first render reads this, so existing rows are unaffected.
+              const initiallyNearViewport = mountNewRowsEagerly || index >= rowCount - INITIAL_MOUNTED_TAIL_ROWS;
 
               if (isToolGroupItem(item)) {
                 const groupPrevMessage = prevMessage;
