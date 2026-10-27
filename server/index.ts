@@ -14,8 +14,9 @@ import {
     closeSessionsWatcher,
     initializeSessionsWatcher,
     providerRuntimeService,
+    sessionsService,
 } from '@/modules/providers/index.js';
-import { chatRunRegistry, createWebSocketServer } from '@/modules/websocket/index.js';
+import { chatRunRegistry, createWebSocketServer, stopAppSessionProcesses } from '@/modules/websocket/index.js';
 
 import { getConnectableHost } from '../shared/networkHosts.js';
 
@@ -102,6 +103,8 @@ const agentRoutes = createAgentModule({
 // A completed run stays subscribable while its session's background work
 // (agents, workflows, backgrounded commands) is still reporting through it.
 chatRunRegistry.setRetentionGuard((sessionId) => providerRuntimeService.hasBackgroundWork(sessionId));
+// Archiving a session with `stopProcesses` stops the runs and shell ptys the websocket layer owns.
+sessionsService.setAppSessionProcessStopper((sessionId) => stopAppSessionProcesses(sessionId, providerRuntimeService));
 
 createWebSocketServer(server, {
     verifyClient: {

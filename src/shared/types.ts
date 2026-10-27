@@ -1546,6 +1546,8 @@ export type SessionRowActions = {
   onDeleteSession: (sessionId: string, sessionTitle: string) => void;
   /** Branches a session into an independent one. Rows hide it for providers that cannot. */
   onForkSession?: (session: SessionWithProvider) => void;
+  /** Archives a session at once, stopping every CLI process attached to it. Rows bind it to a middle-click. */
+  onArchiveSessionNow: (sessionId: string) => void;
 };
 
 export type SidebarProjectListProps = SessionRowActions & {

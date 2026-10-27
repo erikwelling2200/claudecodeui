@@ -40,6 +40,8 @@ type PtySessionEntry = {
 
 const ptySessionsMap = new Map<string, PtySessionEntry>();
 const PTY_SESSION_TIMEOUT = 30 * 60 * 1000;
+// A killed pty normally reports its exit within milliseconds; this only bounds a wedged one.
+const PTY_KILL_EXIT_TIMEOUT = 3000;
 const SHELL_URL_PARSE_BUFFER_LIMIT = 32768;
 const TRAILING_URL_PUNCTUATION_REGEX = /[)\]}>.,;:!?]+$/;
 
@@ -112,6 +114,30 @@ function shouldAutoOpenUrlFromOutput(value: string): boolean {
     normalizedOutput.includes('press enter to open') ||
     normalizedOutput.includes('open_url:')
   );
+}
+
+/**
+ * Kills every Shell-tab pty that was opened on one app session, attached or
+ * detached, and resolves once each has exited (or the timeout passed).
+ * Used by the session process stopper so an archived chat leaves no CLI behind.
+ * @returns The number of ptys that were killed.
+ */
+export async function killShellSessionsForChat(sessionId: string): Promise<number> {
+  const entries = [...ptySessionsMap.entries()].filter(([, entry]) => entry.sessionId === sessionId);
+  await Promise.all(entries.map(([key, entry]) => new Promise<void>((resolve) => {
+    if (entry.timeoutId) {
+      clearTimeout(entry.timeoutId);
+    }
+
+    const timeout = setTimeout(resolve, PTY_KILL_EXIT_TIMEOUT);
+    entry.pty.onExit(() => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    entry.pty.kill();
+    ptySessionsMap.delete(key);
+  })));
+  return entries.length;
 }
 
 type ShellWebSocketDependencies = {

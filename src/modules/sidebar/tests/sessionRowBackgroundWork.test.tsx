@@ -50,6 +50,7 @@ const renderRow = (state: { isProcessing: boolean; hasBackgroundWork: boolean })
     onProjectSelect: noop,
     onSessionSelect: noop,
     onDeleteSession: noop,
+    onArchiveSessionNow: noop,
     isSelecting: false,
     isChecked: false,
     onToggleSessionSelected: noop,

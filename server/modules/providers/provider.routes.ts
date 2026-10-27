@@ -955,9 +955,11 @@ router.delete(
     const sessionId = parseSessionId(req.params.sessionId);
     const force = parseOptionalBooleanQuery(req.query.force, 'force') ?? false;
     const deletedFromDisk = parseOptionalBooleanQuery(req.query.deletedFromDisk, 'deletedFromDisk') ?? force;
+    const stopProcesses = parseOptionalBooleanQuery(req.query.stopProcesses, 'stopProcesses') ?? false;
     const result = await sessionsService.deleteOrArchiveSessionById(sessionId, {
       force,
       deletedFromDisk,
+      stopProcesses,
     });
     res.json(createApiSuccessResponse(result));
   }),
