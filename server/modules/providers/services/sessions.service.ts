@@ -11,6 +11,7 @@ import type {
   BackgroundTaskSummary,
   FetchHistoryOptions,
   FetchHistoryResult,
+  LiveTurnTerms,
   LLMProvider,
   NormalizedMessage,
   WorkflowAgentActivity,
@@ -41,6 +42,8 @@ type RunningSessionEntry = {
   canInterrupt?: false;
   statusText?: string;
   tasks?: BackgroundTaskSummary[];
+  /** Set while the next turn can go into the process holding `tasks`; see LiveTurnTerms. */
+  liveTurn?: LiveTurnTerms;
 };
 
 type CreateAppSessionResult = {
@@ -165,7 +168,7 @@ export const sessionsService = {
     const runningById = new Map(entries.map((entry) => [entry.sessionId, entry]));
 
     for (const provider of providerRegistry.listProviders()) {
-      for (const { sessionId, tasks } of provider.runtime.listBackgroundWork?.() ?? []) {
+      for (const { sessionId, tasks, liveTurn } of provider.runtime.listBackgroundWork?.() ?? []) {
         const running = runningById.get(sessionId);
         if (running) {
           running.tasks = tasks;
@@ -181,6 +184,7 @@ export const sessionsService = {
           background: true,
           canInterrupt: false,
           tasks,
+          ...(liveTurn ? { liveTurn } : {}),
         });
       }
     }

@@ -457,6 +457,32 @@ export type BackgroundTaskSummary = {
 };
 
 /**
+ * What a held Claude process was launched with, in the vocabulary of the
+ * `chat.send` options, for a session whose turn has ended while its
+ * background work keeps the process open. Present only while that process can
+ * take the next turn as streaming input instead of being replaced.
+ *
+ * These are the options the SDK cannot change on a running query (the model
+ * and the other permission modes it can). A turn may be delivered into the
+ * live process when its options satisfy the rule the Claude runtime applies
+ * (`liveTurnTermsAccept`), which the composer mirrors:
+ * - `effort` equal (unset and `default` both read as null),
+ * - bypass and plan mode each on or off as they were,
+ * - `allowedTools` containing every tool listed here,
+ * - `disallowedTools` the same set.
+ * Any other turn starts a new process, which stops the background work. The
+ * running-sessions list and the turn's `complete` carry this so the composer
+ * can tell the two cases apart before sending.
+ */
+export type LiveTurnTerms = {
+  effort: string | null;
+  bypassPermissions: boolean;
+  planMode: boolean;
+  allowedTools: string[];
+  disallowedTools: string[];
+};
+
+/**
  * Where one agent of a running workflow stands, as the SDK reports it on the
  * run's `task_progress` events.
  *
@@ -655,6 +681,8 @@ export type ProviderRuntimeContext = {
     // Newer SDKs resolve interrupt() with a control response; callers only await it.
     interrupt(): Promise<unknown>;
     stopTask?(taskId: string): Promise<void>;
+    setModel?(model?: string): Promise<void>;
+    setPermissionMode?(mode: string): Promise<void>;
   };
 };
 

@@ -23,7 +23,8 @@ const sessionActivitiesMatch = (left: SessionActivity, right: SessionActivity): 
   && left.canInterrupt === right.canInterrupt
   && left.startedAt === right.startedAt
   && Boolean(left.background) === Boolean(right.background)
-  && backgroundTasksKey(left.tasks) === backgroundTasksKey(right.tasks);
+  && backgroundTasksKey(left.tasks) === backgroundTasksKey(right.tasks)
+  && JSON.stringify(left.liveTurn ?? null) === JSON.stringify(right.liveTurn ?? null);
 
 const sessionActivityMapsMatch = (
   left: ReadonlyMap<string, SessionActivity>,
@@ -125,7 +126,7 @@ export function useSessionProtection() {
     });
   }, []);
 
-  const markSessionBackground = useCallback<MarkSessionBackground>((sessionId, tasks) => {
+  const markSessionBackground = useCallback<MarkSessionBackground>((sessionId, tasks, liveTurn) => {
     setProcessingSessions((prev) => {
       const existing = prev.get(sessionId);
       if (tasks.length === 0) {
@@ -137,12 +138,16 @@ export function useSessionProtection() {
         return updated;
       }
 
+      // A task settling says nothing about the process; only a turn's
+      // `complete` (or the poll) does.
+      const nextLiveTurn = liveTurn === undefined ? existing?.liveTurn : liveTurn ?? undefined;
       const next: SessionActivity = {
         statusText: null,
         canInterrupt: false,
         startedAt: Math.min(...tasks.map((task) => task.startedAt)),
         background: true,
         tasks,
+        ...(nextLiveTurn ? { liveTurn: nextLiveTurn } : {}),
       };
       if (existing && sessionActivitiesMatch(existing, next)) {
         return prev;
@@ -195,6 +200,7 @@ export function useSessionProtection() {
           startedAt: snapshotStartedAt ?? existing?.startedAt ?? now,
           ...(snapshot.background ? { background: true } : {}),
           ...(snapshot.tasks ? { tasks: snapshot.tasks } : {}),
+          ...(snapshot.background && snapshot.liveTurn ? { liveTurn: snapshot.liveTurn } : {}),
         });
       }
 

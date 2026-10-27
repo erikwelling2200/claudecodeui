@@ -43,10 +43,12 @@ function createRuntime(
   behaviour: 'ok' | 'throw' = 'ok',
   aborts: string[] = [],
   hasBackgroundWork: (sessionId: string) => boolean = () => false,
+  acceptsLiveTurn: (sessionId: string, options: Record<string, unknown>) => boolean = () => false,
 ) {
   return {
     hasRuntime: () => true,
     hasBackgroundWork,
+    acceptsLiveTurn,
     run: async (provider: string, command: string, options: Record<string, unknown>) => {
       if (behaviour === 'throw') {
         throw new Error('provider exploded');
@@ -180,6 +182,35 @@ test('a queued message waits for background work its session\'s last turn left r
     assert.equal(runs.length, 1);
     assert.equal(runs[0].command, 'send after the background job');
     assert.equal(sessionDraftsDb.getDrafts(userId).length, 0);
+  });
+});
+
+test('a queued message goes at once when the process holding the background work can take it', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    sessionDraftsDb.saveDraft(userId, SESSION_ID, {
+      text: '',
+      queuedMessage: { content: 'ask while it runs', options: { model: 'opus', effort: 'high' } },
+    });
+    const runA = chatRunRegistry.startRun({
+      appSessionId: SESSION_ID,
+      provider: 'claude',
+      providerSessionId: null,
+      connection: null,
+      userId,
+    });
+    runA!.writer.sendComplete({ exitCode: 0 });
+
+    const runs: RunCall[] = [];
+    const asked: Array<Record<string, unknown>> = [];
+    const runtime = createRuntime(runs, 'ok', [], () => true, (_sessionId, options) => {
+      asked.push(options);
+      return true;
+    });
+
+    // The turn goes into that process, so the work keeps running: no wait.
+    assert.equal(await dispatchQueuedMessages(runtime), 1);
+    assert.equal(runs[0]?.command, 'ask while it runs');
+    assert.deepEqual(asked, [{ model: 'opus', effort: 'high' }], 'judged on the options the message was queued with');
   });
 });
 

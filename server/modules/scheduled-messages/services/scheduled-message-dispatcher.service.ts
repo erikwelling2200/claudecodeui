@@ -62,12 +62,22 @@ async function sendClaimedQueuedMessage(
  *
  * A turn that ends with background work still going (a backgrounded command,
  * agent or workflow) is marked completed, but its CLI process stays open so
- * that work can report back. A new turn replaces that process and stops the
- * work, which is why the composer asks before an interactive send. A queued
- * turn was promised to go "when this finishes", so it waits for that work too.
+ * that work can report back. When that process can take the queued turn as
+ * well, it goes in now and the work keeps running. Otherwise a new turn
+ * replaces the process and stops the work, which is why the composer asks
+ * before an interactive send; a queued turn was promised to go "when this
+ * finishes", so it waits for that work too.
  */
-function isSessionBusy(sessionId: string, runtime: ProviderRuntimeGateway): boolean {
-  return chatRunRegistry.isProcessing(sessionId) || runtime.hasBackgroundWork(sessionId);
+function isSessionBusy(candidate: QueuedSessionMessageRecord, runtime: ProviderRuntimeGateway): boolean {
+  const { sessionId } = candidate;
+  if (chatRunRegistry.isProcessing(sessionId)) {
+    return true;
+  }
+  if (!runtime.hasBackgroundWork(sessionId)) {
+    return false;
+  }
+  const options = readQueuedChatMessage(candidate.queuedMessage)?.options ?? {};
+  return !runtime.acceptsLiveTurn(sessionId, options);
 }
 
 /** Sends every persisted queued turn whose session is currently idle. */
@@ -76,7 +86,7 @@ export async function dispatchQueuedMessages(runtime: ProviderRuntimeGateway): P
   let claimed = 0;
 
   await Promise.all(candidates.map(async (candidate) => {
-    if (isSessionBusy(candidate.sessionId, runtime)) {
+    if (isSessionBusy(candidate, runtime)) {
       return;
     }
     if (!sessionDraftsDb.claimQueuedMessage(candidate)) {
