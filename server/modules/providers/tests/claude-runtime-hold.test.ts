@@ -138,10 +138,9 @@ test('stopping the last outstanding task releases the held process', async () =>
     script.emit(taskStarted('wf1', 'toolu_wf', 'local_workflow'));
     script.emit(ack('toolu_wf', 'Workflow launched in background. Task ID: wf1', { status: 'async_launched', taskId: 'wf1', taskType: 'local_workflow' }));
     script.emit(result());
-    await settle();
+    await waitFor(() => sent.some((message) => message.kind === 'complete'));
 
     // The turn is over for the client, the process is held for the workflow.
-    assert.ok(sent.some((message) => message.kind === 'complete'));
     assert.deepEqual(listClaudeSDKBackgroundWork().map((entry) => [entry.sessionId, entry.tasks.map((task) => task.taskId)]), [[SESSION_ID, ['wf1']]]);
     assert.equal(script.released(), false, 'stdin stays open while the workflow runs');
 
@@ -180,7 +179,7 @@ test('a task that reported completed keeps the hold for the turn that relays its
 });
 
 test('an agent that ran in the foreground and settled before the result does not hold the process', async () => {
-  await withRun(async ({ script }) => {
+  await withRun(async ({ script, sent }) => {
     // An Agent call without `run_in_background` is scored as background by
     // the static rule, but the CLI ran it in the foreground: its task started
     // and settled before the turn ended. The task events know that.
@@ -190,7 +189,7 @@ test('an agent that ran in the foreground and settled before the result does not
     script.emit(taskNotification('a1', 'toolu_agent', 'completed'));
     script.emit(ack('toolu_agent', 'FOUR', { status: 'completed', agentId: 'a1' }));
     script.emit(result());
-    await settle();
+    await waitFor(() => sent.some((message) => message.kind === 'complete'));
 
     assert.deepEqual(listClaudeSDKBackgroundWork(), []);
     assert.equal(script.released(), true, 'nothing is outstanding, so nothing to hold for');
