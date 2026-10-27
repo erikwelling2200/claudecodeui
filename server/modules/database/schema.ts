@@ -96,6 +96,25 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 `;
 
+/**
+ * Extra folders of a multi-folder project, in display order.
+ *
+ * The primary folder stays `projects.project_path` (cwd and session key); only
+ * the additional folders live here. Paths are unique per project as stored;
+ * case-insensitive duplicates on Windows are rejected before they get here.
+ */
+export const PROJECT_FOLDERS_TABLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS project_folders (
+    project_id TEXT NOT NULL,
+    folder_path TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (project_id, folder_path),
+    FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_project_folders_folder_path ON project_folders(folder_path);
+`;
+
 export const SCHEDULED_MESSAGES_TABLE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS scheduled_messages (
     id TEXT PRIMARY KEY,
@@ -291,6 +310,8 @@ CREATE INDEX IF NOT EXISTS idx_notification_channel_endpoints_enabled ON notific
 ${PROJECTS_TABLE_SCHEMA_SQL}
 -- NOTE: These indexes are created in migrations after legacy table-shape repairs.
 -- Creating them here can fail on upgraded installs where projects lacks those columns.
+
+${PROJECT_FOLDERS_TABLE_SCHEMA_SQL}
 
 ${SESSIONS_TABLE_SCHEMA_SQL}
 CREATE INDEX IF NOT EXISTS idx_session_ids_lookup ON sessions(session_id);

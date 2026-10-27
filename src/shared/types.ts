@@ -129,6 +129,10 @@ export type Project = {
   displayName: string;
   fullPath: string;
   path?: string;
+  // Extra folders that belong to the project besides its primary `fullPath`.
+  // Absent on `session_upserted` payloads, so mergers keep the current value
+  // when it is missing; read them through `getProjectFolderPaths`.
+  additionalFolders?: string[];
   isStarred?: boolean;
   sessions?: ProjectSession[];
   sessionMeta?: ProjectSessionMeta;
@@ -962,6 +966,13 @@ export type FileTreeNode = {
   modified?: string;
   permissionsRwx?: string;
   children?: FileTreeNode[];
+  // Set on the top-level node of each folder of a multi-folder project; such a
+  // node can receive new files and uploads but is never renamed or deleted.
+  isProjectRoot?: boolean;
+  // Set on a top-level folder node whose folder no longer exists on disk.
+  isUnavailable?: boolean;
+  // Set on a top-level folder node that alone exceeds the server's entry limit; its children are empty.
+  isTooLarge?: boolean;
   [key: string]: unknown;
 };
 
@@ -986,6 +997,17 @@ type FileTreeItemType = 'file' | 'directory';
 type FileDiffInfo = {
   old_string: string;
   new_string: string;
+};
+
+/**
+ * Which repository a git request addresses: the project plus, for a
+ * multi-folder project, the absolute path of one of its folders. Omitting
+ * `folder` addresses the primary folder, so single-folder callers pass only
+ * the projectId.
+ */
+export type GitTarget = {
+  projectId: string;
+  folder?: string | null;
 };
 
 /** Callback the git panel calls to open a file in the code editor, optionally focused on one edit. */
@@ -1300,6 +1322,10 @@ export type GithubTokenCredential = {
 /** The full set of user-entered values carried across the project-creation wizard's steps, owned by ProjectCreationWizard and passed down to each step. */
 export type WizardFormState = {
   workspacePath: string;
+  // Optional display name; empty means the server names it after the primary folder.
+  projectName: string;
+  // Extra folders added to the project; blank rows are dropped on submit.
+  additionalFolders: string[];
   githubUrl: string;
   tokenMode: TokenMode;
   selectedGithubToken: string;
@@ -1571,6 +1597,8 @@ export type SidebarProjectListProps = SessionRowActions & {
   onStartEditingProject: (project: Project) => void;
   onCancelEditingProject: () => void;
   onSaveProjectName: (projectId: string, nextName: string) => void;
+  /** Opens the edit-project dialog for the project's name and folders. */
+  onEditProjectSettings: (project: Project) => void;
   onDeleteProject: (project: Project) => void;
   onSessionSelect: (session: SessionWithProvider, projectName: string) => void;
   onNewSession: (project: Project) => void;

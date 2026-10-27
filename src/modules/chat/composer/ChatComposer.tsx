@@ -57,6 +57,8 @@ type ChatComposerProps = {
   availablePermissionModes: PermissionMode[];
   onSelectPermissionMode: (mode: PermissionMode) => void;
   providerLabel: string;
+  /** The primary folder's name when the current provider cannot see the project's extra folders; null otherwise. */
+  primaryOnlyFolderName: string | null;
   effort: string;
   availableEffortOptions: NonNullable<ProviderModelOption['effort']>['values'];
   onSelectEffort: (effort: string) => void;
@@ -134,6 +136,7 @@ export default function ChatComposer({
   availablePermissionModes,
   onSelectPermissionMode,
   providerLabel,
+  primaryOnlyFolderName,
   effort,
   availableEffortOptions,
   onSelectEffort,
@@ -295,6 +298,12 @@ export default function ChatComposer({
         scheduledMessages={scheduledMessages}
         onCancel={onCancelScheduledMessage}
       />
+
+      {primaryOnlyFolderName && (
+        <p className="mx-auto mb-2 max-w-[54.25rem] px-1 text-xs text-muted-foreground">
+          {t('composer.primaryFolderOnly', { provider: providerLabel, folder: primaryOnlyFolderName })}
+        </p>
+      )}
 
       {isEditingSentMessage && (
         <div className="mx-auto mb-2 flex max-w-[54.25rem] items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-foreground">

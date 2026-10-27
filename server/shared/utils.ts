@@ -462,6 +462,62 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
 }
 
 // ---------------------------
+//----------------- PROJECT FOLDER PATH UTILITIES ------------
+/**
+ * Key under which two spellings of the same folder compare equal.
+ *
+ * Normalizes with `normalizeProjectPath` and, on Windows, lower-cases the
+ * result, because Claude transcripts and users mix `C:\Tools` and `c:\tools`
+ * for one folder. Use it only for comparisons and dedupe: store and display
+ * the original spelling. Used by the Projects folder validator and import, the
+ * File Tree folder resolution and the Git `folder` parameter.
+ */
+export function getPathComparisonKey(folderPath: string): string {
+  const normalizedPath = normalizeProjectPath(folderPath);
+  return process.platform === 'win32' ? normalizedPath.toLowerCase() : normalizedPath;
+}
+
+/**
+ * Whether two paths name the same folder under the rules of
+ * `getPathComparisonKey`. Used by the File Tree and Git modules to recognise a
+ * project folder in a client-supplied path.
+ */
+export function isSameFolderPath(leftPath: string, rightPath: string): boolean {
+  return getPathComparisonKey(leftPath) === getPathComparisonKey(rightPath);
+}
+
+/**
+ * Whether `candidatePath` lies strictly below `folderPath` (the folder itself
+ * is not "inside"). Purely lexical: symlinks are not resolved, so callers pass
+ * paths that were already resolved. Used by the Projects folder validator for
+ * the nesting rule and by the File Tree to find the folder owning a path.
+ */
+export function isPathInsideFolder(folderPath: string, candidatePath: string): boolean {
+  const folderKey = getPathComparisonKey(folderPath);
+  const candidateKey = getPathComparisonKey(candidatePath);
+  // A drive or filesystem root (`C:\`, `/`) already ends in a separator.
+  const folderPrefix = /[\\/]$/.test(folderKey) ? folderKey : `${folderKey}${path.sep}`;
+  return candidateKey !== folderKey && candidateKey.startsWith(folderPrefix);
+}
+
+/**
+ * Returns the entries of `folderPaths` that currently exist as directories, in
+ * their original order. Used when a run starts (the WebSocket chat dispatch
+ * and the Agent API) so a project folder removed from disk since it was added
+ * does not make the provider CLI refuse to start.
+ */
+export async function listExistingDirectories(folderPaths: string[]): Promise<string[]> {
+  const checks = await Promise.all(folderPaths.map(async (folderPath) => {
+    try {
+      return (await stat(folderPath)).isDirectory();
+    } catch {
+      return false;
+    }
+  }));
+  return folderPaths.filter((_folderPath, index) => checks[index]);
+}
+
+// ---------------------------
 //----------------- NORMALIZED PROVIDER MESSAGE UTILITIES ------------
 /**
  * Generates a stable unique id for normalized provider messages.

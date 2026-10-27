@@ -28,6 +28,8 @@ export type ProjectListItem = {
   path: string;
   displayName: string;
   fullPath: string;
+  /** Extra folders only, in order; the primary folder is `fullPath`. */
+  additionalFolders: string[];
   isStarred: boolean;
   sessions: SessionSummary[];
   sessionMeta: {
@@ -191,6 +193,7 @@ export async function getProjectsWithSessions(
     isStarred?: number;
   }>;
   const totalProjects = projectRows.length;
+  const additionalFoldersByProjectId = projectsDb.listAdditionalFolderPathsByProjectId();
   const projects: ProjectListItem[] = [];
   let processedProjects = 0;
 
@@ -222,6 +225,7 @@ export async function getProjectsWithSessions(
       path: projectPath,
       displayName,
       fullPath: projectPath,
+      additionalFolders: additionalFoldersByProjectId.get(projectId) ?? [],
       isStarred: Boolean(row.isStarred),
       sessions: sessionsPage.sessions,
       sessionMeta: {
@@ -259,6 +263,7 @@ export async function getArchivedProjectsWithSessions(
     isStarred?: number;
   }>;
 
+  const additionalFoldersByProjectId = projectsDb.listAdditionalFolderPathsByProjectId();
   const archivedProjects: ArchivedProjectListItem[] = [];
 
   for (const row of projectRows) {
@@ -274,6 +279,7 @@ export async function getArchivedProjectsWithSessions(
       path: row.project_path,
       displayName,
       fullPath: row.project_path,
+      additionalFolders: additionalFoldersByProjectId.get(row.project_id) ?? [],
       isStarred: Boolean(row.isStarred),
       isArchived: true,
       sessions: sessionsPage.sessions,

@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import type { WebSocket } from 'ws';
 
-import { sessionsDb } from '@/modules/database/index.js';
+import { projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { providerModelsService, sessionsService } from '@/modules/providers/index.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
 import { connectedClients, WS_OPEN_STATE } from '@/modules/websocket/services/websocket-state.service.js';
@@ -19,7 +19,7 @@ import type {
   ProviderPermissionDecision,
   ProviderRuntimeWriter,
 } from '@/shared/types.js';
-import { parseIncomingJsonObject } from '@/shared/utils.js';
+import { listExistingDirectories, parseIncomingJsonObject } from '@/shared/utils.js';
 
 /**
  * Trust boundary for client-supplied image attachments: chat.send options come
@@ -61,6 +61,19 @@ export function filterImagesToUploadStore(
   assetsRootOverride?: string,
 ): ChatAttachmentDescriptor[] {
   return filterAttachmentsToUploadStore(images, assetsRootOverride);
+}
+
+/**
+ * The project's extra folders a run may work in, looked up by the session's
+ * own project path rather than the client-supplied `cwd`, so a client cannot
+ * widen what the agent can reach. Folders gone from disk are left out, because
+ * the provider CLIs refuse to start on a missing directory.
+ */
+async function resolveRunAdditionalDirectories(projectPath: string | null): Promise<string[]> {
+  if (!projectPath) {
+    return [];
+  }
+  return listExistingDirectories(projectsDb.getAdditionalFolderPathsByProjectPath(projectPath));
 }
 
 /** Application boundary for dispatching provider runs and approvals. */
@@ -221,6 +234,9 @@ async function dispatchRun(
   beforeRun?: (run: NonNullable<ReturnType<typeof chatRunRegistry.startRun>>) => void | Promise<void>,
 ): Promise<{ started: boolean; error: string | null }> {
   const provider = session.provider as LLMProvider;
+  // Resolved before the run is reserved, so a failed lookup cannot leave a
+  // reserved run behind that nothing completes.
+  const additionalDirectories = await resolveRunAdditionalDirectories(session.project_path);
 
   const run = chatRunRegistry.startRun({
     appSessionId: sessionId,
@@ -282,6 +298,7 @@ async function dispatchRun(
     sessionId,
     cwd: clientOptions.cwd ?? session.project_path ?? undefined,
     projectPath: session.project_path ?? clientOptions.projectPath,
+    additionalDirectories,
   };
 
   let failure: string | null = null;

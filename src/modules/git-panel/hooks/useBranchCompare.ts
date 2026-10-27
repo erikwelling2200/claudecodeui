@@ -6,6 +6,8 @@ import { pickDefaultCompareBase } from '@/modules/git-panel/utils/gitPanelUtils'
 
 type UseBranchCompareOptions = {
   projectId: string | null;
+  // The project folder being compared; absent for the primary.
+  folder?: string | null;
   currentBranch: string;
   localBranches: string[];
   remoteRefs: string[];
@@ -87,6 +89,7 @@ function isSameRequest(left: CompareRequest | null, right: CompareRequest): bool
  */
 export function useBranchCompare({
   projectId,
+  folder = null,
   currentBranch,
   localBranches,
   remoteRefs,
@@ -120,7 +123,7 @@ export function useBranchCompare({
   const isOverrideAvailable = baseOverride !== null
     && (localBranches.includes(baseOverride) || remoteRefs.includes(baseOverride));
   const base = isOverrideAvailable ? baseOverride : defaultBase;
-  const requestKey = `${projectId ?? ''}\0${base}`;
+  const requestKey = `${projectId ?? ''}\0${folder ?? ''}\0${base}`;
   const hasRequest = Boolean(projectId && base);
 
   // Mirrors the latest request key for the async paths (file diffs, late
@@ -174,7 +177,7 @@ export function useBranchCompare({
       };
 
       try {
-        const response = await api.git.branchDiffFile(projectId, base, filePath, file.oldPath, { signal });
+        const response = await api.git.branchDiffFile({ projectId, folder }, base, filePath, file.oldPath, { signal });
         const data = (await response.json()) as GitFileDiffResponse;
 
         if (signal?.aborted || requestKeyRef.current !== fileRequestKey) {
@@ -196,7 +199,7 @@ export function useBranchCompare({
         recordOutcome({ error: String(fetchError) });
       }
     },
-    [base, projectId, requestKey],
+    [base, folder, projectId, requestKey],
   );
 
   const loadFileDiff = useCallback(
@@ -216,7 +219,7 @@ export function useBranchCompare({
 
     const fetchList = async () => {
       try {
-        const response = await api.git.branchDiff(projectId, base, { signal });
+        const response = await api.git.branchDiff({ projectId, folder }, base, { signal });
         const data = (await response.json()) as GitBranchDiffResponse;
 
         if (signal.aborted || requestKeyRef.current !== requestKey) {
@@ -268,7 +271,7 @@ export function useBranchCompare({
     return () => {
       controller.abort();
     };
-  }, [base, fetchFileDiff, gitStatus, hasRequest, projectId, refreshToken, requestKey]);
+  }, [base, fetchFileDiff, folder, gitStatus, hasRequest, projectId, refreshToken, requestKey]);
 
   const refresh = useCallback(() => {
     setRefreshToken((token) => token + 1);

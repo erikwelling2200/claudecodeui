@@ -92,3 +92,42 @@ for (const command of ['', '  \n\t']) {
     ]);
   });
 }
+
+for (const resumed of [false, true]) {
+  test(`Codex ${resumed ? 'resumes' : 'starts'} a thread with the project's extra folders`, async (t) => {
+    const capturedOptions: Array<ThreadOptions | undefined> = [];
+    const thread = {
+      id: 'native-thread',
+      async runStreamed() {
+        return { events: (async function* () {
+          yield { type: 'thread.started', thread_id: 'native-thread' };
+        })() };
+      },
+    } as unknown as Thread;
+
+    t.mock.method(Codex.prototype, 'startThread', (options?: ThreadOptions) => {
+      capturedOptions.push(options);
+      return thread;
+    });
+    t.mock.method(Codex.prototype, 'resumeThread', (_id: string, options?: ThreadOptions) => {
+      capturedOptions.push(options);
+      return thread;
+    });
+    const context: ProviderRuntimeContext = {
+      resolveProviderSessionId: () => resumed ? 'native-thread' : null,
+      resolveResumeModel: async () => 'test-model',
+      getProviderModels: async () => ({ OPTIONS: [], DEFAULT: 'test-model' }),
+      normalizeMessage: () => [],
+      isProviderInstalled: async () => true,
+    };
+
+    await codexRuntime.run('hey there', {
+      sessionId: resumed ? 'app-session' : undefined,
+      cwd: process.cwd(),
+      additionalDirectories: ['/workspace/second'],
+    }, { isWebSocketWriter: true, send: () => {} }, context);
+
+    assert.equal(capturedOptions.length, 1);
+    assert.deepEqual(capturedOptions[0]?.additionalDirectories, ['/workspace/second']);
+  });
+}

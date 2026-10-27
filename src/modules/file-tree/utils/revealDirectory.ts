@@ -24,6 +24,11 @@ export function directoryRevealPaths(
   projectPath: string,
   reference: string,
 ): string[] {
+  const projectRoots = files.filter((node) => node.isProjectRoot);
+  if (projectRoots.length > 0) {
+    return multiRootRevealPaths(projectRoots, reference);
+  }
+
   const root = normalizePath(projectPath);
   const target = normalizePath(reference);
 
@@ -37,6 +42,49 @@ export function directoryRevealPaths(
     relative = target.slice(root.length + 1);
   }
 
+  return walkRelativePath(files, relative);
+}
+
+// Windows paths compare case-insensitively: transcripts carry both `C:\x` and `c:\x`.
+const comparablePath = (value: string): string =>
+  (/^[A-Za-z]:\//.test(value) ? value.toLowerCase() : value);
+
+/**
+ * A multi-folder project lists one top-level node per folder, primary first.
+ * A relative reference lives in the primary folder; an absolute one in the
+ * folder that contains it, the deepest one when folders are nested. The folder
+ * node itself leads the result so a collapsed folder opens too.
+ */
+function multiRootRevealPaths(projectRoots: FileTreeNode[], reference: string): string[] {
+  const target = normalizePath(reference);
+
+  if (!isAbsolutePath(target)) {
+    const primary = projectRoots[0];
+    return [primary.path, ...walkRelativePath(primary.children ?? [], target)];
+  }
+
+  const comparableTarget = comparablePath(target);
+  let owner: FileTreeNode | null = null;
+  let ownerRoot = '';
+  for (const node of projectRoots) {
+    const root = comparablePath(normalizePath(node.path));
+    const contains = comparableTarget === root || comparableTarget.startsWith(`${root}/`);
+    if (contains && root.length > ownerRoot.length) {
+      owner = node;
+      ownerRoot = root;
+    }
+  }
+
+  if (!owner) {
+    return [];
+  }
+  const relative = target.slice(ownerRoot.length + 1);
+  return [owner.path, ...walkRelativePath(owner.children ?? [], relative)];
+}
+
+// Descends `relative` one segment at a time through the loaded tree and
+// returns the directories it passed, stopping at the first missing level.
+function walkRelativePath(files: FileTreeNode[], relative: string): string[] {
   const paths: string[] = [];
   let level = files;
   for (const segment of relative.split('/').filter(Boolean)) {

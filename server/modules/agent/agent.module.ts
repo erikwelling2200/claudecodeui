@@ -15,7 +15,7 @@ import {
 import { providerModelsService, sessionsService } from '@/modules/providers/index.js';
 import { chatRunRegistry } from '@/modules/websocket/index.js';
 import type { LLMProvider } from '@/shared/types.js';
-import { IS_PLATFORM } from '@/shared/utils.js';
+import { IS_PLATFORM, listExistingDirectories } from '@/shared/utils.js';
 
 import { createAgentRouter } from './agent.routes.js';
 
@@ -47,6 +47,8 @@ export function createAgentModule(externalDependencies: AgentExternalDependencie
     projects: {
       createProjectPath: (projectPath, customName) =>
         projectsDb.createProjectPath(projectPath, customName),
+      listRunAdditionalDirectories: (projectPath) =>
+        listExistingDirectories(projectsDb.getAdditionalFolderPathsByProjectPath(projectPath)),
     },
     models: providerModelsService,
     sessions: {

@@ -162,6 +162,7 @@
     }
   },
   "composer": {
+    "primaryFolderOnly": "{{provider}} only sees {{folder}}",
     "reasoning": "Reasoning",
     "model": "Model",
     "effortDefault": "Default",

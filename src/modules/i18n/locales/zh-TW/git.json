@@ -47,6 +47,7 @@
     "runGitInit": "執行 git init"
   },
   "header": {
+    "folder": "儲存庫資料夾",
     "confirmPull_one": "要從 {{remote}} 拉取 {{count}} 個提交嗎？",
     "confirmPull_other": "要從 {{remote}} 拉取 {{count}} 個提交嗎？",
     "confirmPush_one": "要推送 {{count}} 個提交到 {{remote}} 嗎？",

@@ -47,6 +47,7 @@
     "runGitInit": "Run git init"
   },
   "header": {
+    "folder": "Repository folder",
     "confirmPull_one": "Pull {{count}} commit from {{remote}}?",
     "confirmPull_other": "Pull {{count}} commits from {{remote}}?",
     "confirmPush_one": "Push {{count}} commit to {{remote}}?",

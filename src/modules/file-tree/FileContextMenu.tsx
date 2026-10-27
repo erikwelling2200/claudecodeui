@@ -126,6 +126,48 @@ export default function FileContextMenu({
       ];
     }
 
+    // A top-level folder of a multi-folder project is the project's own folder:
+    // it can receive files but is never renamed or deleted, and a missing one
+    // offers nothing beyond copying its path.
+    if (item?.type === 'directory' && item.isProjectRoot) {
+      const copyPath: ContextMenuAction = {
+        key: 'copyPath',
+        icon: Copy,
+        label: t('fileTree.context.copyPath', 'Copy Path'),
+        onSelect: () => onCopyPath?.(item),
+      };
+      if (item.isUnavailable) {
+        return [copyPath];
+      }
+      return [
+        {
+          key: 'newFile',
+          icon: FileText,
+          label: t('fileTree.context.newFile', 'New File'),
+          onSelect: () => onNewFile?.(item.path),
+        },
+        {
+          key: 'newFolder',
+          icon: FolderPlus,
+          label: t('fileTree.context.newFolder', 'New Folder'),
+          onSelect: () => onNewFolder?.(item.path),
+        },
+        {
+          key: 'upload',
+          icon: Upload,
+          label: t('fileTree.context.upload', 'Upload Files'),
+          onSelect: () => onUpload?.(item.path),
+        },
+        { ...copyPath, showDividerBefore: true },
+        {
+          key: 'download',
+          icon: Download,
+          label: t('fileTree.context.download', 'Download'),
+          onSelect: () => onDownload?.(item),
+        },
+      ];
+    }
+
     if (item?.type === 'directory') {
       return [
         {

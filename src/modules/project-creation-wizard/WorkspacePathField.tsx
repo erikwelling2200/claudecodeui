@@ -6,21 +6,24 @@ import { Button, Input } from '@/shared/ui';
 import { browseFilesystemFolders } from '@/modules/project-creation-wizard/utils/workspaceApi';
 import { getSuggestionRootPath } from '@/modules/project-creation-wizard/utils/pathUtils';
 import type { FolderSuggestion } from '@/shared/types';
-import FolderBrowserModal from '@/modules/project-creation-wizard/FolderBrowserModal';
+import FolderBrowserModal from '@/modules/project-creation-wizard/modals/FolderBrowserModal';
 
 type WorkspacePathFieldProps = {
   value: string;
   disabled?: boolean;
   onChange: (path: string) => void;
-  onAdvanceToConfirm: () => void;
+  // Only the wizard's primary folder field moves on to the review step.
+  onAdvanceToConfirm?: () => void;
+  ariaLabel?: string;
 };
 
-/** Rendered by StepConfiguration to enter the workspace path with folder autocompletion and a browse button. */
+/** Rendered by StepConfiguration and ProjectFolderListField to enter a folder path with autocompletion and a browse button. */
 export default function WorkspacePathField({
   value,
   disabled = false,
   onChange,
   onAdvanceToConfirm,
+  ariaLabel,
 }: WorkspacePathFieldProps) {
   const { t } = useTranslation();
   const [pathSuggestions, setPathSuggestions] = useState<FolderSuggestion[]>([]);
@@ -76,7 +79,7 @@ export default function WorkspacePathField({
       onChange(selectedPath);
       setShowFolderBrowser(false);
       if (advanceToConfirm) {
-        onAdvanceToConfirm();
+        onAdvanceToConfirm?.();
       }
     },
     [onAdvanceToConfirm, onChange],
@@ -93,6 +96,7 @@ export default function WorkspacePathField({
             placeholder="/path/to/project/workspace"
             className="w-full"
             disabled={disabled}
+            aria-label={ariaLabel}
           />
 
           {showPathDropdown && pathSuggestions.length > 0 && (

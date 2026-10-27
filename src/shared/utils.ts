@@ -230,6 +230,47 @@ export const getPageTitle = (
 
 // ---------------------------
 
+//----------------- PROJECT FOLDERS ------------
+
+/**
+ * Every folder of a project, primary first, followed by its extra folders.
+ * Use it wherever a feature must cover the whole project (file tree roots, git
+ * folder switcher, edit dialog) instead of reading `fullPath` alone.
+ */
+export const getProjectFolderPaths = (project: Project): string[] => {
+  const primary = project.fullPath || project.path || '';
+  const extra = Array.isArray(project.additionalFolders) ? project.additionalFolders : [];
+  return [primary, ...extra.filter((folder) => folder && folder !== primary)];
+};
+
+/**
+ * The last segment of a folder path, accepting both separators and trailing
+ * slashes; falls back to the path itself for a root such as `C:\` or `/`. Used
+ * to label project folders in pickers and notices.
+ */
+export const getFolderName = (folderPath: string): string => {
+  const trimmed = folderPath.trim().replace(/[\\/]+$/, '');
+  const name = trimmed.split(/[\\/]/).pop();
+  return name || folderPath.trim();
+};
+
+/**
+ * Joins a path relative to `folderPath` onto it with the separator the folder
+ * already uses, so a repository-relative path from a non-primary folder can be
+ * opened by its absolute path. Absolute inputs are returned unchanged.
+ */
+export const joinFolderPath = (folderPath: string, relativePath: string): string => {
+  if (/^(\/|[A-Za-z]:[\\/])/.test(relativePath)) {
+    return relativePath;
+  }
+  const base = folderPath.replace(/[\\/]+$/, '');
+  const separator = base.includes('\\') && !base.includes('/') ? '\\' : '/';
+  const relative = relativePath.replace(/^[\\/]+/, '');
+  return `${base}${separator}${separator === '\\' ? relative.replace(/\//g, '\\') : relative}`;
+};
+
+// ---------------------------
+
 //----------------- SLASH COMMANDS ------------
 
 /**

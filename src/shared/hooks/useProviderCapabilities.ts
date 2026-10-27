@@ -12,6 +12,8 @@ import type { LLMProvider } from '@/shared/types';
 type ProviderCapabilityRow = {
   provider: LLMProvider;
   supportsSessionForking?: boolean;
+  // Whether a run can be given folders besides its working directory.
+  supportsAdditionalFolders?: boolean;
 };
 
 /**
@@ -55,12 +57,12 @@ async function loadCapabilities(): Promise<Partial<Record<LLMProvider, ProviderC
 }
 
 /**
- * Reports which providers can branch a session's transcript.
- *
- * Empty until the matrix loads, so an affordance is never offered and then
- * withdrawn.
+ * Collects the providers whose capability row satisfies `predicate`, empty
+ * until the matrix loads. Private to the exported hooks below.
  */
-export function useSessionForkingProviders(): Set<LLMProvider> {
+function useProvidersMatching(predicate: (row: ProviderCapabilityRow) => boolean): Set<LLMProvider> {
+  // Filled once the shared capability matrix resolves; consumers read
+  // membership only, so an empty set means "not known yet".
   const [providers, setProviders] = useState<Set<LLMProvider>>(() => new Set());
 
   useEffect(() => {
@@ -68,19 +70,45 @@ export function useSessionForkingProviders(): Set<LLMProvider> {
 
     void loadCapabilities().then((capabilities) => {
       if (cancelled) return;
-      const forkable = new Set<LLMProvider>();
+      const matching = new Set<LLMProvider>();
       for (const row of Object.values(capabilities)) {
-        if (row?.supportsSessionForking) {
-          forkable.add(row.provider);
+        if (row && predicate(row)) {
+          matching.add(row.provider);
         }
       }
-      setProviders(forkable);
+      setProviders(matching);
     });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+    // Callers pass module-level predicates, so this runs once per mount.
+  }, [predicate]);
 
   return providers;
+}
+
+const supportsSessionForking = (row: ProviderCapabilityRow) => Boolean(row.supportsSessionForking);
+// Only an explicit `false` counts, so a server that predates the flag shows no notice.
+const lacksAdditionalFolders = (row: ProviderCapabilityRow) => row.supportsAdditionalFolders === false;
+
+/**
+ * Reports which providers can branch a session's transcript.
+ *
+ * Empty until the matrix loads, so an affordance is never offered and then
+ * withdrawn.
+ */
+export function useSessionForkingProviders(): Set<LLMProvider> {
+  return useProvidersMatching(supportsSessionForking);
+}
+
+/**
+ * Reports which providers run in the primary folder only and never see a
+ * project's extra folders; the chat composer uses it to say so.
+ *
+ * Empty until the matrix loads, so the notice never flashes for a provider
+ * that turns out to support extra folders.
+ */
+export function useSingleFolderProviders(): Set<LLMProvider> {
+  return useProvidersMatching(lacksAdditionalFolders);
 }

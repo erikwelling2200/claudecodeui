@@ -35,3 +35,11 @@ test('capability effort levels cover every level a curated model declares', () =
     assert.deepEqual(missingLevels, [], `${provider}: effortLevels misses curated levels`);
   }
 });
+
+test('only providers that can add directories to a run claim extra-folder support', () => {
+  const supportByProvider = Object.fromEntries(
+    providerCapabilitiesService.listAllProviderCapabilities()
+      .map((capabilities) => [capabilities.provider, capabilities.supportsAdditionalFolders]),
+  );
+  assert.deepEqual(supportByProvider, { claude: true, cursor: false, codex: true, opencode: false });
+});

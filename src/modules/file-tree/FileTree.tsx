@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useRef } from 'react';
+import { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import type { ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Check, X, Loader2, Folder, Upload } from 'lucide-react';
@@ -54,7 +54,12 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
 
   const { files, loading, error, refreshFiles } = useFileTreeData(selectedProject);
   const { viewMode, changeViewMode } = useFileTreeViewMode();
-  const { expandedDirs, toggleDirectory, expandDirectories, collapseAll } = useExpandedDirectories();
+  // Top-level folder nodes of a multi-folder project; they start expanded.
+  const projectRootPaths = useMemo(
+    () => files.filter((node) => node.isProjectRoot).map((node) => node.path),
+    [files],
+  );
+  const { expandedDirs, toggleDirectory, expandDirectories, collapseAll } = useExpandedDirectories(projectRootPaths);
   const { searchQuery, setSearchQuery, filteredFiles } = useFileTreeSearch({
     files,
     expandDirectories,

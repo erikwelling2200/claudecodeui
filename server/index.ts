@@ -32,6 +32,7 @@ import { settingsRoutes } from './modules/settings/index.js';
 import { createSystemModule } from './modules/system/index.js';
 import { createAgentModule } from './modules/agent/index.js';
 import projectModuleRoutes from './modules/projects/projects.routes.js';
+import { importProjectFoldersFromClaudeTranscripts } from './modules/projects/index.js';
 import notificationRoutes from './modules/notifications/notifications.routes.js';
 import { userRoutes } from './modules/user/index.js';
 import {
@@ -333,6 +334,10 @@ async function startServer() {
     try {
         // Initialize authentication database
         await initializeDatabase();
+        // Background, so reading large transcripts never delays startup.
+        importProjectFoldersFromClaudeTranscripts().catch((error: unknown) => {
+            console.error('[projects] Project folder import failed:', getErrorMessage(error));
+        });
 
         // Configure Web Push (VAPID keys)
         configureWebPush();

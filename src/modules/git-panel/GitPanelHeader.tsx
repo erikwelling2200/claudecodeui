@@ -3,10 +3,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { ConfirmationRequest, GitRemoteStatus } from '@/shared/types';
+import GitFolderSelect from '@/modules/git-panel/GitFolderSelect';
 import NewBranchModal from '@/modules/git-panel/modals/NewBranchModal';
 
 type GitPanelHeaderProps = {
   isMobile: boolean;
+  // Every folder of the project; the folder switcher only shows with more than one.
+  folders: string[];
+  activeFolder: string;
+  onFolderChange: (folder: string) => void;
   currentBranch: string;
   branches: string[];
   remoteStatus: GitRemoteStatus | null;
@@ -30,9 +35,12 @@ type GitPanelHeaderProps = {
   onRequestConfirmation: (request: ConfirmationRequest) => void;
 };
 
-/** Rendered by GitPanel to host the branch switcher and the fetch/pull/push/publish/revert actions. */
+/** Rendered by GitPanel to host the folder and branch switchers and the fetch/pull/push/publish/revert actions. */
 export default function GitPanelHeader({
   isMobile,
+  folders,
+  activeFolder,
+  onFolderChange,
   currentBranch,
   branches,
   remoteStatus,
@@ -140,6 +148,16 @@ export default function GitPanelHeader({
     <>
       {/* Branch row + action buttons */}
       <div className={`flex items-center justify-between border-b border-border/60 ${isMobile ? 'px-3 py-2' : 'px-4 py-3'}`}>
+        <div className="flex min-w-0 items-center gap-1">
+        {folders.length > 1 && (
+          <GitFolderSelect
+            folders={folders}
+            activeFolder={activeFolder}
+            isMobile={isMobile}
+            onChange={onFolderChange}
+          />
+        )}
+
         {/* Branch selector */}
         <div className="relative" ref={dropdownRef}>
           <button
@@ -226,6 +244,7 @@ export default function GitPanelHeader({
               </div>
             </div>
           )}
+        </div>
         </div>
 
         {/* Action buttons */}

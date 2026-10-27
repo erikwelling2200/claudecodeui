@@ -47,6 +47,7 @@
     "runGitInit": "运行 git init"
   },
   "header": {
+    "folder": "仓库文件夹",
     "confirmPull_one": "要从 {{remote}} 拉取 {{count}} 个提交吗？",
     "confirmPull_other": "要从 {{remote}} 拉取 {{count}} 个提交吗？",
     "confirmPush_one": "要推送 {{count}} 个提交到 {{remote}} 吗？",

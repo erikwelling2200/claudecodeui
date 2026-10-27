@@ -4,7 +4,8 @@ import { Eye, EyeOff, FolderOpen, FolderPlus, Loader2, Plus, X } from 'lucide-re
 
 import { Button, Input } from '@/shared/ui';
 import { browseFilesystemFolders, createFolderInFilesystem } from '@/modules/project-creation-wizard/utils/workspaceApi';
-import { getParentPath, joinFolderPath } from '@/modules/project-creation-wizard/utils/pathUtils';
+import { getParentPath } from '@/modules/project-creation-wizard/utils/pathUtils';
+import { joinFolderPath } from '@/shared/utils';
 import type { FolderSuggestion } from '@/shared/types';
 
 type FolderBrowserModalProps = {
@@ -14,7 +15,7 @@ type FolderBrowserModalProps = {
   onFolderSelected: (folderPath: string, advanceToConfirm: boolean) => void;
 };
 
-/** Opened by WorkspacePathField so the user can browse the filesystem and pick or create the workspace folder. */
+/** Opened by WorkspacePathField so the user can browse the filesystem and pick or create a project folder. */
 export default function FolderBrowserModal({
   isOpen,
   autoAdvanceOnSelect,
@@ -92,7 +93,7 @@ export default function FolderBrowserModal({
     setError(null);
 
     try {
-      const folderPath = joinFolderPath(currentPath, newFolderName);
+      const folderPath = joinFolderPath(currentPath, newFolderName.trim());
       const createdPath = await createFolderInFilesystem(folderPath);
       resetNewFolderState();
       await loadFolders(createdPath);

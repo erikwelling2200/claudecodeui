@@ -1,5 +1,5 @@
-import { api } from '@/shared/api';
-import type { FolderSuggestion, GithubTokenCredential, TokenMode } from '@/shared/types';
+import { api, ApiRequestError, readApiJson } from '@/shared/api';
+import type { FolderSuggestion, GithubTokenCredential, Project, TokenMode } from '@/shared/types';
 
 type CredentialsResponse = {
   credentials?: GithubTokenCredential[];
@@ -22,6 +22,17 @@ type CreateFolderResponse = {
 type CreateProjectPayload = {
   path: string;
   customName?: string;
+  additionalFolders?: string[];
+};
+
+type UpdateProjectPayload = {
+  displayName?: string;
+  additionalFolders?: string[];
+};
+
+type UpdateProjectResponse = {
+  success?: boolean;
+  project?: Project;
 };
 
 type CreateProjectApiError = {
@@ -34,6 +45,7 @@ type CreateProjectResponse = {
   success?: boolean;
   project?: Record<string, unknown>;
   error?: string | CreateProjectApiError;
+  code?: string;
   details?: string;
   message?: string;
 };
@@ -59,6 +71,15 @@ type CloneProgressHandlers = {
 const parseJson = async <T>(response: Response): Promise<T> => {
   const data = (await response.json()) as T;
   return data;
+};
+
+// The server's machine-readable code sits inside the structured AppError
+// envelope or, for route-level errors, next to a string `error`.
+const resolveCreateProjectErrorCode = (responseData: CreateProjectResponse): string | undefined => {
+  if (responseData.error && typeof responseData.error === 'object' && typeof responseData.error.code === 'string') {
+    return responseData.error.code;
+  }
+  return typeof responseData.code === 'string' ? responseData.code : undefined;
 };
 
 const resolveCreateProjectErrorMessage = (responseData: CreateProjectResponse): string | null => {
@@ -138,9 +159,19 @@ export const createProjectRequest = async (payload: CreateProjectPayload) => {
   const data = await parseJson<CreateProjectResponse>(response);
 
   if (!response.ok) {
-    throw new Error(resolveCreateProjectErrorMessage(data) || 'Failed to create project');
+    throw new ApiRequestError(resolveCreateProjectErrorMessage(data) || 'Failed to create project', {
+      code: resolveCreateProjectErrorCode(data),
+      status: response.status,
+    });
   }
 
+  return data.project;
+};
+
+// Saves a project's name and/or extra folders; throws an ApiRequestError
+// carrying the server's code (e.g. PROJECT_FOLDER_NOT_FOUND) on failure.
+export const updateProjectRequest = async (projectId: string, payload: UpdateProjectPayload) => {
+  const data = await readApiJson<UpdateProjectResponse>(await api.updateProject(projectId, payload));
   return data.project;
 };
 

@@ -36,6 +36,7 @@ export default function SidebarProjectList({
   onStartEditingProject,
   onCancelEditingProject,
   onSaveProjectName,
+  onEditProjectSettings,
   onDeleteProject,
   onSessionSelect,
   onDeleteSession,
@@ -118,6 +119,7 @@ export default function SidebarProjectList({
                 onStartEditingProject={onStartEditingProject}
                 onCancelEditingProject={onCancelEditingProject}
                 onSaveProjectName={onSaveProjectName}
+                onEditProjectSettings={onEditProjectSettings}
                 onDeleteProject={onDeleteProject}
                 onSessionSelect={onSessionSelect}
                 onDeleteSession={onDeleteSession}

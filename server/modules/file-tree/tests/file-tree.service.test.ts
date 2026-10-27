@@ -82,7 +82,7 @@ function createDependencies(
   return {
     fileSystem,
     projects: {
-      getProjectPathById: async () => projectRoot,
+      getProjectFolderPathsById: async () => [projectRoot],
     },
     workspace: {
       rootPath: projectRoot,
@@ -267,6 +267,37 @@ test('listProjectFiles rejects a tree that exceeds the server entry limit', asyn
   );
 });
 
+test('listProjectFiles lists an oversized folder of a multi-folder project empty and still lists the others', async () => {
+  const projectRoot = path.resolve('file-tree-test-project');
+  const smallFolder = path.resolve('file-tree-small-folder');
+  const fileSystem = createFakeFileSystem({
+    access: async () => undefined,
+    // Twenty sibling directories are walked in parallel, so some walks are still
+    // running after the overflow rejects the oversized folder.
+    openDirectory: createDirectoryReader((directoryPath) => {
+      if (directoryPath === projectRoot) {
+        return Array.from({ length: 20 }, (_, index) => createDirectoryEntry(`dir-${index}`, true));
+      }
+      if (path.dirname(directoryPath) === projectRoot) {
+        return Array.from({ length: 1_000 }, (_, index) => createDirectoryEntry(`file-${index}.txt`, false));
+      }
+      return directoryPath === smallFolder ? [createDirectoryEntry('readme.md', false)] : [];
+    }),
+    lstat: async (candidatePath) => createStats(path.basename(candidatePath).startsWith('dir-'), 0o644),
+  });
+  const service = createFileTreeService({
+    ...createDependencies(fileSystem, projectRoot),
+    projects: { getProjectFolderPathsById: async () => [projectRoot, smallFolder] },
+  });
+
+  const tree = await service.listProjectFiles('project-1');
+
+  assert.equal(tree[0].isTooLarge, true);
+  assert.deepEqual(tree[0].children, []);
+  assert.equal(tree[1].isTooLarge, undefined);
+  assert.deepEqual(tree[1].children?.map((node) => node.name), ['readme.md']);
+});
+
 test('listProjectFiles abandons a directory stream as soon as the entry limit is passed', async () => {
   const projectRoot = path.resolve('file-tree-test-project');
   let streamedEntries = 0;
@@ -403,7 +434,11 @@ test('createEntry performs filesystem mutation only through the injected adapter
  * which is the only way to exercise the read-only roots: the whole guarantee
  * rests on `realpath` resolving symlinks before the comparison.
  */
-function createRealFileSystemService(projectRoot: string, workspaceRoot = projectRoot): FileTreeServices {
+function createRealFileSystemService(
+  projectRoot: string,
+  workspaceRoot = projectRoot,
+  additionalFolders: string[] = [],
+): FileTreeServices {
   return createFileTreeService({
     fileSystem: {
       access: (candidatePath) => fsPromises.access(candidatePath),
@@ -426,7 +461,7 @@ function createRealFileSystemService(projectRoot: string, workspaceRoot = projec
       copyFile: (source, destination) => fsPromises.copyFile(source, destination),
       createReadStream: (filePath) => createReadStream(filePath),
     },
-    projects: { getProjectPathById: async () => projectRoot },
+    projects: { getProjectFolderPathsById: async () => [projectRoot, ...additionalFolders] },
     workspace: {
       rootPath: workspaceRoot,
       validatePath: (candidatePath) => validateWorkspacePath(candidatePath),
@@ -574,4 +609,163 @@ test('a file in another folder of the workspace can be read, but never written t
     await fsPromises.rm(workspaceRoot, { recursive: true, force: true });
     await fsPromises.rm(outsideDirectory, { recursive: true, force: true });
   }
+});
+
+type MultiFolderLayout = {
+  primary: string;
+  shared: string;
+  otherShared: string;
+  nested: string;
+  missing: string;
+  outside: string;
+  service: FileTreeServices;
+};
+
+/**
+ * A project of five folders on the real filesystem: the primary (which
+ * gitignores `Packages/`), a folder nested in it under `Packages`, two folders
+ * that are both named `Shared`, and one that does not exist. The workspace
+ * root is the primary alone, so reaching the other folders relies on them
+ * being project folders.
+ */
+async function withMultiFolderProject(runTest: (layout: MultiFolderLayout) => Promise<void>): Promise<void> {
+  const base = await fsPromises.realpath(await fsPromises.mkdtemp(path.join(os.tmpdir(), 'file-tree-folders-')));
+  const primary = path.join(base, 'primary');
+  const nested = path.join(primary, 'Packages', 'Nested');
+  const shared = path.join(base, 'libs', 'Shared');
+  const otherShared = path.join(base, 'apps', 'Shared');
+  const missing = path.join(base, 'missing');
+  await fsPromises.mkdir(path.join(primary, 'src'), { recursive: true });
+  await fsPromises.mkdir(nested, { recursive: true });
+  await fsPromises.mkdir(shared, { recursive: true });
+  await fsPromises.mkdir(otherShared, { recursive: true });
+  await fsPromises.writeFile(path.join(primary, '.gitignore'), 'Packages/\n');
+  await fsPromises.writeFile(path.join(primary, 'src', 'index.ts'), '');
+  await fsPromises.writeFile(path.join(primary, 'Packages', 'loose.txt'), '');
+  await fsPromises.writeFile(path.join(nested, 'nested.txt'), '');
+  await fsPromises.writeFile(path.join(shared, 'shared.txt'), 'shared');
+  await fsPromises.writeFile(path.join(otherShared, 'other.txt'), 'other');
+
+  try {
+    await runTest({
+      primary,
+      shared,
+      otherShared,
+      nested,
+      missing,
+      outside: path.join(base, 'outside.txt'),
+      service: createRealFileSystemService(primary, primary, [shared, nested, otherShared, missing]),
+    });
+  } finally {
+    await fsPromises.rm(base, { recursive: true, force: true });
+  }
+}
+
+function assertFileTreeError(code: string, statusCode = 403) {
+  return (error: unknown) => {
+    assert.ok(error instanceof AppError);
+    assert.equal(error.code, code);
+    assert.equal(error.statusCode, statusCode);
+    return true;
+  };
+}
+
+test('listProjectFiles shows each folder of a multi-folder project as a top-level node', async () => {
+  await withMultiFolderProject(async ({ primary, shared, otherShared, nested, missing, service }) => {
+    const tree = await service.listProjectFiles('project-1', { respectGitignore: false });
+
+    assert.deepEqual(
+      tree.map((node) => ({ name: node.name, path: node.path, isProjectRoot: node.isProjectRoot })),
+      [
+        { name: 'primary', path: primary, isProjectRoot: true },
+        { name: 'libs/Shared', path: shared, isProjectRoot: true },
+        { name: 'Nested', path: nested, isProjectRoot: true },
+        { name: 'apps/Shared', path: otherShared, isProjectRoot: true },
+        { name: 'missing', path: missing, isProjectRoot: true },
+      ],
+    );
+    assert.ok(tree.every((node) => node.type === 'directory'));
+
+    // Without gitignore filtering `Packages` is listed, but the nested project
+    // folder inside it appears only as its own top-level node.
+    const packages = tree[0].children?.find((node) => node.name === 'Packages');
+    assert.deepEqual(packages?.children?.map((node) => node.name), ['loose.txt']);
+    assert.deepEqual(tree[2].children?.map((node) => node.name), ['nested.txt']);
+    assert.deepEqual(tree[1].children?.map((node) => node.name), ['shared.txt']);
+
+    assert.equal(tree[4].isUnavailable, true);
+    assert.deepEqual(tree[4].children, []);
+    assert.equal(tree[0].isUnavailable, undefined);
+  });
+});
+
+test('listProjectFiles applies each folder its own gitignore', async () => {
+  await withMultiFolderProject(async ({ service }) => {
+    const tree = await service.listProjectFiles('project-1', { respectGitignore: true });
+
+    assert.deepEqual(tree[0].children?.map((node) => node.name), ['src', '.gitignore']);
+    assert.deepEqual(tree[1].children?.map((node) => node.name), ['shared.txt']);
+  });
+});
+
+test('writes reach every project folder, and relative paths stay in the primary', async () => {
+  await withMultiFolderProject(async ({ primary, shared, otherShared, outside, service }) => {
+    const saved = await service.saveTextFile('project-1', path.join(shared, 'saved.txt'), 'saved');
+    assert.equal(saved.path, path.join(shared, 'saved.txt'));
+    assert.equal(await fsPromises.readFile(path.join(shared, 'saved.txt'), 'utf8'), 'saved');
+
+    const relative = await service.saveTextFile('project-1', 'relative.txt', 'relative');
+    assert.equal(relative.path, path.join(primary, 'relative.txt'));
+
+    const created = await service.createEntry({ projectId: 'project-1', parentPath: otherShared, type: 'file', name: 'made.txt' });
+    assert.equal(created.path, path.join(otherShared, 'made.txt'));
+
+    const read = await service.readTextFile('project-1', path.join(otherShared, 'other.txt'));
+    assert.equal(read.content, 'other');
+
+    await assert.rejects(service.saveTextFile('project-1', outside, 'nope'), assertFileTreeError('PATH_OUTSIDE_PROJECT'));
+    await assert.rejects(service.saveTextFile('project-1', '../outside.txt', 'nope'), assertFileTreeError('PATH_OUTSIDE_PROJECT'));
+  });
+});
+
+test('a project folder itself can be neither renamed nor deleted', async () => {
+  await withMultiFolderProject(async ({ primary, shared, nested, service }) => {
+    for (const folder of [primary, shared, nested]) {
+      await assert.rejects(
+        service.renameEntry({ projectId: 'project-1', oldPath: folder, newName: 'renamed' }),
+        assertFileTreeError('PROJECT_ROOT_RENAME_FORBIDDEN'),
+      );
+      await assert.rejects(
+        service.deleteEntry({ projectId: 'project-1', targetPath: folder }),
+        assertFileTreeError('PROJECT_ROOT_DELETE_FORBIDDEN'),
+      );
+    }
+    await fsPromises.access(nested);
+
+    const renamed = await service.renameEntry({
+      projectId: 'project-1',
+      oldPath: path.join(shared, 'shared.txt'),
+      newName: 'renamed.txt',
+    });
+    assert.equal(renamed.newPath, path.join(shared, 'renamed.txt'));
+  });
+});
+
+test('files can be uploaded onto an extra project folder', async () => {
+  await withMultiFolderProject(async ({ shared, service }) => {
+    const temporaryPath = path.join(os.tmpdir(), `file-tree-upload-${process.pid}-${Date.now()}`);
+    await fsPromises.writeFile(temporaryPath, 'uploaded');
+
+    const result = await service.storeUploadedFiles({
+      projectId: 'project-1',
+      targetPath: shared,
+      relativePaths: [],
+      requestedFileCount: 1,
+      files: [{ originalName: 'upload.txt', temporaryPath, size: 8, mimeType: 'text/plain' }],
+    });
+
+    assert.equal(result.uploadedCount, 1);
+    assert.equal(result.targetPath, shared);
+    assert.equal(await fsPromises.readFile(path.join(shared, 'upload.txt'), 'utf8'), 'uploaded');
+  });
 });

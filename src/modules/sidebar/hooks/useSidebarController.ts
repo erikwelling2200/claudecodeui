@@ -140,6 +140,9 @@ export function useSidebarController({
   // session cannot both be mid-rename. See ActiveSidebarRename.
   const [activeRename, setActiveRename] = useState<ActiveSidebarRename | null>(null);
   const [showNewProject, setShowNewProject] = useState(false);
+  // The project whose edit dialog (name and folders) is open. Only the id is
+  // kept so the dialog always reads the current project from `projects`.
+  const [editingProjectSettingsId, setEditingProjectSettingsId] = useState<string | null>(null);
   const [initialSessionsLoaded, setInitialSessionsLoaded] = useState<Set<string>>(new Set());
   const [currentTime, setCurrentTime] = useState(new Date());
   const [projectSortOrder, setProjectSortOrder] = useState<ProjectSortOrder>('name');
@@ -1308,6 +1311,7 @@ export function useSidebarController({
     isProjectExpanded,
     activeRename,
     showNewProject,
+    editingProjectSettingsId,
     initialSessionsLoaded,
     currentTime,
     isRefreshing,
@@ -1361,6 +1365,7 @@ export function useSidebarController({
     collapseSidebar,
     expandSidebar,
     setShowNewProject,
+    setEditingProjectSettingsId,
     searchMode,
     setSearchMode: changeSearchMode,
     conversationResults,

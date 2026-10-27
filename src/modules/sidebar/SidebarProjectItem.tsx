@@ -1,9 +1,9 @@
 import { memo, useEffect, useRef } from 'react';
-import { Check, ChevronDown, ChevronRight, Edit3, Star, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Edit3, FolderCog, Star, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { Button } from '@/shared/ui';
-import { cn } from '@/shared/utils';
+import { cn, getProjectFolderPaths } from '@/shared/utils';
 import type { LLMProvider, MCPServerStatus, Project, ProjectSession, SessionWithProvider, SidebarSessionSelection } from '@/shared/types';
 import { getTaskIndicatorStatus } from '@/modules/sidebar/utils/sidebarProjectFormatting';
 import TaskIndicator from '@/modules/sidebar/TaskIndicator';
@@ -36,6 +36,7 @@ type SidebarProjectItemProps = {
   onStartEditingProject: (project: Project) => void;
   onCancelEditingProject: () => void;
   onSaveProjectName: (projectId: string, nextName: string) => void;
+  onEditProjectSettings: (project: Project) => void;
   onDeleteProject: (project: Project) => void;
   onSessionSelect: (session: SessionWithProvider, projectName: string) => void;
   onDeleteSession: (sessionId: string, sessionTitle: string) => void;
@@ -62,7 +63,7 @@ const getSessionCountDisplay = (project: Project, sessions: SessionWithProvider[
   return String(total);
 };
 
-/** Rendered by SidebarProjectList for one project row, including its expand, rename, star and delete controls. */
+/** Rendered by SidebarProjectList for one project row, including its expand, rename, edit, star and delete controls. */
 function SidebarProjectItem({
   project,
   selectedProject,
@@ -87,6 +88,7 @@ function SidebarProjectItem({
   onStartEditingProject,
   onCancelEditingProject,
   onSaveProjectName,
+  onEditProjectSettings,
   onDeleteProject,
   onSessionSelect,
   onDeleteSession,
@@ -114,6 +116,10 @@ function SidebarProjectItem({
   const sessionCountLabel = `${sessionCountDisplay} session${totalSessionCount === 1 ? '' : 's'}`;
   const taskStatus = getTaskIndicatorStatus(project, mcpServerStatus);
   const mobileRenameInputRef = useRef<HTMLInputElement>(null);
+  const projectFolders = getProjectFolderPaths(project);
+  const extraFolderCount = projectFolders.length - 1;
+  // Every folder, one per line, so the shortened row path can be checked in full.
+  const projectFoldersTitle = projectFolders.join('\n');
 
   useEffect(() => {
     if (!isEditing || !mobileRenameInputRef.current) {
@@ -276,6 +282,18 @@ function SidebarProjectItem({
                     </button>
 
                     <button
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/40 active:scale-90"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onEditProjectSettings(project);
+                      }}
+                      title={t('tooltips.editProject')}
+                      aria-label={t('tooltips.editProject')}
+                    >
+                      <FolderCog className="h-4 w-4 text-muted-foreground" />
+                    </button>
+
+                    <button
                       className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 active:scale-90 dark:border-primary/30 dark:bg-primary/20"
                       onClick={(event) => {
                         event.stopPropagation();
@@ -360,8 +378,9 @@ function SidebarProjectItem({
                       }
                     }}
                   />
-                  <div className="truncate text-xs text-muted-foreground" title={project.fullPath}>
+                  <div className="truncate text-xs text-muted-foreground" title={projectFoldersTitle}>
                     {project.fullPath}
+                    {extraFolderCount > 0 && ` +${extraFolderCount}`}
                   </div>
                 </div>
               ) : (
@@ -372,9 +391,15 @@ function SidebarProjectItem({
                   <div className="text-xs text-muted-foreground">
                     {sessionCountDisplay}
                     {project.fullPath !== project.displayName && (
-                      <span className="ml-1 opacity-60" title={project.fullPath}>
+                      <span className="ml-1 opacity-60" title={projectFoldersTitle}>
                         {' - '}
                         {project.fullPath.length > 25 ? `...${project.fullPath.slice(-22)}` : project.fullPath}
+                        {extraFolderCount > 0 && ` +${extraFolderCount}`}
+                      </span>
+                    )}
+                    {project.fullPath === project.displayName && extraFolderCount > 0 && (
+                      <span className="ml-1 opacity-60" title={projectFoldersTitle}>
+                        {`+${extraFolderCount}`}
                       </span>
                     )}
                   </div>
@@ -416,6 +441,17 @@ function SidebarProjectItem({
                   title={t('tooltips.renameProject')}
                 >
                   <Edit3 className="h-3 w-3" />
+                </div>
+                <div
+                  className="touch:opacity-100 flex h-6 w-6 cursor-pointer items-center justify-center rounded opacity-0 transition-all duration-200 hover:bg-accent group-hover:opacity-100"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onEditProjectSettings(project);
+                  }}
+                  title={t('tooltips.editProject')}
+                  aria-label={t('tooltips.editProject')}
+                >
+                  <FolderCog className="h-3 w-3" />
                 </div>
                 <div
                   className="touch:opacity-100 flex h-6 w-6 cursor-pointer items-center justify-center rounded opacity-0 transition-all duration-200 hover:bg-red-50 group-hover:opacity-100 dark:hover:bg-red-900/20"

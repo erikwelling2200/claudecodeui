@@ -267,6 +267,7 @@ async function queryCodex(
     sessionSummary,
     cwd,
     projectPath,
+    additionalDirectories,
     model,
     effort,
     images,
@@ -317,6 +318,10 @@ async function queryCodex(
       approvalPolicy,
       model: resolvedModel,
       modelReasoningEffort: resolvedEffort,
+      // The project's extra folders; the SDK passes each as `--add-dir`.
+      additionalDirectories: Array.isArray(additionalDirectories) && additionalDirectories.length > 0
+        ? additionalDirectories
+        : undefined,
     };
 
     if (providerSessionId) {

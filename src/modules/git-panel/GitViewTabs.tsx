@@ -7,6 +7,8 @@ type GitViewTabsProps = {
   activeView: GitPanelView;
   isHidden: boolean;
   changeCount: number;
+  // False for a non-primary project folder: worktrees belong to the primary repository.
+  showWorktrees: boolean;
   onChange: (view: GitPanelView) => void;
 };
 
@@ -19,7 +21,7 @@ const TABS: { id: GitPanelView; labelKey: string; Icon: typeof FileText }[] = [
 ];
 
 /** Rendered by GitPanel to switch between its changes, compare, commits, branches and worktrees views. */
-export default function GitViewTabs({ activeView, isHidden, changeCount, onChange }: GitViewTabsProps) {
+export default function GitViewTabs({ activeView, isHidden, changeCount, showWorktrees, onChange }: GitViewTabsProps) {
   const { t } = useTranslation();
   return (
     <div
@@ -32,7 +34,7 @@ export default function GitViewTabs({ activeView, isHidden, changeCount, onChang
         role="tablist"
         aria-label={t('git:tabs.ariaLabel')}
       >
-        {TABS.map(({ id, labelKey, Icon }) => (
+        {TABS.filter(({ id }) => showWorktrees || id !== 'worktrees').map(({ id, labelKey, Icon }) => (
           <button
             key={id}
             type="button"
