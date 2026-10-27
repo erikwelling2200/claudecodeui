@@ -1,4 +1,5 @@
 import { clsx, type ClassValue } from 'clsx';
+import type { MouseEvent } from 'react';
 import { twMerge } from 'tailwind-merge';
 
 import type { LiveTurnTerms, Project, ProjectSession, QuickSettingsTab, SlashCommand } from '@/shared/types';
@@ -325,3 +326,32 @@ export const parseLiveTurnTerms = (value: unknown): LiveTurnTerms | undefined =>
     disallowedTools: terms.disallowedTools,
   };
 };
+
+// ---------------------------
+
+//----------------- MIDDLE CLICK ------------
+
+/** `MouseEvent.button` value of the middle (wheel) button. */
+const MIDDLE_MOUSE_BUTTON = 1;
+
+/**
+ * Mouse handlers that run `action` on a middle-click and suppress what the
+ * browser would do instead: autoscroll on press, and opening an anchor in a
+ * new tab on release. Spread onto a sidebar session row, in both the Projects
+ * and the Conversations list.
+ */
+export const getMiddleClickHandlers = (action: () => void) => ({
+  onMouseDown: (event: MouseEvent<HTMLElement>) => {
+    if (event.button === MIDDLE_MOUSE_BUTTON) {
+      event.preventDefault();
+    }
+  },
+  onAuxClick: (event: MouseEvent<HTMLElement>) => {
+    if (event.button !== MIDDLE_MOUSE_BUTTON) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    action();
+  },
+});

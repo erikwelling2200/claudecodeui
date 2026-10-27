@@ -28,6 +28,10 @@ const registryDirectory = () => path.join(os.homedir(), '.claude', 'sessions');
  */
 const MAX_REGISTRY_FILES = 256;
 
+// Bounds the wait for a killed CLI to disappear from the process table.
+const PROCESS_EXIT_TIMEOUT = 5000;
+const PROCESS_EXIT_POLL_INTERVAL = 100;
+
 /**
  * Whether `pid` is still the process the registry recorded.
  *
@@ -63,8 +67,15 @@ async function isRecordedProcessAlive(pid: number, procStart: unknown): Promise<
   }
 }
 
-/** Reads one registry file, returning null for anything that is not a live busy session. */
-async function readLiveBusySession(filePath: string): Promise<LiveClaudeCliSession | null> {
+/** One live CLI process as its registry file records it. */
+type LiveRegistryEntry = LiveClaudeCliSession & {
+  pid: number;
+  procStart: unknown;
+  isBusy: boolean;
+};
+
+/** Reads one registry file, returning null for anything that is not a live process. */
+async function readLiveRegistryEntry(filePath: string): Promise<LiveRegistryEntry | null> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(await fsp.readFile(filePath, 'utf8'));
@@ -81,7 +92,7 @@ async function readLiveBusySession(filePath: string): Promise<LiveClaudeCliSessi
 
   const providerSessionId = typeof record.sessionId === 'string' ? record.sessionId : '';
   const pid = typeof record.pid === 'number' ? record.pid : NaN;
-  if (!providerSessionId || !Number.isInteger(pid) || pid <= 0 || record.status !== 'busy') {
+  if (!providerSessionId || !Number.isInteger(pid) || pid <= 0) {
     return null;
   }
 
@@ -90,7 +101,26 @@ async function readLiveBusySession(filePath: string): Promise<LiveClaudeCliSessi
   }
 
   const startedAt = typeof record.startedAt === 'number' ? record.startedAt : Date.now();
-  return { providerSessionId, startedAt };
+  return { providerSessionId, startedAt, pid, procStart: record.procStart, isBusy: record.status === 'busy' };
+}
+
+/** Reads every live entry in the CLI's process registry. */
+async function listLiveRegistryEntries(): Promise<LiveRegistryEntry[]> {
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(registryDirectory());
+  } catch {
+    // No registry directory at all is the normal case for an install that has
+    // never run the CLI, and an unreadable one is not worth failing a poll for.
+    return [];
+  }
+
+  const registryFiles = entries.filter((entry) => entry.endsWith('.json')).slice(0, MAX_REGISTRY_FILES);
+  const sessions = await Promise.all(
+    registryFiles.map((entry) => readLiveRegistryEntry(path.join(registryDirectory(), entry))),
+  );
+
+  return sessions.filter((session): session is LiveRegistryEntry => session !== null);
 }
 
 /**
@@ -103,19 +133,40 @@ async function readLiveBusySession(filePath: string): Promise<LiveClaudeCliSessi
  * is recomputed on every read instead of being cached or persisted.
  */
 export async function listBusyClaudeCliSessions(): Promise<LiveClaudeCliSession[]> {
-  let entries: string[];
-  try {
-    entries = await fsp.readdir(registryDirectory());
-  } catch {
-    // No registry directory at all is the normal case for an install that has
-    // never run the CLI, and an unreadable one is not worth failing a poll for.
-    return [];
+  const entries = await listLiveRegistryEntries();
+  return entries
+    .filter((entry) => entry.isBusy)
+    .map(({ providerSessionId, startedAt }) => ({ providerSessionId, startedAt }));
+}
+
+/**
+ * Kills every Claude CLI process attached to one Claude session, busy or idle,
+ * wherever it was started (the app, its Shell view, or a terminal outside it),
+ * and resolves once each has exited or the timeout passed.
+ *
+ * Used by the providers module's sessions service when a session is archived
+ * with `stopProcesses`, so no CLI keeps appending to the archived transcript.
+ * @returns The number of processes that were signalled.
+ */
+export async function killClaudeCliProcesses(providerSessionId: string): Promise<number> {
+  const targets = (await listLiveRegistryEntries()).filter((entry) => entry.providerSessionId === providerSessionId);
+  for (const target of targets) {
+    try {
+      process.kill(target.pid);
+    } catch (error) {
+      // ESRCH: it exited between the liveness probe and the kill.
+      if ((error as NodeJS.ErrnoException)?.code !== 'ESRCH') {
+        throw error;
+      }
+    }
   }
 
-  const registryFiles = entries.filter((entry) => entry.endsWith('.json')).slice(0, MAX_REGISTRY_FILES);
-  const sessions = await Promise.all(
-    registryFiles.map((entry) => readLiveBusySession(path.join(registryDirectory(), entry))),
-  );
+  const deadline = Date.now() + PROCESS_EXIT_TIMEOUT;
+  for (const target of targets) {
+    while (Date.now() < deadline && (await isRecordedProcessAlive(target.pid, target.procStart))) {
+      await new Promise((resolve) => setTimeout(resolve, PROCESS_EXIT_POLL_INTERVAL));
+    }
+  }
 
-  return sessions.filter((session): session is LiveClaudeCliSession => session !== null);
+  return targets.length;
 }

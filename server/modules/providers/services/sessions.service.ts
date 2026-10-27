@@ -5,7 +5,8 @@ import path from 'node:path';
 import { projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { broadcastSessionUpserted, chatRunRegistry } from '@/modules/websocket/index.js';
 import { providerRegistry } from '@/modules/providers/provider.registry.js';
-import { listBusyClaudeCliSessions } from '@/modules/providers/services/claude-cli-liveness.service.js';
+import { killClaudeCliProcesses, listBusyClaudeCliSessions } from '@/modules/providers/services/claude-cli-liveness.service.js';
+import { sessionSynchronizerService } from '@/modules/providers/services/session-synchronizer.service.js';
 import { sessionHistoryCache } from '@/modules/providers/services/session-history-cache.service.js';
 import type {
   BackgroundTaskSummary,
@@ -101,6 +102,49 @@ const MAX_CLOUDCLI_SESSION_NAME_WORDS = 4;
 function buildCloudCliSessionName(initialMessage: string): string {
   const words = initialMessage.trim().split(/\s+/).filter(Boolean);
   return words.slice(0, MAX_CLOUDCLI_SESSION_NAME_WORDS).join(' ') || 'Untitled Session';
+}
+
+/**
+ * Stops the processes the app runs for one app session (chat runs, held
+ * provider processes, Shell ptys). Lives in the websocket module, which imports
+ * this module, so `server/index.ts` hands it over through `setAppSessionProcessStopper`.
+ */
+type AppSessionProcessStopper = (sessionId: string) => Promise<boolean>;
+
+let appSessionProcessStopper: AppSessionProcessStopper | null = null;
+
+// A stopped CLI can still flush its last transcript line; the archive waits until the file goes quiet.
+const TRANSCRIPT_QUIET_PERIOD = 1000;
+const TRANSCRIPT_SETTLE_TIMEOUT = 5000;
+const TRANSCRIPT_POLL_INTERVAL = 200;
+
+/**
+ * Resolves once the file's modification time has not changed for the quiet
+ * period, or the timeout passed. A missing file counts as settled.
+ */
+async function waitForFileToSettle(filePath: string): Promise<void> {
+  const deadline = Date.now() + TRANSCRIPT_SETTLE_TIMEOUT;
+  let lastModified: number | null = null;
+  let quietSince = Date.now();
+  while (Date.now() < deadline) {
+    let modified: number;
+    try {
+      modified = (await fsp.stat(filePath)).mtimeMs;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return;
+      }
+      throw error;
+    }
+
+    if (modified !== lastModified) {
+      lastModified = modified;
+      quietSince = Date.now();
+    } else if (Date.now() - quietSince >= TRANSCRIPT_QUIET_PERIOD) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, TRANSCRIPT_POLL_INTERVAL));
+  }
 }
 
 /**
@@ -682,6 +726,8 @@ export const sessionsService = {
     options: {
       force?: boolean;
       deletedFromDisk?: boolean;
+      /** Stop every CLI process attached to the session first, and let its transcript settle. */
+      stopProcesses?: boolean;
     } = {},
   ): Promise<{ sessionId: string; action: 'archived' | 'deleted'; deletedFromDisk: boolean }> {
     const session = sessionsDb.getSessionById(sessionId);
@@ -690,6 +736,10 @@ export const sessionsService = {
         code: 'SESSION_NOT_FOUND',
         statusCode: 404,
       });
+    }
+
+    if (options.stopProcesses) {
+      await sessionsService.stopSessionProcesses(sessionId);
     }
 
     if (!options.force) {
@@ -731,6 +781,48 @@ export const sessionsService = {
       action: 'deleted',
       deletedFromDisk: removedFromDisk,
     };
+  },
+
+  /**
+   * Installs the websocket module's stopper for app-owned session processes.
+   * Called once from `server/index.ts` at startup.
+   */
+  setAppSessionProcessStopper(stopper: AppSessionProcessStopper): void {
+    appSessionProcessStopper = stopper;
+  },
+
+  /**
+   * Stops every process attached to one session, then re-indexes its
+   * transcript once the file has gone quiet. Re-indexing before the archive
+   * flag is set matters: the indexer un-archives a session whose transcript
+   * is newer than the row, and an interrupted CLI writes one last line.
+   */
+  async stopSessionProcesses(sessionId: string): Promise<void> {
+    if (!appSessionProcessStopper) {
+      throw new AppError('No session process stopper is installed.', {
+        code: 'SESSION_PROCESS_STOPPER_MISSING',
+        statusCode: 500,
+      });
+    }
+
+    let stopped = await appSessionProcessStopper(sessionId);
+
+    const session = sessionsDb.getSessionById(sessionId);
+    if (!session) {
+      throw new AppError(`Session "${sessionId}" was not found.`, {
+        code: 'SESSION_NOT_FOUND',
+        statusCode: 404,
+      });
+    }
+
+    if (session.provider === 'claude' && session.provider_session_id) {
+      stopped = (await killClaudeCliProcesses(session.provider_session_id)) > 0 || stopped;
+    }
+
+    if (stopped && session.jsonl_path) {
+      await waitForFileToSettle(session.jsonl_path);
+      await sessionSynchronizerService.synchronizeProviderFile(session.provider as LLMProvider, session.jsonl_path);
+    }
   },
 
   /**

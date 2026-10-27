@@ -923,16 +923,10 @@ export function useSidebarController({
     [],
   );
 
-  const confirmDeleteSession = useCallback(async (hardDelete = false) => {
-    if (pendingDeletion?.kind !== 'session') {
-      return;
-    }
-
-    const { sessionId } = pendingDeletion;
-    setPendingDeletion(null);
-
+  // Shared by the confirmation dialog and the middle-click archive, which skips the dialog.
+  const deleteSession = useCallback(async (sessionId: string, hardDelete: boolean, stopProcesses: boolean) => {
     try {
-      const response = await api.deleteSession(sessionId, hardDelete);
+      const response = await api.deleteSession(sessionId, hardDelete, stopProcesses);
 
       if (response.ok) {
         onSessionDelete?.(sessionId);
@@ -959,7 +953,21 @@ export function useSidebarController({
       console.error('[Sidebar] Error deleting session:', error);
       alert(t('messages.deleteSessionError'));
     }
-  }, [fetchArchivedSessions, onSessionDelete, pendingDeletion, t]);
+  }, [fetchArchivedSessions, onSessionDelete, t]);
+
+  const confirmDeleteSession = useCallback(async (hardDelete = false) => {
+    if (pendingDeletion?.kind !== 'session') {
+      return;
+    }
+
+    const { sessionId } = pendingDeletion;
+    setPendingDeletion(null);
+    await deleteSession(sessionId, hardDelete, false);
+  }, [deleteSession, pendingDeletion]);
+
+  const archiveSessionNow = useCallback((sessionId: string) => {
+    void deleteSession(sessionId, false, true);
+  }, [deleteSession]);
 
   const setProjectSessionSelection = useCallback((selection: SidebarSessionSelection) => {
     setSessionSelection(selection);
@@ -1348,6 +1356,7 @@ export function useSidebarController({
     saveProjectName,
     showDeleteSessionConfirmation,
     confirmDeleteSession,
+    archiveSessionNow,
     sessionSelection,
     setProjectSessionSelection,
     toggleSessionSelected,

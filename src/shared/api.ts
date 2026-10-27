@@ -282,8 +282,8 @@ export const api = {
   // Session deletion mirrors project deletion:
   // - default: archive only (`isArchived = 1`)
   // - hardDelete: remove the row and, by default, its persisted transcript file
-  deleteSession: (sessionId: string, hardDelete = false) =>
-    del(`/api/providers/sessions/${sessionId}${query({ force: hardDelete })}`),
+  deleteSession: (sessionId: string, hardDelete = false, stopProcesses = false) =>
+    del(`/api/providers/sessions/${sessionId}${query({ force: hardDelete, stopProcesses })}`),
   getArchivedSessions: () => get('/api/providers/sessions/archived'),
   // Resolves one session (by app id or provider-native id) to its metadata and
   // owning project — used when a /session/<id> URL isn't in loaded payloads.

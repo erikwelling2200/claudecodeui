@@ -4,7 +4,7 @@ import { Check, CheckSquare, Edit2, Loader2, MoreHorizontal, Square, Trash2, X }
 import type { TFunction } from 'i18next';
 
 import { Badge, Dialog, DialogContent, DialogTitle, LLMProviderLogo, Tooltip, buttonVariants } from '@/shared/ui';
-import { cn } from '@/shared/utils';
+import { cn, getMiddleClickHandlers } from '@/shared/utils';
 import type { LLMProvider, Project, ProjectSession, SessionWithProvider } from '@/shared/types';
 import { PROVIDER_LABELS, createSessionViewModel, formatCompactAge } from '@/modules/sidebar/utils/sidebarProjectFormatting';
 import { useCompactSidebar } from '@/modules/sidebar/hooks/useCompactSidebar';
@@ -32,6 +32,8 @@ type SidebarSessionItemProps = {
   onDeleteSession: (sessionId: string, sessionTitle: string) => void;
   /** Branches this session into an independent one; absent when its provider cannot. */
   onForkSession?: (session: SessionWithProvider) => void;
+  /** Archives the session at once, stopping every CLI process attached to it. Bound to a middle-click on the row. */
+  onArchiveSessionNow: (sessionId: string) => void;
   /** This project's list is in bulk-selection mode: the row acts as a checkbox and hides its options. */
   isSelecting: boolean;
   /** Ticked for the pending bulk delete. Resolved by the list, which never ticks a running row. */
@@ -60,6 +62,7 @@ function SidebarSessionItem({
   onSessionSelect,
   onDeleteSession,
   onForkSession,
+  onArchiveSessionNow,
   isSelecting,
   isChecked,
   onToggleSessionSelected,
@@ -147,8 +150,10 @@ function SidebarSessionItem({
     setMobileOptionsOpen(false);
   };
 
+  const middleClickHandlers = getMiddleClickHandlers(() => onArchiveSessionNow(session.id));
+
   return (
-    <div className="group relative">
+    <div className="group relative" {...middleClickHandlers}>
       {(showAttentionIndicator || showBackgroundIndicator || showRecentIndicator) && (
         <div className="absolute left-0 top-1/2 -translate-x-1 -translate-y-1/2 transform">
           <Tooltip content={indicatorLabel} position="right">
