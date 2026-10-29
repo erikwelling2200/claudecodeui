@@ -1087,7 +1087,8 @@ export function readProviderSkillMarkdownDefinitionFromContent(
  * If the normalized input is empty, it returns the supplied fallback title.
  */
 export function normalizeSessionName(rawValue: string | undefined, fallback: string): string {
-  const normalized = (rawValue ?? '').replace(/\s+/g, ' ').trim();
+  // A title taken from a prompt must not show the server-appended instructions.
+  const normalized = stripAppendedPromptText(rawValue ?? '').replace(/\s+/g, ' ').trim();
   if (!normalized) {
     return fallback;
   }

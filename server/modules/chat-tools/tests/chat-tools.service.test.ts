@@ -7,7 +7,7 @@ import test from 'node:test';
 import { chatToolsService } from '@/modules/chat-tools/chat-tools.service.js';
 import { closeConnection, initializeDatabase, sessionsDb } from '@/modules/database/index.js';
 import { parseFilesInputTag } from '@/shared/image-attachments.js';
-import { appendPromptText, stripAppendedPromptText } from '@/shared/utils.js';
+import { appendPromptText, normalizeSessionName, stripAppendedPromptText } from '@/shared/utils.js';
 
 async function withIsolatedDatabase(run: () => Promise<void>): Promise<void> {
   const previousDatabasePath = process.env.DATABASE_PATH;
@@ -71,4 +71,8 @@ test('setChatName renames the chat and rejects blank or overlong names', async (
     await assert.rejects(chatToolsService.setChatName('app-1', 'x'.repeat(81)), /longer than/);
     await assert.rejects(chatToolsService.setChatName('missing', 'Some name'), /was not found/);
   });
+});
+
+test('a chat title taken from a prompt leaves out the appended text', () => {
+  assert.equal(normalizeSessionName(appendPromptText('Fix the login form', 'Name this chat first.'), 'Untitled'), 'Fix the login form');
 });
