@@ -355,3 +355,29 @@ export const getMiddleClickHandlers = (action: () => void) => ({
     action();
   },
 });
+
+// ---------------------------
+
+//----------------- RELATIVE TIME ------------
+
+/**
+ * Formats how long ago `dateString` was, relative to `currentTime`, as a short
+ * label such as `<1m`, `12m`, `3hr` or `2d`. Returns an empty string for a
+ * missing or unparseable date. Used by session lists in the sidebar and chat.
+ */
+export const formatCompactAge = (
+  dateString: string | null | undefined,
+  currentTime: Date,
+): string => {
+  if (!dateString) return '';
+
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const minutes = Math.floor(Math.max(0, currentTime.getTime() - date.getTime()) / 60000);
+  if (minutes < 1) return '<1m';
+  if (minutes < 60) return `${minutes}m`;
+
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}hr` : `${Math.floor(hours / 24)}d`;
+};

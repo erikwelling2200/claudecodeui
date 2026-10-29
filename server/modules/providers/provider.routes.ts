@@ -969,7 +969,7 @@ router.post(
   '/sessions/:sessionId/restore',
   asyncHandler(async (req: Request, res: Response) => {
     const sessionId = parseSessionId(req.params.sessionId);
-    const result = sessionsService.restoreSessionById(sessionId);
+    const result = await sessionsService.restoreSessionById(sessionId);
     res.json(createApiSuccessResponse(result));
   }),
 );
@@ -1023,6 +1023,20 @@ router.get(
     res.json(createApiSuccessResponse(result));
   }),
 );
+
+router.get('/search/archived-sessions', asyncHandler(async (req: Request, res: Response) => {
+  const query = parseSessionSearchQuery(req.query.q);
+  const abortController = new AbortController();
+  // The response, not the request: a GET's request stream can close before the client goes away.
+  res.on('close', () => {
+    if (!res.writableEnded) {
+      abortController.abort();
+    }
+  });
+
+  const sessions = await sessionConversationsSearchService.searchArchivedUserMessages(query, abortController.signal);
+  res.json(createApiSuccessResponse({ sessions }));
+}));
 
 router.get('/search/sessions', asyncHandler(async (req: Request, res: Response) => {
   const query = parseSessionSearchQuery(req.query.q);

@@ -1,38 +1,14 @@
-import { type ReactNode } from 'react';
 import { Activity, Archive, Folder, MessageSquare, RotateCcw, Search, Trash2 } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
-import { LLMProviderLogo, ScrollArea } from '@/shared/ui';
+import { HighlightedSnippet, LLMProviderLogo, ScrollArea } from '@/shared/ui';
 import type { ArchivedProjectListItem, ArchivedSessionListItem, ConversationSearchResults, Project, RecentConversationListItem, ReleaseInfo, SearchProgress, SidebarProjectListProps, SidebarSearchMode } from '@/shared/types';
-import { formatCompactAge, getAllSessions } from '@/modules/sidebar/utils/sidebarProjectFormatting';
+import { getAllSessions } from '@/modules/sidebar/utils/sidebarProjectFormatting';
+import { formatCompactAge } from '@/shared/utils';
 import SidebarFooter from '@/modules/sidebar/SidebarFooter';
 import SidebarHeader from '@/modules/sidebar/SidebarHeader';
 import SidebarProjectList from '@/modules/sidebar/SidebarProjectList';
 import SidebarRecentConversations from '@/modules/sidebar/SidebarRecentConversations';
-
-function HighlightedSnippet({ snippet, highlights }: { snippet: string; highlights: { start: number; end: number }[] }) {
-  const parts: ReactNode[] = [];
-  let cursor = 0;
-  for (const h of highlights) {
-    if (h.start > cursor) {
-      parts.push(snippet.slice(cursor, h.start));
-    }
-    parts.push(
-      <mark key={h.start} className="rounded-sm bg-yellow-200 px-0.5 text-foreground dark:bg-yellow-800">
-        {snippet.slice(h.start, h.end)}
-      </mark>
-    );
-    cursor = h.end;
-  }
-  if (cursor < snippet.length) {
-    parts.push(snippet.slice(cursor));
-  }
-  return (
-    <span className="min-w-0 flex-1 break-words text-xs leading-relaxed text-muted-foreground">
-      {parts}
-    </span>
-  );
-}
 
 type ArchivedSessionGroup = {
   key: string;
