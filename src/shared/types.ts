@@ -553,6 +553,11 @@ export type NormalizedMessage = {
    * when the cut was made, so this is where those rows begin.
    */
   replacesAfterRowCount?: number;
+  /**
+   * Names a message sent while a turn ran: on `steer_pending` while it waits for
+   * the CLI to take it, and on the user `text` the turn shows once it has.
+   */
+  steerId?: string;
   sessionId: string;
   timestamp: string;
   provider: LLMProvider;
@@ -729,7 +734,9 @@ type MessageKind =
   | 'session_created'
   | 'history_truncated'
   | 'task_notification'
-  | 'task_status';
+  | 'task_status'
+  // A message sent mid-turn that the CLI has not taken into the turn yet.
+  | 'steer_pending';
 
 // ---------------------------
 

@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { WebSocket } from 'ws';
 
 import { chatToolsService } from '@/modules/chat-tools/index.js';
-import { projectsDb, sessionDraftsDb, sessionsDb } from '@/modules/database/index.js';
+import { projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { providerModelsService, sessionsService } from '@/modules/providers/index.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
 import { connectedClients, WS_OPEN_STATE } from '@/modules/websocket/services/websocket-state.service.js';
@@ -91,6 +91,8 @@ export type ProviderRuntimeGateway = {
   setPermissionMode(provider: LLMProvider, sessionId: string, permissionMode: string): Promise<boolean>;
   /** Adds a message to the session's turn in flight; false when none can take it. */
   steerTurn(provider: LLMProvider, sessionId: string, command: string, options: AnyRecord): Promise<boolean>;
+  /** Interrupts the turn in flight for a message still waiting to go into it; false when it is not waiting. */
+  interruptForSteer(provider: LLMProvider, sessionId: string, steerId: string): Promise<boolean>;
   /** Whether a provider runtime still holds background work for the session after its turn ended. */
   hasBackgroundWork(sessionId: string): boolean;
   /** Whether a turn with these options goes into the process the session keeps between turns. */
@@ -238,16 +240,21 @@ function readVerifiedAttachments(clientOptions: AnyRecord): ChatAttachmentDescri
   );
 }
 
+const STEER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function readSteerId(data: AnyRecord): string | null {
+  return typeof data.steerId === 'string' && STEER_ID_PATTERN.test(data.steerId) ? data.steerId : null;
+}
+
 /**
  * Handles `chat.steer`: a message sent while the session's turn is running.
- * It goes into that turn, so the model reads it at its next step. When the
- * runtime cannot take it there, it is sent the way it would otherwise have
- * gone: as a turn of its own right away when the run has ended meanwhile, or
- * queued to follow the run.
+ * It goes into that turn, so the model reads it at its next step; the runtime
+ * reports it as `steer_pending` until then. When no turn can take it (the run
+ * ended meanwhile, or the provider cannot add to a turn), the sender is told
+ * with `steer_declined` and sends it the way it would otherwise have gone.
  */
 async function handleChatSteer(
   ws: WebSocket,
-  userId: string | number | null,
   data: AnyRecord,
   dependencies: ChatWebSocketDependencies
 ): Promise<void> {
@@ -256,37 +263,48 @@ async function handleChatSteer(
     return;
   }
   const { sessionId, session, provider } = resolved;
-
-  if (!chatRunRegistry.isProcessing(sessionId)) {
-    await dispatchRun(ws, userId, sessionId, session, data, dependencies);
+  const steerId = readSteerId(data);
+  if (!steerId) {
+    sendProtocolError(ws, 'STEER_ID_REQUIRED', 'chat.steer requires a steerId that is a UUID.', sessionId);
     return;
   }
 
   const clientOptions = (data.options ?? {}) as AnyRecord;
   const command = typeof data.content === 'string' ? data.content : '';
   const attachments = readVerifiedAttachments(clientOptions);
-  const steered = await dependencies.runtime.steerTurn(provider, sessionId, command, {
+  const steered = chatRunRegistry.isProcessing(sessionId) && await dependencies.runtime.steerTurn(provider, sessionId, command, {
+    steerId,
     images: attachments.filter(isImageAttachmentDescriptor),
     files: attachments.filter((descriptor) => !isImageAttachmentDescriptor(descriptor)),
     cwd: clientOptions.cwd ?? session.project_path ?? undefined,
   });
-  if (steered) {
+  if (!steered) {
+    sendJson(ws, { kind: 'steer_declined', sessionId, steerId, timestamp: new Date().toISOString() });
+  }
+}
+
+/**
+ * Handles `chat.steer-now`: interrupts the running turn so a message waiting to
+ * go into it is taken at once. The CLI keeps the message and runs it next.
+ */
+async function handleChatSteerNow(
+  ws: WebSocket,
+  data: AnyRecord,
+  dependencies: ChatWebSocketDependencies
+): Promise<void> {
+  const sessionId = readRequiredSessionId(data);
+  const steerId = readSteerId(data);
+  if (!sessionId || !steerId) {
+    sendProtocolError(ws, 'STEER_ID_REQUIRED', 'chat.steer-now requires a sessionId and a steerId.', sessionId ?? undefined);
     return;
   }
-
-  const queued = sessionDraftsDb.appendQueuedMessage(Number(userId), sessionId, {
-    content: command,
-    options: clientOptions,
-    attachments,
-  });
-  if (!queued) {
-    sendProtocolError(
-      ws,
-      'QUEUED_MESSAGE_NOT_COMBINABLE',
-      'A slash command runs as a turn of its own, so it cannot be combined with the queued message.',
-      sessionId
-    );
+  const session = sessionsDb.getSessionById(sessionId);
+  if (!session) {
+    sendProtocolError(ws, 'SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`, sessionId);
+    return;
   }
+  // False when the message went in meanwhile, which is what was asked for.
+  await dependencies.runtime.interruptForSteer(session.provider as LLMProvider, sessionId, steerId);
 }
 
 /**
@@ -699,7 +717,8 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  *
  * Inbound protocol (client to server):
  * - `chat.send`                { sessionId, content, options? }
- * - `chat.steer`               { sessionId, content, options? }  (a message for the turn in flight)
+ * - `chat.steer`               { sessionId, steerId, content, options? }  (a message for the turn in flight)
+ * - `chat.steer-now`           { sessionId, steerId }  (interrupt the turn so that message goes in at once)
  * - `chat.abort`               { sessionId }
  * - `chat.stop-task`           { sessionId, taskId }
  * - `chat.set-permission-mode` { sessionId, permissionMode }
@@ -804,7 +823,10 @@ export function handleChatConnection(
           await handleChatSend(ws, userId, data, dependencies);
           return;
         case 'chat.steer':
-          await handleChatSteer(ws, userId, data, dependencies);
+          await handleChatSteer(ws, data, dependencies);
+          return;
+        case 'chat.steer-now':
+          await handleChatSteerNow(ws, data, dependencies);
           return;
         case 'chat.abort':
           await handleChatAbort(ws, data, dependencies);

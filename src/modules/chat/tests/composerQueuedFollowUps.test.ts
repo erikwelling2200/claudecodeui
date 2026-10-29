@@ -5,6 +5,7 @@ import { afterEach, beforeEach, test, vi } from 'vitest';
 
 import { i18n } from '@/modules/i18n';
 import { useChatComposerState } from '@/modules/chat/hooks/useChatComposerState';
+import { declinePendingSteer, resetPendingSteers, takePendingSteer } from '@/modules/chat/utils/pendingSteers';
 import { readDraftText, resetChatDrafts, writeDraftText } from '@/shared/chatDrafts';
 import type { BackgroundSendChoice, ChatMessage, LLMProvider, PermissionMode, Project, ProjectSession, SessionActivityMap } from '@/shared/types';
 
@@ -219,6 +220,7 @@ beforeEach(() => {
   clearGate = null;
   appendRequestCount = 0;
   resetChatDrafts();
+  resetPendingSteers();
   localStorage.clear();
   vi.stubGlobal('fetch', vi.fn(fakeServer));
 });
@@ -720,11 +722,37 @@ test('a Claude follow-up goes into the running turn at once instead of waiting f
   assert.equal(sent[0]?.sessionId, 'session-1');
   assert.equal(sent[0]?.content, 'only the unit tests');
   assert.deepEqual((sent[0]?.options as { attachments?: unknown })?.attachments, [{ name: 'notes.txt', path: '/uploads/notes.txt' }]);
-  assert.equal(shown.find((message) => message.type === 'user')?.content, 'only the unit tests', 'shown as sent');
   assert.equal(queuedOnServer(), null);
   assert.equal(appendRequestCount, 0);
   assert.equal(view.result.current.queuedDraft, null);
   assert.equal(view.result.current.input, '');
+
+  // Pending until the CLI takes it; the transcript shows it only from then on.
+  const steerId = String(sent[0]?.steerId);
+  assert.deepEqual(
+    view.result.current.pendingSteers.map((steer) => [steer.steerId, steer.content, steer.attachmentCount, steer.interrupting]),
+    [[steerId, 'only the unit tests', 1, false]],
+  );
+  assert.equal(shown.some((message) => message.type === 'user'), false);
+
+  act(() => view.result.current.sendPendingSteerNow(steerId));
+  assert.deepEqual(sent[1], { type: 'chat.steer-now', sessionId: 'session-1', steerId });
+  assert.equal(view.result.current.pendingSteers[0]?.interrupting, true);
+
+  act(() => { takePendingSteer(steerId); });
+  assert.deepEqual(view.result.current.pendingSteers, []);
+});
+
+test('a Claude follow-up no turn could take goes back into the composer, ahead of what was typed since', async () => {
+  const { view, sent } = render({}, 'claude');
+  await submit(view, 'only the unit tests');
+  await act(async () => { view.result.current.setInput('and lint'); });
+
+  act(() => { declinePendingSteer(String(sent[0]?.steerId)); });
+
+  assert.deepEqual(view.result.current.pendingSteers, []);
+  assert.equal(view.result.current.input, 'only the unit tests\n\nand lint');
+  assert.equal(sent.length, 1, 'nothing is sent behind the user\'s back');
 });
 
 test('a Claude slash command sent during a turn still waits for it', async () => {

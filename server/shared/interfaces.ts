@@ -78,10 +78,16 @@ export interface IProviderRuntime {
   /**
    * Adds a user message to the session's turn in flight, so it reaches the
    * model at its next step instead of after the turn. `options` carries the
-   * `images`, `files` and `cwd` a `chat.send` turn gets. Resolves false when
-   * no turn is in flight that can take it.
+   * client's `steerId` for the message and the `images`, `files` and `cwd` a
+   * `chat.send` turn gets. Resolves false when no turn is in flight that can
+   * take it.
    */
   steerTurn?(sessionId: string, command: string, options: AnyRecord): Promise<boolean>;
+  /**
+   * Interrupts the session's turn so a steered message still waiting goes in at
+   * once. Resolves false when that message is not waiting.
+   */
+  interruptForSteer?(sessionId: string, steerId: string): Promise<boolean>;
 }
 
 /**

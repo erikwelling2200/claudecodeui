@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +14,7 @@ import {
   listClaudeSDKBackgroundWork,
   queryClaudeSDK,
   releaseClaudeSDKIdleProcess,
+  interruptClaudeSDKTurnForSteer,
   steerClaudeSDKTurn,
 } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import type { NormalizedMessage, ProviderRuntimeContext } from '@/shared/types.js';
@@ -140,6 +142,7 @@ const replayOf = (stdinMessage: Record<string, unknown> | undefined) => ({
   type: 'user', session_id: NATIVE_ID, parent_tool_use_id: null, isReplay: true,
   uuid: stdinMessage?.uuid, message: stdinMessage?.message,
 });
+const STEER_ID = '0b5e6a58-6f0a-4c86-9a43-3f4a1b2c9d10';
 const userTexts = (writer: Writer) => writer.sent.filter((message) => message.kind === 'text' && message.role === 'user');
 
 type Writer = { sent: NormalizedMessage[]; writer: never; completes: () => NormalizedMessage[] };
@@ -422,10 +425,13 @@ test('a message steered into the turn in flight reaches the CLI and the turn com
 
     const second = send('run the tests');
     await waitFor(() => script.prompts.length === 2);
-    assert.equal(await steerClaudeSDKTurn('app-steer-inline', 'only the unit tests', {}), true);
+    assert.equal(await steerClaudeSDKTurn('app-steer-inline', 'only the unit tests', { steerId: STEER_ID }), true);
     await waitFor(() => script.prompts.length === 3);
-    assert.equal(script.prompts[2], 'only the unit tests');
+    assert.match(script.prompts[2] ?? '', /^only the unit tests\n\n<cloudcli_appended>\n.*visible message/s, 'with the ask to answer visibly');
     assert.equal(script.stdin[2]?.priority, 'next', 'taken the way the CLI takes a message typed mid-turn');
+    assert.equal(script.stdin[2]?.uuid, STEER_ID, 'the CLI echoes it back under the client\'s id');
+    const pending = second.writer.sent.filter((message) => message.kind === 'steer_pending');
+    assert.deepEqual(pending.map((message) => [message.steerId, message.content]), [[STEER_ID, 'only the unit tests']]);
 
     // Taken at the next tool boundary, inside the same turn.
     script.emit(replayOf(script.stdin[1]));
@@ -436,7 +442,16 @@ test('a message steered into the turn in flight reaches the CLI and the turn com
     await second.run;
     assert.equal(second.writer.completes().length, 1);
     assert.deepEqual(userTexts(first), []);
-    assert.deepEqual(userTexts(second.writer), [], 'the client already shows what it sent');
+    // Only the steered message is shown, where the model read it: after the
+    // tool call and before the answer it led to.
+    const rows = second.writer.sent.filter((message) => message.kind === 'text' || message.kind === 'tool_use');
+    assert.deepEqual(rows.map((message) => [message.kind, message.role ?? null, message.content ?? null]), [
+      ['tool_use', null, null],
+      ['text', 'user', 'only the unit tests'],
+      ['text', 'assistant', 'Unit tests pass.'],
+    ]);
+    assert.equal(userTexts(second.writer)[0]?.steerId, STEER_ID);
+    assert.ok(userTexts(second.writer)[0]?.id.startsWith('local_'), 'retired for the transcript row once that loads');
     assert.equal(acceptsClaudeSDKLiveTurn('app-steer-inline', {}), true);
   }, {}, { withBackgroundAgent: false });
 });
@@ -445,7 +460,7 @@ test('a steered message the turn ended before taking keeps the turn open until i
   await withHeldSession('app-steer-after', async ({ script, send }) => {
     const second = send('summarise');
     await waitFor(() => script.prompts.length === 2);
-    assert.equal(await steerClaudeSDKTurn('app-steer-after', 'in Dutch', {}), true);
+    assert.equal(await steerClaudeSDKTurn('app-steer-after', 'in Dutch', { steerId: STEER_ID }), true);
     await waitFor(() => script.prompts.length === 3);
 
     script.emit(text('Summary.'));
@@ -467,7 +482,7 @@ test('a turn whose steered message the CLI never starts completes after a short 
   await withHeldSession('app-steer-dropped', async ({ script, send }) => {
     const second = send('summarise');
     await waitFor(() => script.prompts.length === 2);
-    assert.equal(await steerClaudeSDKTurn('app-steer-dropped', 'in Dutch', {}), true);
+    assert.equal(await steerClaudeSDKTurn('app-steer-dropped', 'in Dutch', { steerId: STEER_ID }), true);
     script.emit(result());
     await settle();
     assert.equal(second.writer.completes().length, 0);
@@ -482,9 +497,34 @@ test('a turn whose steered message the CLI never starts completes after a short 
 
 test('nothing is steered into a session with no turn in flight', async () => {
   await withHeldSession('app-steer-idle', async ({ script }) => {
-    assert.equal(await steerClaudeSDKTurn('app-steer-idle', 'hello?', {}), false);
-    assert.equal(await steerClaudeSDKTurn('app-steer-unknown', 'hello?', {}), false);
+    assert.equal(await steerClaudeSDKTurn('app-steer-idle', 'hello?', { steerId: STEER_ID }), false);
+    assert.equal(await steerClaudeSDKTurn('app-steer-unknown', 'hello?', { steerId: STEER_ID }), false);
     await settle();
     assert.equal(script.prompts.length, 1);
+  }, {}, { withBackgroundAgent: false });
+});
+
+test('sending a pending message now interrupts the step, and the turn runs on with the message', async () => {
+  await withHeldSession('app-steer-now', async ({ script, send }) => {
+    const second = send('run the slow tests');
+    await waitFor(() => script.prompts.length === 2);
+    assert.equal(await steerClaudeSDKTurn('app-steer-now', 'stop, run only one', { steerId: STEER_ID }), true);
+    await waitFor(() => script.prompts.length === 3);
+    assert.equal(await interruptClaudeSDKTurnForSteer('app-steer-now', crypto.randomUUID()), false, 'only for a message that waits');
+
+    assert.equal(await interruptClaudeSDKTurnForSteer('app-steer-now', STEER_ID), true);
+    assert.deepEqual(script.calls, ['interrupt']);
+
+    // The interrupted step ends; the CLI then runs the message it kept.
+    script.emit({ ...result(), subtype: 'error_during_execution' });
+    await settle();
+    assert.equal(second.writer.completes().length, 0, 'the turn goes on with the message');
+    script.emit(replayOf(script.stdin[2]));
+    script.emit(text('Running one.'));
+    script.emit(result());
+    await second.run;
+    assert.equal(second.writer.completes().length, 1);
+    assert.deepEqual(userTexts(second.writer).map((message) => message.content), ['stop, run only one']);
+    assert.equal(await interruptClaudeSDKTurnForSteer('app-steer-now', STEER_ID), false, 'taken already');
   }, {}, { withBackgroundAgent: false });
 });

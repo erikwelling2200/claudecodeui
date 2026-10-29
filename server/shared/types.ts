@@ -228,7 +228,9 @@ export type MessageKind =
   | 'session_created'
   | 'history_truncated'
   | 'task_notification'
-  | 'task_status';
+  | 'task_status'
+  // A message sent mid-turn that the CLI has not taken into the turn yet.
+  | 'steer_pending';
 
 /**
  * Event kinds added by the chat gateway layer on top of provider message kinds.
@@ -244,7 +246,9 @@ export type GatewayEventKind =
   | 'session_upserted'
   | 'loading_progress'
   | 'protocol_error'
-  | 'scheduled_messages_changed';
+  | 'scheduled_messages_changed'
+  // A `chat.steer` no turn could take; the sender sends it another way.
+  | 'steer_declined';
 
 /**
  * Complete set of `kind` values emitted to websocket clients.
@@ -324,6 +328,11 @@ export type NormalizedMessage = {
    * has to survive a reload — never a value this app synthesized.
    */
   transcriptAnchorId?: string;
+  /**
+   * Names a message sent while a turn ran: on `steer_pending` while it waits for
+   * the CLI to take it, and on the user `text` the turn shows once it has.
+   */
+  steerId?: string;
   sessionId: string;
   timestamp: string;
   provider: LLMProvider;

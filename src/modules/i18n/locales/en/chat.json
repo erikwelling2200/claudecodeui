@@ -159,6 +159,14 @@
       "willSend": "Will send when this finishes",
       "edit": "Edit queued message",
       "delete": "Delete queued message"
+    },
+    "steer": {
+      "label": "Pending",
+      "nextStep": "Sends at the next step",
+      "interrupting": "Interrupting",
+      "sendNow": "Interrupt and send now",
+      "attachments_one": "{{count}} file attached",
+      "attachments_other": "{{count}} files attached"
     }
   },
   "composer": {

@@ -28,6 +28,7 @@ import {
 } from '@/shared/chatDrafts';
 import { escapeRegExp } from '@/modules/chat/utils/chatFormatting';
 import { describeBackgroundTask, ownBackgroundTasks, sendFitsLiveTurn } from '@/modules/chat/utils/backgroundTasks';
+import { addPendingSteer, markPendingSteerInterrupting, onPendingSteerDeclined, usePendingSteers } from '@/modules/chat/utils/pendingSteers';
 import { useFileMentions } from '@/modules/chat/hooks/useFileMentions';
 import { useInputHistory } from '@/modules/chat/hooks/useInputHistory';
 import { useSlashCommands } from '@/modules/chat/hooks/useSlashCommands';
@@ -341,6 +342,8 @@ export function useChatComposerState({
   // switch there is one commit where `sessionKey` already points at the new
   // session while `queuedDraft` still holds the old session's draft.
   const queuedDraftSessionRef = useRef<string | null>(sessionKey);
+  // The session a message sent mid-turn goes into.
+  const steerSessionId = selectedSession?.id || currentSessionId || null;
 
   const handleBuiltInCommand = useCallback(
     (result: CommandExecutionResult) => {
@@ -912,27 +915,26 @@ export function useChatComposerState({
         }
 
         // Claude reads a message sent mid-turn at its next step, as in the CLI.
-        // A slash command is a turn of its own and an edit rewinds the
-        // conversation, so those still wait for the turn to end.
-        const runningSessionId = selectedSession?.id || currentSessionId || null;
-        if (provider === 'claude' && runningSessionId && !editingAnchorId && !currentInput.trimStart().startsWith('/')) {
-          const attachmentRecords = uploadedAttachments as ChatAttachment[];
-          addMessage({
-            type: 'user',
+        // It shows as pending until then, and as the user message it is from
+        // the point the model read it. A slash command is a turn of its own and
+        // an edit rewinds the conversation, so those still wait for the turn.
+        if (provider === 'claude' && steerSessionId && !editingAnchorId && !currentInput.trimStart().startsWith('/')) {
+          const steerId = crypto.randomUUID();
+          addPendingSteer({
+            steerId,
+            sessionId: steerSessionId,
             content: currentInput,
-            images: attachmentRecords.filter(isImageAttachment),
-            files: attachmentRecords.filter((attachment) => !isImageAttachment(attachment)),
-            timestamp: new Date(),
+            attachmentCount: uploadedAttachments.length,
+            resend: { content: currentInput, attachments: currentAttachments, uploadedAttachments, options: queuedOptions },
           });
-          setIsUserScrolledUp(false);
-          setTimeout(() => scrollToBottom(), 100);
           sendMessage({
             type: 'chat.steer',
-            sessionId: runningSessionId,
+            sessionId: steerSessionId,
+            steerId,
             content: currentInput,
             options: { ...queuedOptions, attachments: uploadedAttachments },
           });
-          recordSentMessage(currentInput, runningSessionId);
+          recordSentMessage(currentInput, steerSessionId);
           clearComposer();
           return;
         }
@@ -1153,6 +1155,7 @@ export function useChatComposerState({
       clearComposer,
       currentSessionId,
       editingAnchorId,
+      steerSessionId,
       executeCommand,
       isLoading,
       onSessionProcessing,
@@ -1271,6 +1274,31 @@ export function useChatComposerState({
     }
     setQueuedDraft(null);
   }, []);
+
+  const pendingSteers = usePendingSteers(steerSessionId);
+
+  // Interrupts the step Claude is on, so a pending message goes in at once.
+  const sendPendingSteerNow = useCallback((steerId: string) => {
+    if (!steerSessionId) {
+      return;
+    }
+    markPendingSteerInterrupting(steerId);
+    sendMessage({ type: 'chat.steer-now', sessionId: steerSessionId, steerId });
+  }, [sendMessage, steerSessionId]);
+
+  // A message the server declined (the turn had ended just before it arrived)
+  // goes back into this composer, so it is sent like any other once Enter is pressed.
+  useEffect(() => onPendingSteerDeclined((steer) => {
+    if (!steer.resend || steer.sessionId !== steerSessionId) {
+      return;
+    }
+    const { content, attachments } = steer.resend;
+    const typed = inputValueRef.current;
+    const next = typed.trim() ? `${content}\n\n${typed}` : content;
+    setInput(next);
+    inputValueRef.current = next;
+    setAttachedFiles((current) => [...attachments, ...current]);
+  }), [setInput, steerSessionId]);
 
   // A voice transcript either fills the input (to edit before sending) or, when the
   // user tapped "stop and send", is submitted straight away. Mirror the value into
@@ -1570,6 +1598,8 @@ export function useChatComposerState({
     queuedDraft,
     editQueuedDraft,
     deleteQueuedDraft,
+    pendingSteers,
+    sendPendingSteerNow,
     handleVoiceTranscript,
     handleInputChange,
     handleKeyDown,

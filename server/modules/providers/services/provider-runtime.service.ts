@@ -127,6 +127,11 @@ export function createProviderRuntimeService(
       return Boolean(await runtime.steerTurn?.(sessionId, command, options));
     },
 
+    async interruptForSteer(providerName: LLMProvider, sessionId: string, steerId: string): Promise<boolean> {
+      const { runtime } = dependencies.resolveProvider(providerName);
+      return Boolean(await runtime.interruptForSteer?.(sessionId, steerId));
+    },
+
     hasBackgroundWork(sessionId: string): boolean {
       return dependencies.listProviders().some((provider) =>
         (provider.runtime.listBackgroundWork?.() ?? []).some((entry) => entry.sessionId === sessionId));
