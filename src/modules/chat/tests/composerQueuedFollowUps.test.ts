@@ -743,16 +743,34 @@ test('a Claude follow-up goes into the running turn at once instead of waiting f
   assert.deepEqual(view.result.current.pendingSteers, []);
 });
 
-test('a Claude follow-up no turn could take goes back into the composer, ahead of what was typed since', async () => {
+test('a Claude follow-up no turn could take is queued, and what was typed since stays in the composer', async () => {
   const { view, sent } = render({}, 'claude');
   await submit(view, 'only the unit tests');
   await act(async () => { view.result.current.setInput('and lint'); });
 
-  act(() => { declinePendingSteer(String(sent[0]?.steerId)); });
+  await act(async () => { declinePendingSteer(String(sent[0]?.steerId)); });
 
   assert.deepEqual(view.result.current.pendingSteers, []);
-  assert.equal(view.result.current.input, 'only the unit tests\n\nand lint');
-  assert.equal(sent.length, 1, 'nothing is sent behind the user\'s back');
+  await waitFor(() => assert.equal(view.result.current.queuedDraft?.content, 'only the unit tests'));
+  assert.equal(queuedOnServer()?.content, 'only the unit tests');
+  assert.equal(view.result.current.input, 'and lint');
+  assert.equal(sent.length, 1, 'not sent into the turn a second time');
+});
+
+test('a Claude follow-up to a turn a CLI outside this app runs is queued, not sent into it', async () => {
+  // How the server lists a session another Claude CLI process is busy with.
+  const processingSessions: SessionActivityMap = new Map([
+    ['session-1', { statusText: 'Running in the Claude CLI', canInterrupt: false, startedAt: Date.now() }],
+  ]);
+  const { view, sent } = render({ processingSessions }, 'claude');
+
+  await submit(view, 'archive the threads too');
+
+  assert.deepEqual(sent, []);
+  assert.deepEqual(view.result.current.pendingSteers, []);
+  assert.equal(queuedOnServer()?.content, 'archive the threads too');
+  assert.equal(view.result.current.queuedDraft?.content, 'archive the threads too');
+  assert.equal(view.result.current.input, '');
 });
 
 test('a Claude slash command sent during a turn still waits for it', async () => {
