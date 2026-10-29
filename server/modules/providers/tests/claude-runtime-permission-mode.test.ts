@@ -8,6 +8,7 @@ import { ClaudeSessionsProvider } from '@/modules/providers/list/claude/claude-s
 import { CLAUDE_PREDEFINED_MODELS } from '@/modules/providers/list/claude/claude-models.provider.js';
 import { queryClaudeSDK, setClaudeSDKPermissionMode } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import type { AnyRecord, ProviderRuntimeContext } from '@/shared/types.js';
+import { waitFor } from '@/shared/tests/wait-for.js';
 
 /**
  * A mode the user picks mid-turn has to reach both the CLI process and the
@@ -68,12 +69,8 @@ async function withRun(
 
   try {
     const done = queryClaudeSDK('hello', { sessionId: SESSION_ID, cwd, ...runOptions }, writer as never, context);
-    // The run sets up asynchronously before it registers the session; a fixed
-    // delay is too short on a loaded machine.
-    for (let attempt = 0; attempt < 400 && !script.started(); attempt += 1) {
-      await new Promise((resolve) => { setTimeout(resolve, 25); });
-    }
-    assert.ok(script.started(), 'the run never created its query');
+    // The run sets up asynchronously before it registers the session.
+    await waitFor(() => script.started(), 'the run has created its query');
     await runTest(script);
     script.end();
     await done;

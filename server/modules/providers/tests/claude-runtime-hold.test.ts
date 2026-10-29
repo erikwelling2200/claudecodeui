@@ -12,6 +12,7 @@ import {
   stopClaudeSDKTask,
 } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import type { NormalizedMessage, ProviderRuntimeContext } from '@/shared/types.js';
+import { waitFor } from '@/shared/tests/wait-for.js';
 
 /**
  * The runtime keeps the CLI's stdin open after every turn's `result`, so the
@@ -105,15 +106,6 @@ async function withRun(
 
 const settle = () => new Promise((resolve) => { setTimeout(resolve, 25); });
 
-// A fixed settle can be too short on a loaded machine; these tests
-// wait for the run to have actually processed its turn instead.
-async function waitFor(condition: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) {
-    await settle();
-  }
-  assert.ok(condition(), 'condition never became true');
-}
-
 const init = () => ({ type: 'system', subtype: 'init', session_id: NATIVE_ID });
 const toolUse = (id: string, name: string, input: Record<string, unknown>) => ({
   type: 'assistant', session_id: NATIVE_ID, parent_tool_use_id: null,
@@ -150,9 +142,8 @@ test('stopping the last outstanding task leaves the process up for the next turn
     assert.equal(await stopClaudeSDKTask(SESSION_ID, 'wf1'), true);
     assert.deepEqual(script.stopped, ['wf1']);
     script.emit(taskNotification('wf1', 'toolu_wf', 'stopped'));
-    await settle();
+    await waitFor(() => listClaudeSDKBackgroundWork().length === 0, 'the stopped task is no longer outstanding');
 
-    assert.deepEqual(listClaudeSDKBackgroundWork(), []);
     assert.equal(script.released(), false, 'nothing is outstanding, and the process stays for the next turn');
     void done;
   });
@@ -174,8 +165,7 @@ test('the turn that relays a completed task\'s result leaves the process up', as
     assert.equal(script.released(), false);
 
     script.emit(result());
-    await settle();
-    assert.deepEqual(listClaudeSDKBackgroundWork(), []);
+    await waitFor(() => listClaudeSDKBackgroundWork().length === 0, 'the relayed task is no longer outstanding');
     assert.equal(script.released(), false, 'the work is done, and the process stays for the next turn');
   });
 });

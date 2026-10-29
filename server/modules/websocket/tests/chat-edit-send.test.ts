@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,20 +10,10 @@ import { sessionsService } from '@/modules/providers/index.js';
 import { handleChatConnection } from '@/modules/websocket/services/chat-websocket.service.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
 import { connectedClients } from '@/modules/websocket/services/websocket-state.service.js';
+import { createFakeSocket } from '@/modules/websocket/tests/fake-chat-socket.js';
+import { waitFor } from '@/shared/tests/wait-for.js';
 
 const SESSION_ID = 'edit-session';
-
-function createFakeSocket() {
-  const socket = new EventEmitter() as EventEmitter & {
-    readyState: number;
-    frames: Array<Record<string, unknown>>;
-    send: (data: string) => void;
-  };
-  socket.readyState = 1;
-  socket.frames = [];
-  socket.send = (data: string) => socket.frames.push(JSON.parse(data) as Record<string, unknown>);
-  return socket;
-}
 
 /** Two turns and an edit of the second, which is the transcript the gateway reads. */
 const TRANSCRIPT_ROWS = [
@@ -132,18 +121,14 @@ async function withGateway(
   }
 }
 
-/** The handler is async and the socket listener does not await it. */
-const settle = () => new Promise((resolve) => { setTimeout(resolve, 30); });
-
 test('an edit resumes through the turn before the one being replaced', async () => {
   await withGateway('claude', async ({ socket, runs }) => {
-    socket.emit('message', JSON.stringify({
+    await socket.deliver({
       type: 'chat.edit-send',
       sessionId: SESSION_ID,
       anchorId: 'e-u2',
       content: 'a better second prompt',
-    }));
-    await settle();
+    });
 
     assert.equal(runs.length, 1);
     assert.equal(runs[0].command, 'a better second prompt');
@@ -155,13 +140,12 @@ test('an edit resumes through the turn before the one being replaced', async () 
 
 test('editing the first prompt starts the conversation over', async () => {
   await withGateway('claude', async ({ socket, runs }) => {
-    socket.emit('message', JSON.stringify({
+    await socket.deliver({
       type: 'chat.edit-send',
       sessionId: SESSION_ID,
       anchorId: 'e-u1',
       content: 'a better first prompt',
-    }));
-    await settle();
+    });
 
     assert.equal(runs.length, 1);
     assert.equal(runs[0].options.resumeAnchorId, undefined);
@@ -171,13 +155,12 @@ test('editing the first prompt starts the conversation over', async () => {
 
 test('every subscribed client is told to drop the superseded turns', async () => {
   await withGateway('claude', async ({ socket }) => {
-    socket.emit('message', JSON.stringify({
+    await socket.deliver({
       type: 'chat.edit-send',
       sessionId: SESSION_ID,
       anchorId: 'e-u2',
       content: 'replacement',
-    }));
-    await settle();
+    });
 
     const truncation = socket.frames.find((frame) => frame.kind === 'history_truncated');
     assert.ok(truncation, 'a history_truncated frame is emitted');
@@ -190,12 +173,11 @@ test('every subscribed client is told to drop the superseded turns', async () =>
 
 test('an edit without an anchor is refused', async () => {
   await withGateway('claude', async ({ socket, runs }) => {
-    socket.emit('message', JSON.stringify({
+    await socket.deliver({
       type: 'chat.edit-send',
       sessionId: SESSION_ID,
       content: 'no anchor',
-    }));
-    await settle();
+    });
 
     assert.equal(runs.length, 0);
     assert.equal(socket.frames.at(-1)?.code, 'ANCHOR_REQUIRED');
@@ -204,13 +186,12 @@ test('an edit without an anchor is refused', async () => {
 
 test('an anchor the transcript does not hold is refused', async () => {
   await withGateway('claude', async ({ socket, runs }) => {
-    socket.emit('message', JSON.stringify({
+    await socket.deliver({
       type: 'chat.edit-send',
       sessionId: SESSION_ID,
       anchorId: 'not-in-transcript',
       content: 'replacement',
-    }));
-    await settle();
+    });
 
     assert.equal(runs.length, 0);
     assert.equal(socket.frames.at(-1)?.code, 'ANCHOR_NOT_FOUND');
@@ -219,13 +200,12 @@ test('an anchor the transcript does not hold is refused', async () => {
 
 test('a provider that cannot re-run from a point is refused rather than sending a new message', async () => {
   await withGateway('cursor', async ({ socket, runs }) => {
-    socket.emit('message', JSON.stringify({
+    await socket.deliver({
       type: 'chat.edit-send',
       sessionId: SESSION_ID,
       anchorId: 'e-u2',
       content: 'replacement',
-    }));
-    await settle();
+    });
 
     assert.equal(runs.length, 0);
     assert.equal(socket.frames.at(-1)?.code, 'EDIT_NOT_SUPPORTED');
@@ -244,21 +224,20 @@ test('a refused send never rewinds the conversation', async () => {
     holdTheNextRun();
 
     try {
-      socket.emit('message', JSON.stringify({
+      // Not awaited: its handler only returns once the held run is released.
+      void socket.deliver({
         type: 'chat.send',
         sessionId: SESSION_ID,
         content: 'a turn that is already running',
-      }));
-      await settle();
-      assert.equal(runs.length, 1);
+      });
+      await waitFor(() => runs.length === 1, 'the first run has started');
 
-      socket.emit('message', JSON.stringify({
+      await socket.deliver({
         type: 'chat.edit-send',
         sessionId: SESSION_ID,
         anchorId: 'turn-b',
         content: 'an edit that arrives too late',
-      }));
-      await settle();
+      });
     } finally {
       sessionsService.rewindSessionForEdit = realRewind;
     }
@@ -284,13 +263,12 @@ test('a provider that has to branch to rewind is rewound before the run, not dur
     };
 
     try {
-      socket.emit('message', JSON.stringify({
+      await socket.deliver({
         type: 'chat.edit-send',
         sessionId: SESSION_ID,
         anchorId: 'turn-b',
         content: 'a better second prompt',
-      }));
-      await settle();
+      });
     } finally {
       sessionsService.rewindSessionForEdit = realRewind;
     }
@@ -319,13 +297,12 @@ test('a run gets the extra folders of the session project that still exist, not 
     await mkdir(existingFolder);
     projectsDb.replaceAdditionalFolderPaths(projectId, [path.join(projectPath, 'removed-folder'), existingFolder]);
 
-    socket.emit('message', JSON.stringify({
+    await socket.deliver({
       type: 'chat.send',
       sessionId: SESSION_ID,
       content: 'look at both folders',
       options: { cwd: path.join(projectPath, 'elsewhere'), additionalDirectories: ['/client/supplied'] },
-    }));
-    await settle();
+    });
 
     assert.equal(runs.length, 1);
     assert.deepEqual(runs[0].options.additionalDirectories, [existingFolder]);
@@ -334,8 +311,7 @@ test('a run gets the extra folders of the session project that still exist, not 
 
 test('a run in a single-folder project gets no extra folders', async () => {
   await withGateway('claude', async ({ socket, runs }) => {
-    socket.emit('message', JSON.stringify({ type: 'chat.send', sessionId: SESSION_ID, content: 'hello' }));
-    await settle();
+    await socket.deliver({ type: 'chat.send', sessionId: SESSION_ID, content: 'hello' });
 
     assert.equal(runs.length, 1);
     assert.deepEqual(runs[0].options.additionalDirectories, []);

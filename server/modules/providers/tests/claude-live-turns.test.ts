@@ -18,6 +18,7 @@ import {
   steerClaudeSDKTurn,
 } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import type { NormalizedMessage, ProviderRuntimeContext } from '@/shared/types.js';
+import { waitFor } from '@/shared/tests/wait-for.js';
 
 /**
  * A session's CLI process stays up between turns, whether or not background
@@ -113,13 +114,6 @@ function createScriptedQuery(): { createQuery: NonNullable<ProviderRuntimeContex
 }
 
 const settle = () => new Promise((resolve) => { setTimeout(resolve, 25); });
-
-async function waitFor(condition: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) {
-    await settle();
-  }
-  assert.ok(condition(), 'condition never became true');
-}
 
 const init = () => ({ type: 'system', subtype: 'init', session_id: NATIVE_ID });
 const toolUse = (id: string, name: string, input: Record<string, unknown>) => ({
@@ -254,7 +248,7 @@ test('a turn sent while background work runs goes into the live process', async 
     script.emit(text('The agent finished.'));
     script.emit(result());
     await waitFor(() => second.writer.sent.some((message) => message.kind === 'text' && message.content === 'The agent finished.'));
-    await settle();
+    await waitFor(() => second.writer.completes().length > 0, 'the turn has completed');
     assert.equal(second.writer.completes().length, 1);
     assert.equal(script.released(), false);
     assert.equal(acceptsClaudeSDKLiveTurn('app-live-deliver', {}), true);

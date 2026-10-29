@@ -174,6 +174,12 @@ const createService = (overrides: Parameters<typeof createProviderCliService>[0]
   ...overrides,
 });
 
+/**
+ * How long a step that spawns the fake CLI may take before the test gives up instead of hanging. Process start-up
+ * alone can take seconds while the whole suite runs in parallel.
+ */
+const HANG_GUARD_MS = 30_000;
+
 /** Rejects when `promise` has not settled within `ms`, instead of letting the test hang. */
 async function withDeadline<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -189,7 +195,7 @@ async function withDeadline<T>(promise: Promise<T>, ms: number, message: string)
 
 /** Resolves once the fake CLI has written `file`, e.g. `update-count` when its updater started. */
 async function waitForFakeCliFile(cli: FakeCli, file: string): Promise<void> {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + HANG_GUARD_MS;
   while ((await cli.read(file)) === null) {
     assert.ok(Date.now() < deadline, `the fake CLI never wrote ${file}`);
     await delay(20);
@@ -268,6 +274,8 @@ test('a --version that exits non-zero or prints no version leaves the version un
 
 test('a --version that timed out still counts as installed, with an unknown version', async () => {
   await withIsolatedCliEnv(async () => {
+    // The probe only spawns a configured path that exists.
+    await writeFile(process.env.CLAUDE_CLI_PATH!, '');
     // What cross-spawn returns when the 5 s probe is killed: the CLI started and was slow.
     const timedOut = Object.assign(new Error('spawnSync claude ETIMEDOUT'), { code: 'ETIMEDOUT' });
     const versionProbe = mock.method(spawn, 'sync', () => ({
@@ -392,7 +400,7 @@ test('getCliStatus gives up on a registry that never answers', async () => {
     })) as typeof fetch;
     const service = createService({ fetch: silentRegistry, latestVersionTimeoutMs: 50 });
 
-    const status = await withDeadline(service.getCliStatus('opencode'), 3000, 'the status waited on the registry');
+    const status = await withDeadline(service.getCliStatus('opencode'), HANG_GUARD_MS, 'the status waited on the registry');
     assert.equal(status.installedVersion, '1.18.20');
     assert.equal(status.latestVersion, null);
     assert.equal(signals.length, 1);
@@ -730,9 +738,9 @@ test('getCliStatus probes again when the update it saw running ended during the 
     // Starts while the run is going on, then waits on the registry...
     const status = service.getCliStatus('opencode');
     // ...while the run ends and replaces the binary.
-    const result = await withDeadline(running, 5000, 'the update never finished');
+    const result = await withDeadline(running, HANG_GUARD_MS, 'the update never finished');
     answerRegistry();
-    const reported = await withDeadline(status, 5000, 'the status never answered');
+    const reported = await withDeadline(status, HANG_GUARD_MS, 'the status never answered');
 
     assert.equal(result.installedVersion, '1.19.0');
     assert.equal(reported.updateInProgress, false);
@@ -763,13 +771,13 @@ test('getCliStatus reports the starting version of a run that began during the r
     const firstRun = service.updateCli('opencode');
     await waitForFakeCliFile(opencode, 'update-count');
     const status = service.getCliStatus('opencode');
-    const firstResult = await withDeadline(firstRun, 5000, 'the first update never finished');
+    const firstResult = await withDeadline(firstRun, HANG_GUARD_MS, 'the first update never finished');
 
     // A second run starts before the registry answers the status.
     await opencode.set('update-sleep-ms', '2000');
     await opencode.set('update-new-version', '1.20.0\n');
     const secondRun = service.updateCli('opencode');
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + HANG_GUARD_MS;
     while ((await opencode.read('update-count')) !== '2') {
       assert.ok(Date.now() < deadline, 'the second updater never started');
       await delay(20);
@@ -777,7 +785,7 @@ test('getCliStatus reports the starting version of a run that began during the r
     // Before and after the first run, before the second.
     assert.equal(await opencode.read('version-count'), '3');
     answerRegistry();
-    const reported = await withDeadline(status, 5000, 'the status never answered');
+    const reported = await withDeadline(status, HANG_GUARD_MS, 'the status never answered');
 
     assert.equal(await opencode.read('version-count'), '3', 'no --version ran while the second update was running');
     assert.equal(reported.updateInProgress, true);
@@ -785,7 +793,7 @@ test('getCliStatus reports the starting version of a run that began during the r
     assert.deepEqual(reported.lastUpdate, firstResult);
     assert.equal(reported.updateAvailable, true);
 
-    const secondResult = await withDeadline(secondRun, 5000, 'the second update never finished');
+    const secondResult = await withDeadline(secondRun, HANG_GUARD_MS, 'the second update never finished');
     assert.equal(secondResult.installedVersion, '1.20.0');
   });
 });

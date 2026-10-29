@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +8,7 @@ import { closeConnection, initializeDatabase, sessionsDb } from '@/modules/datab
 import { handleChatConnection } from '@/modules/websocket/services/chat-websocket.service.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
 import { connectedClients } from '@/modules/websocket/services/websocket-state.service.js';
+import { createFakeSocket } from '@/modules/websocket/tests/fake-chat-socket.js';
 
 /**
  * A session's turn ends while its agents, workflow or backgrounded command are
@@ -21,18 +21,6 @@ import { connectedClients } from '@/modules/websocket/services/websocket-state.s
 
 const SESSION_ID = 'held-session';
 const FIVE_MINUTES = 5 * 60 * 1000;
-
-function createFakeSocket() {
-  const socket = new EventEmitter() as EventEmitter & {
-    readyState: number;
-    frames: Array<Record<string, unknown>>;
-    send: (data: string) => void;
-  };
-  socket.readyState = 1;
-  socket.frames = [];
-  socket.send = (data: string) => socket.frames.push(JSON.parse(data) as Record<string, unknown>);
-  return socket;
-}
 
 async function withIsolatedDatabase(runTest: () => Promise<void>): Promise<void> {
   const previousDatabasePath = process.env.DATABASE_PATH;
@@ -72,8 +60,6 @@ function startAndCompleteRun(connection: ReturnType<typeof createFakeSocket>) {
   return run;
 }
 
-const settle = () => new Promise((resolve) => { setTimeout(resolve, 30); });
-
 test('a tab that subscribes during background work receives the run\'s later events', async () => {
   await withIsolatedDatabase(async () => {
     const run = startAndCompleteRun(createFakeSocket());
@@ -84,8 +70,7 @@ test('a tab that subscribes during background work receives the run\'s later eve
       { user: { id: 1 } } as never,
       { runtime: { hasBackgroundWork: (sessionId: string) => sessionId === SESSION_ID, getPendingApprovalsForSession: () => [] } as never },
     );
-    newTab.emit('message', JSON.stringify({ type: 'chat.subscribe', sessions: [{ sessionId: SESSION_ID, lastSeq: 0 }] }));
-    await settle();
+    await newTab.deliver({ type: 'chat.subscribe', sessions: [{ sessionId: SESSION_ID, lastSeq: 0 }] });
 
     // Not processing — the composer stays usable — but attached.
     assert.equal(newTab.frames[0]?.kind, 'chat_subscribed');
@@ -109,8 +94,7 @@ test('a tab that subscribes to an idle session is not attached to its old run', 
       { user: { id: 1 } } as never,
       { runtime: { hasBackgroundWork: () => false, getPendingApprovalsForSession: () => [] } as never },
     );
-    newTab.emit('message', JSON.stringify({ type: 'chat.subscribe', sessions: [{ sessionId: SESSION_ID, lastSeq: 0 }] }));
-    await settle();
+    await newTab.deliver({ type: 'chat.subscribe', sessions: [{ sessionId: SESSION_ID, lastSeq: 0 }] });
 
     run.writer.send({ kind: 'task_status', provider: 'claude', sessionId: 'native-1', event: 'notification', taskId: 't1', status: 'completed' } as never);
     assert.ok(!newTab.frames.some((frame) => frame.kind === 'task_status'));
