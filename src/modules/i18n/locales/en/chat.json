@@ -407,5 +407,13 @@
     "customModelsOnlyHint": "Hide the built-in {{provider}} models from every model picker and make your first model the default. Built-in models stay listed until you add a model.",
     "builtInModelsHidden": "Hidden from model pickers while “Use only my models” is on.",
     "customModelsOnlyFailed": "Unable to change this setting."
+  },
+  "archivedChats": {
+    "open": "Archived chats",
+    "title": "Archived chats",
+    "search": "Search archived chats",
+    "empty": "No archived chats",
+    "noMatches": "No matching chats",
+    "reopenFailed": "Could not reopen this chat."
   }
 }

@@ -10,6 +10,7 @@ import { projectsDb, sessionsDb } from '@/modules/database/index.js';
 
 type AnyRecord = Record<string, any>;
 type SearchableProvider = 'claude' | 'codex';
+type SearchRole = 'user' | 'assistant';
 
 type SearchSnippetHighlight = {
   start: number;
@@ -37,6 +38,12 @@ type ProjectConversationResult = {
   projectName: string;
   projectDisplayName: string;
   sessions: SessionConversationResult[];
+};
+
+type ArchivedSessionMessageMatch = {
+  sessionId: string;
+  snippet: string;
+  highlights: SearchSnippetHighlight[];
 };
 
 type SessionTitleSearchResult = {
@@ -70,6 +77,8 @@ type SearchableSessionRow = SessionRepositoryRow & {
 };
 
 type SearchRuntime = {
+  /** Only messages with one of these roles count as matches; null accepts every role. */
+  matchRoles: ReadonlySet<SearchRole> | null;
   matchesQuery: (text: string) => boolean;
   buildSnippet: (text: string) => { snippet: string; highlights: SearchSnippetHighlight[] };
   limit: number;
@@ -523,7 +532,7 @@ function extractCodexText(content: unknown): string {
     .join(' ');
 }
 
-function normalizeSearchableSessions(rows: SessionRepositoryRow[]): SearchableSessionRow[] {
+function normalizeSearchableSessions(rows: SessionRepositoryRow[], includeArchivedProjects = false): SearchableSessionRow[] {
   const normalizedRows: SearchableSessionRow[] = [];
   const projectArchiveStateByPath = new Map<string, boolean>();
 
@@ -553,7 +562,7 @@ function normalizeSearchableSessions(rows: SessionRepositoryRow[]): SearchableSe
      * does not re-query the same project row for every session in that folder.
      */
     const normalizedProjectPath = typeof row.project_path === 'string' ? row.project_path.trim() : '';
-    if (normalizedProjectPath) {
+    if (normalizedProjectPath && !includeArchivedProjects) {
       if (!projectArchiveStateByPath.has(normalizedProjectPath)) {
         const projectRow = projectsDb.getProjectPath(normalizedProjectPath);
         projectArchiveStateByPath.set(normalizedProjectPath, Boolean(projectRow?.isArchived));
@@ -823,6 +832,10 @@ async function findMatchedFileKeys(
   return new Set(remainingEntries.map((entry) => entry.normalizedPath));
 }
 
+function matchesRole(runtime: SearchRuntime, role: SearchRole): boolean {
+  return runtime.matchRoles === null || runtime.matchRoles.has(role);
+}
+
 function addSessionMatch(
   runtime: SearchRuntime,
   matches: SessionConversationMatch[],
@@ -962,7 +975,7 @@ async function parseClaudeSessionMatches(
           state.fallbackAssistantText = text;
         }
 
-        if (!runtime.matchesQuery(text)) {
+        if (!matchesRole(runtime, role) || !runtime.matchesQuery(text)) {
           continue;
         }
 
@@ -1097,7 +1110,7 @@ async function parseCodexSessionMatches(
       }
       seenMessageFingerprints.add(fingerprint);
 
-      if (!runtime.matchesQuery(text)) {
+      if (!matchesRole(runtime, role) || !runtime.matchesQuery(text)) {
         continue;
       }
 
@@ -1140,43 +1153,18 @@ async function parseSessionMatches(
 }
 
 /**
- * Searches session titles and provider transcripts for the provider search
- * service and its route-level integration tests.
+ * Narrows the candidate transcripts with ripgrep and returns the runtime the
+ * per-session parsers share, or null when no transcript can match.
  */
-export async function searchConversations(
-  query: string,
-  limit = 50,
-  onProjectResult: ((update: SessionConversationSearchProgressUpdate) => void) | null = null,
-  signal: AbortSignal | null = null,
-  onTitleResults: ((results: SessionTitleSearchResult[]) => void) | null = null,
-): Promise<{
-  results: ProjectConversationResult[];
-  titleResults: SessionTitleSearchResult[];
-  totalMatches: number;
-  query: string;
-}> {
-  const safeQuery = typeof query === 'string' ? query.trim() : '';
-  const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? limit : 50, 200));
-  const words = safeQuery.toLowerCase().split(/\s+/).filter((word) => word.length > 0);
-
-  if (words.length === 0) {
-    return { results: [], titleResults: [], totalMatches: 0, query: safeQuery };
-  }
-
+async function createSearchRuntime(
+  searchableSessions: SearchableSessionRow[],
+  safeQuery: string,
+  words: string[],
+  limit: number,
+  matchRoles: ReadonlySet<SearchRole> | null,
+  signal: AbortSignal | null,
+): Promise<SearchRuntime | null> {
   const isAborted = () => signal?.aborted === true;
-  if (isAborted()) {
-    return { results: [], titleResults: [], totalMatches: 0, query: safeQuery };
-  }
-
-  const activeSessions = sessionsDb.getAllSessions();
-  const titleResults = findSessionTitleResults(activeSessions, safeQuery, safeLimit);
-  onTitleResults?.(titleResults);
-
-  const searchableSessions = normalizeSearchableSessions(activeSessions);
-  if (searchableSessions.length === 0) {
-    return { results: [], titleResults, totalMatches: 0, query: safeQuery };
-  }
-
   const sessionsByPathKey = new Map<string, SearchableSessionRow[]>();
   const searchablePathEntries: SearchablePathEntry[] = [];
 
@@ -1205,7 +1193,7 @@ export async function searchConversations(
     signal ?? undefined,
   );
   if (isAborted() || matchedFileKeys.size === 0) {
-    return { results: [], titleResults, totalMatches: 0, query: safeQuery };
+    return null;
   }
 
   const matchedSessionKeys = new Set<string>();
@@ -1220,14 +1208,10 @@ export async function searchConversations(
     }
   }
 
-  const projectBuckets = buildProjectBuckets(searchableSessions);
-  const totalProjects = projectBuckets.length;
-  const results: ProjectConversationResult[] = [];
-  let scannedProjects = 0;
-
   const runtime: SearchRuntime = {
     ...createWordMatcher(safeQuery, words),
-    limit: safeLimit,
+    matchRoles,
+    limit,
     totalMatches: 0,
     isAborted,
     matchedSessionKeys,
@@ -1241,6 +1225,96 @@ export async function searchConversations(
       runtime.claudeSessionsByFileKey.set(fileKey, claudeSessions);
     }
   }
+
+  return runtime;
+}
+
+/**
+ * Searches the messages the user typed into archived sessions, including
+ * sessions whose project is archived too, for the archived-chats picker.
+ * Returns one entry per matching session with its first matching message.
+ */
+async function searchArchivedSessionUserMessages(
+  query: string,
+  signal: AbortSignal | null = null,
+): Promise<ArchivedSessionMessageMatch[]> {
+  const safeQuery = typeof query === 'string' ? query.trim() : '';
+  const words = safeQuery.toLowerCase().split(/\s+/).filter((word) => word.length > 0);
+  if (words.length === 0 || signal?.aborted) {
+    return [];
+  }
+
+  const searchableSessions = normalizeSearchableSessions(sessionsDb.getArchivedSessions(), true);
+  const runtime = await createSearchRuntime(searchableSessions, safeQuery, words, 200, new Set<SearchRole>(['user']), signal);
+  if (!runtime) {
+    return [];
+  }
+
+  const results: ArchivedSessionMessageMatch[] = [];
+  for (const session of searchableSessions) {
+    if (runtime.totalMatches >= runtime.limit || runtime.isAborted()) {
+      break;
+    }
+    if (!runtime.matchedSessionKeys.has(getSessionKey(session))) {
+      continue;
+    }
+
+    const sessionResult = await parseSessionMatches(session, runtime);
+    const firstMatch = sessionResult?.matches[0];
+    if (firstMatch) {
+      results.push({ sessionId: session.session_id, snippet: firstMatch.snippet, highlights: firstMatch.highlights });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Searches session titles and provider transcripts for the provider search
+ * service and its route-level integration tests.
+ */
+export async function searchConversations(
+  query: string,
+  limit = 50,
+  onProjectResult: ((update: SessionConversationSearchProgressUpdate) => void) | null = null,
+  signal: AbortSignal | null = null,
+  onTitleResults: ((results: SessionTitleSearchResult[]) => void) | null = null,
+): Promise<{
+  results: ProjectConversationResult[];
+  titleResults: SessionTitleSearchResult[];
+  totalMatches: number;
+  query: string;
+}> {
+  const safeQuery = typeof query === 'string' ? query.trim() : '';
+  const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? limit : 50, 200));
+  const words = safeQuery.toLowerCase().split(/\s+/).filter((word) => word.length > 0);
+
+  if (words.length === 0) {
+    return { results: [], titleResults: [], totalMatches: 0, query: safeQuery };
+  }
+
+  if (signal?.aborted) {
+    return { results: [], titleResults: [], totalMatches: 0, query: safeQuery };
+  }
+
+  const activeSessions = sessionsDb.getAllSessions();
+  const titleResults = findSessionTitleResults(activeSessions, safeQuery, safeLimit);
+  onTitleResults?.(titleResults);
+
+  const searchableSessions = normalizeSearchableSessions(activeSessions);
+  if (searchableSessions.length === 0) {
+    return { results: [], titleResults, totalMatches: 0, query: safeQuery };
+  }
+
+  const runtime = await createSearchRuntime(searchableSessions, safeQuery, words, safeLimit, null, signal);
+  if (!runtime) {
+    return { results: [], titleResults, totalMatches: 0, query: safeQuery };
+  }
+
+  const projectBuckets = buildProjectBuckets(searchableSessions);
+  const totalProjects = projectBuckets.length;
+  const results: ProjectConversationResult[] = [];
+  let scannedProjects = 0;
 
   for (const bucket of projectBuckets) {
     if (runtime.totalMatches >= runtime.limit || runtime.isAborted()) {
@@ -1258,7 +1332,7 @@ export async function searchConversations(
       if (runtime.totalMatches >= runtime.limit || runtime.isAborted()) {
         break;
       }
-      if (!matchedSessionKeys.has(getSessionKey(session))) {
+      if (!runtime.matchedSessionKeys.has(getSessionKey(session))) {
         continue;
       }
 
@@ -1314,5 +1388,10 @@ export const sessionConversationsSearchService = {
       input.signal ?? null,
       input.onTitleResults ?? null,
     );
+  },
+
+  /** Finds archived sessions whose user-typed messages match the query. */
+  searchArchivedUserMessages(query: string, signal: AbortSignal): Promise<ArchivedSessionMessageMatch[]> {
+    return searchArchivedSessionUserMessages(query, signal);
   },
 };

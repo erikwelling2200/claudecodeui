@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react";
-import { ChevronDown, Plus } from "lucide-react";
+import { Archive, ChevronDown, Plus } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 
 import type {
@@ -24,6 +24,7 @@ import {
 } from "@/shared/ui";
 import ModelGroupList, { type ModelGroup } from "@/modules/chat/composer/ModelGroupList";
 import ModelLibraryPanel from "@/modules/chat/modals/ModelLibraryPanel";
+import ArchivedChatsModal from "@/modules/chat/modals/ArchivedChatsModal";
 import { writeSelectedProvider } from '@/shared/selectedProvider';
 
 const PROVIDER_META: { id: LLMProvider; name: string }[] = [
@@ -104,6 +105,8 @@ export default function ProviderSelectionEmptyState({
   const { t } = useTranslation("chat");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [modelLibraryOpen, setModelLibraryOpen] = useState(false);
+  // Whether the archived-chats picker is showing; it is opened from a button on this screen only.
+  const [archivedChatsOpen, setArchivedChatsOpen] = useState(false);
 
   const [modelSearch, setModelSearch] = useState("");
 
@@ -345,6 +348,21 @@ export default function ProviderSelectionEmptyState({
               }}
             />
           </p>
+
+          <div className="mt-4 flex justify-center">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setArchivedChatsOpen(true)}
+              className="h-8 rounded-lg px-2.5 text-xs text-muted-foreground"
+            >
+              <Archive className="h-3.5 w-3.5" />
+              {t("archivedChats.open", { defaultValue: "Archived chats" })}
+            </Button>
+          </div>
+          {/* Mounted only while open, so its list and search start fresh each time. */}
+          {archivedChatsOpen && <ArchivedChatsModal onClose={() => setArchivedChatsOpen(false)} />}
 
           {provider && tasksEnabled && isTaskMasterInstalled && (
             <div className="mt-5">

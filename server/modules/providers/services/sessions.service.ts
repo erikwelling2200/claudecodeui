@@ -834,7 +834,7 @@ export const sessionsService = {
   /**
    * Restores one archived session back into the active sidebar lists.
    */
-  restoreSessionById(sessionId: string): { sessionId: string; isArchived: false } {
+  async restoreSessionById(sessionId: string): Promise<{ sessionId: string; isArchived: false }> {
     const session = sessionsDb.getSessionById(sessionId);
     if (!session) {
       throw new AppError(`Session "${sessionId}" was not found.`, {
@@ -844,6 +844,8 @@ export const sessionsService = {
     }
 
     sessionsDb.updateSessionIsArchived(sessionId, false);
+    // Lets every open sidebar list the session again without a full refetch.
+    await broadcastSessionUpserted(sessionId);
     return { sessionId, isArchived: false };
   },
 

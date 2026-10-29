@@ -1799,7 +1799,7 @@ type ConversationMatch = {
 };
 
 /** A start/end character range within a search-result snippet that should be visually marked as the matched text. */
-type SnippetHighlight = {
+export type SnippetHighlight = {
   start: number;
   end: number;
 };

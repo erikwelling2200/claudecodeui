@@ -285,6 +285,9 @@ export const api = {
   deleteSession: (sessionId: string, hardDelete = false, stopProcesses = false) =>
     del(`/api/providers/sessions/${sessionId}${query({ force: hardDelete, stopProcesses })}`),
   getArchivedSessions: () => get('/api/providers/sessions/archived'),
+  // Archived sessions whose messages typed by the user match `searchQuery` (at least 2 characters).
+  searchArchivedSessions: (searchQuery: string, signal?: AbortSignal) =>
+    get(`/api/providers/search/archived-sessions${query({ q: searchQuery })}`, { signal }),
   // Resolves one session (by app id or provider-native id) to its metadata and
   // owning project — used when a /session/<id> URL isn't in loaded payloads.
   sessionDetails: (sessionId: string) =>
