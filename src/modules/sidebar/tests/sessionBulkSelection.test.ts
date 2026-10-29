@@ -407,6 +407,30 @@ test('confirming a bulk delete deletes every id once and clears the selection', 
   assert.equal(alertMock.mock.calls.length, 0);
 });
 
+test('archiving a parent also takes the threads the server archived with it off the list', async () => {
+  const onSessionDelete = vi.fn();
+  deleteSession.mockImplementation(async (sessionId: string) => ({
+    ok: true,
+    json: async () => ({ data: { threadSessionIds: sessionId === 's1' ? ['t1', 't2'] : [] } }),
+  }));
+  const { result } = renderController(onSessionDelete);
+
+  await act(async () => {
+    result.current.archiveSessionNow('s1');
+    await Promise.resolve();
+  });
+  await waitFor(() => assert.deepEqual(onSessionDelete.mock.calls, [['s1'], ['t1'], ['t2']]));
+
+  onSessionDelete.mockReset();
+  act(() => {
+    result.current.showDeleteSelectedSessionsConfirmation(['s1', 's2']);
+  });
+  await act(async () => {
+    await result.current.confirmDeleteSessions(false);
+  });
+  assert.deepEqual(onSessionDelete.mock.calls, [['s1'], ['t1'], ['t2'], ['s2']]);
+});
+
 test('a bulk delete that only partly succeeds keeps the failed rows ticked and says how many failed', async () => {
   const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
   deleteSession.mockImplementation((sessionId: string) =>

@@ -183,3 +183,16 @@ test('a project page sorts a parent by its latest thread and before its threads'
     assert.equal(page[1].parent_session_id, 'session-parent');
   });
 });
+
+test('getThreadSessionIds lists the archived or the active threads of one session', async () => {
+  await withIsolatedDatabase(() => {
+    sessionsDb.createAppSession('parent', 'claude', '/workspace/threads');
+    sessionsDb.createAppSession('thread-active', 'claude', '/workspace/threads', undefined, 'parent');
+    sessionsDb.createAppSession('thread-archived', 'claude', '/workspace/threads', undefined, 'parent');
+    sessionsDb.createAppSession('unrelated', 'claude', '/workspace/threads');
+    sessionsDb.updateSessionIsArchived('thread-archived', true);
+
+    assert.deepEqual(sessionsDb.getThreadSessionIds('parent', false), ['thread-active']);
+    assert.deepEqual(sessionsDb.getThreadSessionIds('parent', true), ['thread-archived']);
+  });
+});

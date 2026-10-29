@@ -47,6 +47,17 @@ function readExpandedThreadParentIds(): Set<string> {
   }
 }
 
+/** The threads the server archived along with a session, from a successful delete response. */
+async function readArchivedThreadIds(response: Response): Promise<string[]> {
+  try {
+    const payload = await response.json() as { data?: { threadSessionIds?: unknown } } | null;
+    const ids = payload?.data?.threadSessionIds;
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 type ArchivedSessionsApiPayload = {
   success?: boolean;
   data?: {
@@ -1007,14 +1018,15 @@ export function useSidebarController({
       const response = await api.deleteSession(sessionId, hardDelete, stopProcesses);
 
       if (response.ok) {
-        onSessionDelete?.(sessionId);
+        const removedIds = new Set([sessionId, ...(await readArchivedThreadIds(response))]);
+        removedIds.forEach((removedId) => onSessionDelete?.(removedId));
         // Same gap as rename: nothing refetched the recents feed, so the row the
         // user just archived stayed in the list. Archiving keeps the session, so
         // only the non-archived total moves.
         setRecentConversations((previous) => {
-          const remaining = previous.filter((conversation) => conversation.sessionId !== sessionId);
+          const remaining = previous.filter((conversation) => !removedIds.has(conversation.sessionId));
           if (remaining.length !== previous.length) {
-            setRecentConversationsTotal((total) => Math.max(0, total - 1));
+            setRecentConversationsTotal((total) => Math.max(0, total - (previous.length - remaining.length)));
           }
           return remaining;
         });
@@ -1117,16 +1129,17 @@ export function useSidebarController({
           const errorText = await response.text();
           throw new Error(`status ${response.status}: ${errorText}`);
         }
-        return sessionId;
+        return { sessionId, threadSessionIds: await readArchivedThreadIds(response) };
       }),
     );
     sessionIds.forEach((sessionId) => deletingIds.delete(sessionId));
 
+    // The sessions asked for, plus the threads archived along with them.
     const deletedSessionIds: string[] = [];
     const failedSessionIds: string[] = [];
     outcomes.forEach((outcome, index) => {
       if (outcome.status === 'fulfilled') {
-        deletedSessionIds.push(outcome.value);
+        deletedSessionIds.push(outcome.value.sessionId, ...outcome.value.threadSessionIds);
       } else {
         failedSessionIds.push(sessionIds[index]);
         console.error('[Sidebar] Failed to delete session:', {

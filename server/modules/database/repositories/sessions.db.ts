@@ -699,6 +699,15 @@ export const sessionsDb = {
    * Soft-delete and restore both use the same flag update so callers keep the
    * row, metadata, and file path intact while toggling visibility.
    */
+  /** Ids of the threads of one session that are archived (`isArchived`) or not. */
+  getThreadSessionIds(parentSessionId: string, isArchived: boolean): string[] {
+    const db = getConnection();
+    const rows = db
+      .prepare('SELECT session_id FROM sessions WHERE parent_session_id = ? AND isArchived = ?')
+      .all(parentSessionId, isArchived ? 1 : 0) as Array<{ session_id: string }>;
+    return rows.map((row) => row.session_id);
+  },
+
   updateSessionIsArchived(sessionId: string, isArchived: boolean): void {
     const db = getConnection();
     db.prepare(
