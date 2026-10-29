@@ -59,7 +59,7 @@ export default function EditProjectModal({ project, onClose, onProjectUpdated }:
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-0 backdrop-blur-sm sm:p-4">
       <div
-        className="h-full w-full overflow-y-auto rounded-none border-0 border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800 sm:h-auto sm:max-w-2xl sm:rounded-lg sm:border"
+        className="flex h-full w-full flex-col rounded-none border-0 border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800 sm:h-auto sm:max-h-full sm:max-w-2xl sm:rounded-lg sm:border"
         role="dialog"
         aria-modal="true"
         aria-labelledby="edit-project-title"
@@ -84,7 +84,7 @@ export default function EditProjectModal({ project, onClose, onProjectUpdated }:
           </button>
         </div>
 
-        <div className="space-y-4 p-6">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
           {error && <ErrorBanner message={error} />}
 
           <div>
