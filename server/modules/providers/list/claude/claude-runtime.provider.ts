@@ -170,7 +170,7 @@ const abortedSessionIds = new Set<string>();
 // entry, the abort flag, and all client-facing events belong to the new run.
 const supersededInstances = new WeakSet<ClaudeQuery>();
 
-const TOOL_APPROVAL_TIMEOUT_MS = parseInt(process.env.CLAUDE_TOOL_APPROVAL_TIMEOUT_MS ?? '', 10) || 55000;
+const TOOL_APPROVAL_TIMEOUT_MS = parseInt(process.env.CLAUDE_TOOL_APPROVAL_TIMEOUT_MS ?? '', 10) || 15 * 60 * 1000;
 
 // Passed to the spawned CLI as CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: how long, once
 // its stdin has ended, it waits for still-running background *agents* before
