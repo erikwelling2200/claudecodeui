@@ -442,6 +442,12 @@ const addParentSessionIdColumn = (db: Database): void => {
   addColumnToTableIfNotExists(db, 'sessions', columnNames, 'parent_session_id', 'TEXT');
 };
 
+/** Adds the `remote_control` column that records whether a chat wants Remote Control on. */
+const addRemoteControlColumn = (db: Database): void => {
+  const columnNames = getTableInfo(db, 'sessions').map((column) => column.name);
+  addColumnToTableIfNotExists(db, 'sessions', columnNames, 'remote_control', 'INTEGER NOT NULL DEFAULT 0');
+};
+
 /**
  * Adds the `model` column that records which model each session runs with.
  *
@@ -637,6 +643,7 @@ export const runMigrations = (db: Database) => {
     addSessionEffortColumn(db);
     addForkedFromSessionIdColumn(db);
     addParentSessionIdColumn(db);
+    addRemoteControlColumn(db);
     ensureProjectsForSessionPaths(db);
     mergeProjectsWithSameNormalizedPath(db);
     db.exec(SCHEDULED_MESSAGES_TABLE_SCHEMA_SQL);

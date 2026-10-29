@@ -7,7 +7,8 @@ import { useSyncExternalStore } from 'react';
  * The wish is stored per session, plus a "last" key a brand-new chat reads
  * until it has a session id. A turn that launches a process carries the wish
  * and the server starts the bridge then; a toggle while the process runs
- * starts or stops it there and then.
+ * starts or stops it there and then. The server records the wish as well and
+ * reports every change to it, which is how a chat's threads follow the chat.
  */
 export type RemoteControlStatus = {
   wanted: boolean;
@@ -67,16 +68,18 @@ export function setRemoteControlWanted(sessionId: string | null, wanted: boolean
   publish();
 }
 
-/** Applies a `remote_control` event from the server. A bridge that failed to start turns the wish off. */
+/** Applies a `remote_control` event from the server, which carries the session's wish. A bridge that failed to start turns it off. */
 export function applyRemoteControlEvent(sessionId: string, event: { enabled?: unknown; sessionUrl?: unknown; error?: unknown }): void {
   if (event.enabled === true && typeof event.sessionUrl === 'string' && event.sessionUrl) {
     sessionUrls.set(sessionId, event.sessionUrl);
   } else {
     sessionUrls.delete(sessionId);
   }
+  if (typeof event.enabled === 'boolean') {
+    writeStored(storageKey(sessionId), event.enabled);
+  }
   if (event.error) {
     writeStored(LAST_KEY, false);
-    writeStored(storageKey(sessionId), false);
   }
   publish();
 }

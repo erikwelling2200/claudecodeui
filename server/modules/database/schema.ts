@@ -165,6 +165,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- sidebar folds threads under their parent; when the parent is gone they
     -- show at the top level again.
     parent_session_id TEXT,
+    -- 1 while the user wants Remote Control on for this chat. Its threads follow
+    -- it, including threads started after it was turned on.
+    remote_control INTEGER NOT NULL DEFAULT 0,
     isArchived BOOLEAN DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,

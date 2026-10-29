@@ -8,6 +8,9 @@ export { broadcastSessionUpserted, broadcastSessionUpsertedBatch } from './servi
 // runDetachedChatTurn: used by the scheduled-messages module to run a turn
 // from a timer, with no socket to stream to or report errors on.
 export { runDetachedChatTurn } from './services/chat-websocket.service.js';
+// broadcastRemoteControl: used by the chat-tools module to tell every client
+// that a thread it started follows its parent's Remote Control.
+export { broadcastRemoteControl } from './services/chat-websocket.service.js';
 // stopAppSessionProcesses: wired into the providers module's sessions service in
 // server/index.ts, which stops a session's runs and shell ptys before archiving it.
 export { stopAppSessionProcesses } from './services/session-process-stop.service.js';
