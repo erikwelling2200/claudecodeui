@@ -843,6 +843,24 @@ export function useChatComposerState({
     [addMessage, recordSentMessage, resetCommandMenuState, setInput, t],
   );
 
+  // Empties the composer and its saved draft once a message has gone out.
+  const clearComposer = useCallback(() => {
+    setInput('');
+    inputValueRef.current = '';
+    resetCommandMenuState();
+    setAttachedFiles([]);
+    setFileErrors(new Map());
+    setIsTextareaExpanded(false);
+
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+
+    if (draftScopeRef.current) {
+      writeDraftText(draftScopeRef.current, '');
+    }
+  }, [resetCommandMenuState, setInput]);
+
   const submitMessage = useCallback(
     async (
       event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>,
@@ -890,6 +908,32 @@ export function useChatComposerState({
             content: `Failed to upload files: ${message}`,
             timestamp: new Date(),
           });
+          return;
+        }
+
+        // Claude reads a message sent mid-turn at its next step, as in the CLI.
+        // A slash command is a turn of its own and an edit rewinds the
+        // conversation, so those still wait for the turn to end.
+        const runningSessionId = selectedSession?.id || currentSessionId || null;
+        if (provider === 'claude' && runningSessionId && !editingAnchorId && !currentInput.trimStart().startsWith('/')) {
+          const attachmentRecords = uploadedAttachments as ChatAttachment[];
+          addMessage({
+            type: 'user',
+            content: currentInput,
+            images: attachmentRecords.filter(isImageAttachment),
+            files: attachmentRecords.filter((attachment) => !isImageAttachment(attachment)),
+            timestamp: new Date(),
+          });
+          setIsUserScrolledUp(false);
+          setTimeout(() => scrollToBottom(), 100);
+          sendMessage({
+            type: 'chat.steer',
+            sessionId: runningSessionId,
+            content: currentInput,
+            options: { ...queuedOptions, attachments: uploadedAttachments },
+          });
+          recordSentMessage(currentInput, runningSessionId);
+          clearComposer();
           return;
         }
 
@@ -1099,26 +1143,14 @@ export function useChatComposerState({
       // navigated to. Queued drafts were recorded when they were queued; the
       // consecutive-duplicate check keeps this second call a no-op.
       recordSentMessage(currentInput, targetSessionId);
-      setInput('');
-      inputValueRef.current = '';
-      resetCommandMenuState();
-      setAttachedFiles([]);
-      setFileErrors(new Map());
-      setIsTextareaExpanded(false);
-
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto';
-      }
-
-      if (draftScopeRef.current) {
-        writeDraftText(draftScopeRef.current, '');
-      }
+      clearComposer();
     },
     [
       selectedSession,
       askBeforeSendingOverBackgroundWork,
       attachedFiles,
       buildSendOptions,
+      clearComposer,
       currentSessionId,
       editingAnchorId,
       executeCommand,

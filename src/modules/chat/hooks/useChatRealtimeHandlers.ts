@@ -209,7 +209,8 @@ export function useChatRealtimeHandlers({
             // A refused stop request is not about the run: the task had
             // already settled, and idling here would drop a response in
             // flight on that session.
-            if (msg.code !== 'NO_SUCH_TASK' && msg.code !== 'TASK_ID_REQUIRED') {
+            // Nor is a mid-turn message that could not be queued: the turn goes on.
+            if (msg.code !== 'NO_SUCH_TASK' && msg.code !== 'TASK_ID_REQUIRED' && msg.code !== 'QUEUED_MESSAGE_NOT_COMBINABLE') {
               onSessionIdle?.(sid);
             }
             sessionStore.appendRealtime(sid, {

@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { WebSocket } from 'ws';
 
 import { chatToolsService } from '@/modules/chat-tools/index.js';
-import { projectsDb, sessionsDb } from '@/modules/database/index.js';
+import { projectsDb, sessionDraftsDb, sessionsDb } from '@/modules/database/index.js';
 import { providerModelsService, sessionsService } from '@/modules/providers/index.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
 import { connectedClients, WS_OPEN_STATE } from '@/modules/websocket/services/websocket-state.service.js';
@@ -89,6 +89,8 @@ export type ProviderRuntimeGateway = {
   abort(provider: LLMProvider, sessionId: string): Promise<boolean>;
   stopBackgroundTask(provider: LLMProvider, sessionId: string, taskId: string): Promise<boolean>;
   setPermissionMode(provider: LLMProvider, sessionId: string, permissionMode: string): Promise<boolean>;
+  /** Adds a message to the session's turn in flight; false when none can take it. */
+  steerTurn(provider: LLMProvider, sessionId: string, command: string, options: AnyRecord): Promise<boolean>;
   /** Whether a provider runtime still holds background work for the session after its turn ended. */
   hasBackgroundWork(sessionId: string): boolean;
   /** Whether a turn with these options goes into the process the session keeps between turns. */
@@ -223,6 +225,70 @@ function resolveSendTarget(
   return { sessionId, session, provider };
 }
 
+/** The attachments of a send's options that live in the upload store, each once. */
+function readVerifiedAttachments(clientOptions: AnyRecord): ChatAttachmentDescriptor[] {
+  const attachmentCandidates = [
+    ...normalizeAttachmentDescriptors(clientOptions.images),
+    ...normalizeAttachmentDescriptors(clientOptions.files),
+    ...normalizeAttachmentDescriptors(clientOptions.attachments),
+  ];
+  const verifiedAttachments = filterAttachmentsToUploadStore(attachmentCandidates);
+  return verifiedAttachments.filter(
+    (descriptor, index, all) => all.findIndex((candidate) => candidate.path === descriptor.path) === index,
+  );
+}
+
+/**
+ * Handles `chat.steer`: a message sent while the session's turn is running.
+ * It goes into that turn, so the model reads it at its next step. When the
+ * runtime cannot take it there, it is sent the way it would otherwise have
+ * gone: as a turn of its own right away when the run has ended meanwhile, or
+ * queued to follow the run.
+ */
+async function handleChatSteer(
+  ws: WebSocket,
+  userId: string | number | null,
+  data: AnyRecord,
+  dependencies: ChatWebSocketDependencies
+): Promise<void> {
+  const resolved = resolveSendTarget(ws, data, dependencies, 'chat.steer');
+  if (!resolved) {
+    return;
+  }
+  const { sessionId, session, provider } = resolved;
+
+  if (!chatRunRegistry.isProcessing(sessionId)) {
+    await dispatchRun(ws, userId, sessionId, session, data, dependencies);
+    return;
+  }
+
+  const clientOptions = (data.options ?? {}) as AnyRecord;
+  const command = typeof data.content === 'string' ? data.content : '';
+  const attachments = readVerifiedAttachments(clientOptions);
+  const steered = await dependencies.runtime.steerTurn(provider, sessionId, command, {
+    images: attachments.filter(isImageAttachmentDescriptor),
+    files: attachments.filter((descriptor) => !isImageAttachmentDescriptor(descriptor)),
+    cwd: clientOptions.cwd ?? session.project_path ?? undefined,
+  });
+  if (steered) {
+    return;
+  }
+
+  const queued = sessionDraftsDb.appendQueuedMessage(Number(userId), sessionId, {
+    content: command,
+    options: clientOptions,
+    attachments,
+  });
+  if (!queued) {
+    sendProtocolError(
+      ws,
+      'QUEUED_MESSAGE_NOT_COMBINABLE',
+      'A slash command runs as a turn of its own, so it cannot be combined with the queued message.',
+      sessionId
+    );
+  }
+}
+
 /**
  * Registers the run and hands the turn to the provider runtime.
  *
@@ -280,15 +346,7 @@ async function dispatchRun(
     providerModelsService.setSessionEffort(provider, sessionId, clientOptions.effort);
   }
 
-  const attachmentCandidates = [
-    ...normalizeAttachmentDescriptors(clientOptions.images),
-    ...normalizeAttachmentDescriptors(clientOptions.files),
-    ...normalizeAttachmentDescriptors(clientOptions.attachments),
-  ];
-  const verifiedAttachments = filterAttachmentsToUploadStore(attachmentCandidates);
-  const uniqueAttachments = verifiedAttachments.filter(
-    (descriptor, index, all) => all.findIndex((candidate) => candidate.path === descriptor.path) === index,
-  );
+  const uniqueAttachments = readVerifiedAttachments(clientOptions);
 
   // The provider runtimes receive the stable app session id. When their
   // CLI/SDK needs the provider-native id for resume, they resolve it from the
@@ -641,6 +699,7 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  *
  * Inbound protocol (client to server):
  * - `chat.send`                { sessionId, content, options? }
+ * - `chat.steer`               { sessionId, content, options? }  (a message for the turn in flight)
  * - `chat.abort`               { sessionId }
  * - `chat.stop-task`           { sessionId, taskId }
  * - `chat.set-permission-mode` { sessionId, permissionMode }
@@ -743,6 +802,9 @@ export function handleChatConnection(
           return;
         case 'chat.send':
           await handleChatSend(ws, userId, data, dependencies);
+          return;
+        case 'chat.steer':
+          await handleChatSteer(ws, userId, data, dependencies);
           return;
         case 'chat.abort':
           await handleChatAbort(ws, data, dependencies);

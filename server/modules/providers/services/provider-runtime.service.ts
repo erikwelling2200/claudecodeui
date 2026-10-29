@@ -122,6 +122,11 @@ export function createProviderRuntimeService(
       return Boolean(await runtime.setPermissionMode?.(sessionId, permissionMode));
     },
 
+    async steerTurn(providerName: LLMProvider, sessionId: string, command: string, options: AnyRecord): Promise<boolean> {
+      const { runtime } = dependencies.resolveProvider(providerName);
+      return Boolean(await runtime.steerTurn?.(sessionId, command, options));
+    },
+
     hasBackgroundWork(sessionId: string): boolean {
       return dependencies.listProviders().some((provider) =>
         (provider.runtime.listBackgroundWork?.() ?? []).some((entry) => entry.sessionId === sessionId));

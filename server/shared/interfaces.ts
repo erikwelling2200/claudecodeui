@@ -75,6 +75,13 @@ export interface IProviderRuntime {
    * the runtime knows; the next turn starts with the mode it is sent with anyway.
    */
   setPermissionMode?(sessionId: string, permissionMode: string): Promise<boolean>;
+  /**
+   * Adds a user message to the session's turn in flight, so it reaches the
+   * model at its next step instead of after the turn. `options` carries the
+   * `images`, `files` and `cwd` a `chat.send` turn gets. Resolves false when
+   * no turn is in flight that can take it.
+   */
+  steerTurn?(sessionId: string, command: string, options: AnyRecord): Promise<boolean>;
 }
 
 /**
