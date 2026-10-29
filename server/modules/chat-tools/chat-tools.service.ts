@@ -6,10 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { appConfigDb } from '@/modules/database/index.js';
-import { providerMcpService, sessionsService } from '@/modules/providers/index.js';
-import { broadcastSessionUpserted } from '@/modules/websocket/index.js';
-import type { ChatToolsAppendMode, ChatToolsSettings } from '@/shared/types.js';
+import { appConfigDb, sessionsDb, userDb } from '@/modules/database/index.js';
+import { providerMcpService, providerRuntimeService, sessionsService } from '@/modules/providers/index.js';
+import { broadcastSessionUpserted, runDetachedChatTurn } from '@/modules/websocket/index.js';
+import type { ProviderRuntimeGateway } from '@/modules/websocket/index.js';
+import type { ChatToolsAppendMode, ChatToolsSettings, LLMProvider } from '@/shared/types.js';
 import { AGENT_SESSION_ID_ENV, AppError, appendPromptText, findServerRoot, getModuleDirectory } from '@/shared/utils.js';
 
 const require = createRequire(import.meta.url);
@@ -147,9 +148,10 @@ function parseAppendMode(value: unknown): ChatToolsAppendMode {
   return value as ChatToolsAppendMode;
 }
 
-// chatToolsService: used by the chat-tools routes, by the websocket module's
-// chat dispatch to append text to prompts, and by the server entrypoint to
-// register the MCP server at startup.
+// chatToolsService: used by the chat-tools routes (settings, and the MCP tools
+// that rename and start chats), by the websocket module's chat dispatch to
+// append text to prompts, and by the server entrypoint to register the MCP
+// server at startup.
 export const chatToolsService = {
   getSettings(): ChatToolsSettings & { defaultAppendText: string } {
     return { ...readSettings(), defaultAppendText: DEFAULT_APPEND_TEXT };
@@ -217,5 +219,38 @@ export const chatToolsService = {
     const result = sessionsService.renameSessionById(sessionId, summary);
     await broadcastSessionUpserted(sessionId);
     return result;
+  },
+
+  /**
+   * Starts a new chat on an agent's request, with the same provider as the
+   * calling chat and in its project unless another folder is named. The first
+   * turn runs detached, like a scheduled message, so it does not wait for the
+   * new chat's answer; the chat shows in every open sidebar right away.
+   */
+  async startChat(
+    callerSessionId: string,
+    input: { message: string; model: string; effort?: string; projectPath?: string },
+    runtime: ProviderRuntimeGateway = providerRuntimeService,
+  ): Promise<{ sessionId: string; projectPath: string }> {
+    const caller = sessionsDb.getSessionById(callerSessionId);
+    if (!caller) {
+      throw new AppError(`Session "${callerSessionId}" was not found.`, { code: 'SESSION_NOT_FOUND', statusCode: 404 });
+    }
+
+    const created = sessionsService.createAppSession(caller.provider as LLMProvider, input.projectPath ?? caller.project_path ?? '', input.message);
+    await broadcastSessionUpserted(created.sessionId);
+
+    // 'auto' is a Claude permission mode; other providers keep their own default.
+    const options = { model: input.model, effort: input.effort, ...(created.provider === 'claude' ? { permissionMode: 'auto' } : {}) };
+    const userId = userDb.getFirstUser()?.id ?? null;
+    void runDetachedChatTurn({ sessionId: created.sessionId, userId, content: input.message, options }, { runtime })
+      .then((result) => {
+        if (result.error) console.error(`[ChatTools] The chat started by session ${callerSessionId} failed: ${result.error}`);
+      })
+      .catch((error: unknown) => {
+        console.error(`[ChatTools] The chat started by session ${callerSessionId} failed:`, error instanceof Error ? error.message : error);
+      });
+
+    return { sessionId: created.sessionId, projectPath: created.projectPath };
   },
 };
