@@ -376,6 +376,7 @@
     "cancelEditing": "Cancel editing",
     "userDeniedTool": "User denied tool use",
     "showTokenUsage": "Show token usage",
+    "contextUsed": "{{percent}}% of context used",
     "fallbackCommands": {
       "models": "Browse available models for the active provider.",
       "cost": "Review token usage for the active session.",

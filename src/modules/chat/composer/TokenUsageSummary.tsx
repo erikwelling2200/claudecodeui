@@ -1,5 +1,4 @@
 import { memo } from 'react';
-import { ActivityIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 type TokenUsageSummaryProps = {
@@ -7,25 +6,8 @@ type TokenUsageSummaryProps = {
   onClick?: () => void;
 };
 
-const formatTokenCount = (value: number) => {
-  if (!Number.isFinite(value) || value <= 0) {
-    return '0';
-  }
-
-  if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
-  }
-
-  if (value >= 10_000) {
-    return `${Math.round(value / 1_000)}K`;
-  }
-
-  if (value >= 1_000) {
-    return `${(value / 1_000).toFixed(1)}K`;
-  }
-
-  return value.toLocaleString();
-};
+const RING_RADIUS = 8;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 const readUsageNumber = (value: unknown) => {
   const parsed = Number(value);
@@ -33,8 +15,9 @@ const readUsageNumber = (value: unknown) => {
 };
 
 /**
- * Rendered by chat's ChatComposer to show the session's context-window usage
- * and open the detailed token breakdown on click.
+ * Rendered by chat's ChatComposer as a ring that fills with the session's
+ * context-window usage; hovering shows the percentage and clicking opens the
+ * detailed token breakdown.
  */
 function TokenUsageSummary({ usage, onClick }: TokenUsageSummaryProps) {
   const { t } = useTranslation();
@@ -45,22 +28,35 @@ function TokenUsageSummary({ usage, onClick }: TokenUsageSummaryProps) {
   const inputTokens = readUsageNumber(usage?.inputTokens ?? breakdown?.input);
   const outputTokens = readUsageNumber(usage?.outputTokens ?? breakdown?.output);
   const usedTokens = readUsageNumber(usage?.used) || inputTokens + outputTokens;
+  const totalTokens = readUsageNumber(usage?.total);
+  const fraction = totalTokens > 0 ? Math.min(Math.max(usedTokens / totalTokens, 0), 1) : 0;
+  const percent = Math.round(fraction * 100);
+  const ringColor = fraction >= 0.9 ? 'text-red-500' : fraction >= 0.75 ? 'text-amber-500' : 'text-primary';
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/70 bg-background/70 px-2 text-xs text-muted-foreground shadow-sm transition-colors hover:border-primary/25 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:gap-2 sm:px-2.5"
-      title={t('chat:misc.tokensUsed', { count: usedTokens })}
+      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      title={t('chat:misc.contextUsed', { percent })}
       aria-label={t('chat:misc.showTokenUsage')}
     >
-      <span className="grid h-5 w-5 place-items-center rounded-md bg-primary/10 text-primary">
-        <ActivityIcon className="h-3.5 w-3.5" />
-      </span>
-      <span className="font-medium text-foreground">{formatTokenCount(usedTokens)}</span>
-      <span className="hidden text-muted-foreground/70 sm:inline">
-        {t('chat:misc.tokensLabel', { count: usedTokens })}
-      </span>
+      <svg viewBox="0 0 20 20" className="h-5 w-5 -rotate-90" aria-hidden="true">
+        <circle cx="10" cy="10" r={RING_RADIUS} fill="none" strokeWidth="2.5" className="stroke-border" />
+        <circle
+          cx="10"
+          cy="10"
+          r={RING_RADIUS}
+          fill="none"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          stroke="currentColor"
+          strokeDasharray={RING_CIRCUMFERENCE}
+          strokeDashoffset={RING_CIRCUMFERENCE * (1 - fraction)}
+          className={`${ringColor} transition-[stroke-dashoffset] duration-500 ease-out`}
+          opacity={fraction > 0 ? 1 : 0}
+        />
+      </svg>
     </button>
   );
 }
