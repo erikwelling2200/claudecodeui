@@ -17,6 +17,8 @@ type SessionRow = {
   forked_from_session_id: string | null;
   /** The app session this one is a thread of; NULL for a top-level chat. */
   parent_session_id: string | null;
+  /** 1 while the user wants Remote Control on for this chat. */
+  remote_control: number;
   isArchived: number;
   created_at: string;
   updated_at: string;
@@ -28,7 +30,7 @@ type RecentSessionsPage = {
 };
 
 const SESSION_ROW_COLUMNS =
-  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, forked_from_session_id, parent_session_id, isArchived, created_at, updated_at';
+  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, forked_from_session_id, parent_session_id, remote_control, isArchived, created_at, updated_at';
 
 const SQLITE_UTC_TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
@@ -440,6 +442,15 @@ export const sessionsDb = {
        SET effort = ?
        WHERE session_id = ?`
     ).run(effort, sessionId);
+  },
+
+  setSessionRemoteControl(sessionId: string, enabled: boolean): void {
+    const db = getConnection();
+    db.prepare(
+      `UPDATE sessions
+       SET remote_control = ?
+       WHERE session_id = ?`
+    ).run(enabled ? 1 : 0, sessionId);
   },
 
   updateSessionCustomName(sessionId: string, customName: string): void {

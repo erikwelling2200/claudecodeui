@@ -81,6 +81,38 @@ test('start_chat creates a session in the caller project and runs the message in
   });
 });
 
+test('a thread of a chat with Remote Control on starts with it on', async () => {
+  await withIsolatedDatabase(async () => {
+    sessionsDb.setSessionRemoteControl(CALLER_SESSION_ID, true);
+    const runs: RunCall[] = [];
+    const { runtime, started, release } = createRuntime(runs);
+
+    const result = await chatToolsService.startChat(CALLER_SESSION_ID, { message: 'Go', model: 'opus' }, runtime);
+    await started;
+
+    assert.equal(sessionsDb.getSessionById(result.sessionId)?.remote_control, 1);
+    assert.equal(runs[0].options.remoteControl, true);
+    release();
+  });
+});
+
+test('a thread of a chat with Remote Control off and a top-level chat start with it off', async () => {
+  await withIsolatedDatabase(async () => {
+    const runs: RunCall[] = [];
+    const { runtime, started, release } = createRuntime(runs);
+
+    const thread = await chatToolsService.startChat(CALLER_SESSION_ID, { message: 'Go', model: 'opus' }, runtime);
+    await started;
+    assert.equal(sessionsDb.getSessionById(thread.sessionId)?.remote_control, 0);
+    assert.equal(runs[0].options.remoteControl, false);
+    release();
+
+    sessionsDb.setSessionRemoteControl(CALLER_SESSION_ID, true);
+    const topLevel = await chatToolsService.startChat(CALLER_SESSION_ID, { message: 'Go', model: 'opus', topLevel: true }, createRuntime([]).runtime);
+    assert.equal(sessionsDb.getSessionById(topLevel.sessionId)?.remote_control, 0);
+  });
+});
+
 test('start_chat refuses a caller session that does not exist', async () => {
   await withIsolatedDatabase(async () => {
     const { runtime } = createRuntime([]);

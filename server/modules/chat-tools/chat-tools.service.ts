@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 
 import { appConfigDb, sessionsDb, userDb } from '@/modules/database/index.js';
 import { providerMcpService, providerRuntimeService, sessionsService } from '@/modules/providers/index.js';
-import { broadcastSessionUpserted, runDetachedChatTurn } from '@/modules/websocket/index.js';
+import { broadcastRemoteControl, broadcastSessionUpserted, runDetachedChatTurn } from '@/modules/websocket/index.js';
 import type { ProviderRuntimeGateway } from '@/modules/websocket/index.js';
 import type { ChatToolsAppendMode, ChatToolsSettings, LLMProvider } from '@/shared/types.js';
 import { AGENT_SESSION_ID_ENV, AppError, appendPromptText, findServerRoot, getModuleDirectory } from '@/shared/utils.js';
@@ -252,6 +252,12 @@ export const chatToolsService = {
     const projectPath = input.projectPath ?? caller.project_path ?? '';
     const created = sessionsService.createAppSession(caller.provider as LLMProvider, projectPath, input.message, parentSessionId);
     await broadcastSessionUpserted(created.sessionId);
+
+    // A thread follows its parent's Remote Control; its first turn starts the bridge.
+    if (parentSessionId && sessionsDb.getSessionById(parentSessionId)?.remote_control) {
+      sessionsDb.setSessionRemoteControl(created.sessionId, true);
+      broadcastRemoteControl(created.sessionId, created.provider, { enabled: true, sessionUrl: null });
+    }
 
     // 'auto' is a Claude permission mode; other providers keep their own default.
     const options = { model: input.model, effort: input.effort, ...(created.provider === 'claude' ? { permissionMode: 'auto' } : {}) };

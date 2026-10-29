@@ -366,6 +366,10 @@ async function dispatchRun(
     providerModelsService.setSessionEffort(provider, sessionId, clientOptions.effort);
   }
 
+  if (clientOptions.remoteControl === true) {
+    sessionsDb.setSessionRemoteControl(sessionId, true);
+  }
+
   const uniqueAttachments = readVerifiedAttachments(clientOptions);
 
   // The provider runtimes receive the stable app session id. When their
@@ -386,6 +390,8 @@ async function dispatchRun(
     cwd: clientOptions.cwd ?? session.project_path ?? undefined,
     projectPath: session.project_path ?? clientOptions.projectPath,
     additionalDirectories,
+    // The recorded choice also covers turns no composer sent, such as a thread's first turn.
+    remoteControl: clientOptions.remoteControl === true || Boolean(session.remote_control),
   };
 
   let failure: string | null = null;
@@ -626,10 +632,21 @@ async function handleChatSetPermissionMode(
   await dependencies.runtime.setPermissionMode(session.provider as LLMProvider, sessionId, permissionMode);
 }
 
+/** Sends a `remote_control` event for one session to every connected client. */
+export function broadcastRemoteControl(sessionId: string, provider: string, state: AnyRecord): void {
+  const payload = JSON.stringify({ kind: 'remote_control', sessionId, provider, timestamp: new Date().toISOString(), ...state });
+  connectedClients.forEach((client) => {
+    if (client.readyState === WS_OPEN_STATE) {
+      client.send(payload);
+    }
+  });
+}
+
 /**
- * Handles `chat.set-remote-control`: starts or stops Remote Control in the
- * session's live process and answers with a `remote_control` event. A session
- * with no live process gets no answer: its next `chat.send` carries the choice.
+ * Handles `chat.set-remote-control`: records the choice for the session and
+ * each of its threads, starts or stops Remote Control in their live processes,
+ * and reports each to every client with a `remote_control` event. A session
+ * with no live process starts the bridge with its next turn.
  */
 async function handleChatSetRemoteControl(
   ws: WebSocket,
@@ -649,15 +666,18 @@ async function handleChatSetRemoteControl(
   }
 
   const enabled = data.enabled === true;
-  let state: AnyRecord | null;
-  try {
-    state = await dependencies.runtime.setRemoteControl(session.provider as LLMProvider, sessionId, enabled);
-  } catch (error) {
-    state = { enabled: false, sessionUrl: null, error: (error as Error)?.message || String(error) };
-  }
-  if (state) {
-    sendJson(ws, { kind: 'remote_control', sessionId, provider: session.provider, timestamp: new Date().toISOString(), ...state });
-  }
+  const threadIds = [...sessionsDb.getThreadSessionIds(sessionId, false), ...sessionsDb.getThreadSessionIds(sessionId, true)];
+  await Promise.all([sessionId, ...threadIds].map(async (id) => {
+    sessionsDb.setSessionRemoteControl(id, enabled);
+    let state: AnyRecord;
+    try {
+      state = (await dependencies.runtime.setRemoteControl(session.provider as LLMProvider, id, enabled)) ?? { enabled, sessionUrl: null };
+    } catch (error) {
+      state = { enabled: false, sessionUrl: null, error: (error as Error)?.message || String(error) };
+      sessionsDb.setSessionRemoteControl(id, false);
+    }
+    broadcastRemoteControl(id, session.provider, state);
+  }));
 }
 
 /**
