@@ -2098,9 +2098,10 @@ function acceptsClaudeSDKLiveTurn(sessionId: string, options: AnyRecord): boolea
 
 // The model reads a message taken mid-turn inside a tool loop, and left to
 // itself often answers it only in its thinking, which the user sees collapsed:
-// across 440 such messages in local transcripts, 154 got a visible reply.
-const STEER_REPLY_INSTRUCTION = 'The user sent this while you were working. Answer it in a visible message to the user '
-  + 'before your next tool call, not only in your thinking, then continue.';
+// across 440 such messages in local transcripts, 154 got a visible reply. A
+// softer ask ("not only in your thinking") was still answered in thinking.
+const STEER_REPLY_INSTRUCTION = 'The user sent this while you were working. The user cannot see your thinking. '
+  + 'Before any further tool call, write a text reply to this message that the user can read, then continue.';
 
 /**
  * Adds a message to the session's turn in flight, as LiveProcess.steerTurn.

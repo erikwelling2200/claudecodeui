@@ -519,7 +519,27 @@ function readSteeredPromptRow(row: AnyRecord): AnyRecord | null {
     uuid: row.uuid,
     timestamp: row.timestamp,
     message: { role: 'user', content: attachment.prompt },
+    // The uuid it was sent into stdin with: the steerId the live run used.
+    steerId: typeof attachment.source_uuid === 'string' ? attachment.source_uuid : undefined,
   };
+}
+
+/**
+ * Moves each message taken mid-turn to where the model read it. The transcript
+ * writes it after the row it was taken in with, but stamps it with the time it
+ * was sent, so sorting by time would put it before steps the model took
+ * without having read it.
+ */
+function stampSteeredPromptsWhereRead(rows: AnyRecord[]): void {
+  let previousTimestamp = '';
+  for (const row of rows) {
+    if (readSteeredPromptRow(row) && typeof row.timestamp === 'string' && previousTimestamp > row.timestamp) {
+      row.timestamp = previousTimestamp;
+    }
+    if (typeof row.timestamp === 'string') {
+      previousTimestamp = row.timestamp;
+    }
+  }
 }
 
 /** True for a row the user typed, as opposed to a tool result or an injected note. */
@@ -932,6 +952,7 @@ async function getSessionMessages(
       }
     }
 
+    stampSteeredPromptsWhereRead(messages);
     const sortedMessages = messages
       .filter((message) => !foldedNotificationUuids.has(String(message.uuid ?? '')))
       .sort(
@@ -1299,7 +1320,8 @@ export class ClaudeSessionsProvider implements IProviderSessions {
 
     const steeredPrompt = readSteeredPromptRow(raw);
     if (steeredPrompt) {
-      return this.normalizeMessageRows(steeredPrompt, sessionId);
+      return this.normalizeMessageRows(steeredPrompt, sessionId)
+        .map((message) => ({ ...message, steerId: steeredPrompt.steerId }));
     }
 
     const messages: NormalizedMessage[] = [];
@@ -1835,15 +1857,8 @@ export class ClaudeSessionsProvider implements IProviderSessions {
     }
 
     const normalized: NormalizedMessage[] = [];
-    let previousTimestamp: string | null = null;
     for (const raw of rawMessages) {
-      // A message taken mid-turn is stamped with when it was sent, but belongs
-      // where the model read it: after the row it was taken in with.
-      const readLater = previousTimestamp !== null && readSteeredPromptRow(raw) && previousTimestamp > raw.timestamp;
-      normalized.push(...this.normalizeMessage(readLater ? { ...raw, timestamp: previousTimestamp } : raw, sessionId));
-      if (typeof raw.timestamp === 'string') {
-        previousTimestamp = raw.timestamp;
-      }
+      normalized.push(...this.normalizeMessage(raw, sessionId));
     }
 
     for (const msg of normalized) {

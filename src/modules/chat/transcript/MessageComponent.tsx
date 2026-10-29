@@ -324,8 +324,10 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                 )}
               </>
             ) : message.isThinking ? (
-              /* Thinking messages — Reasoning component (ai-elements pattern) */
-              <Reasoning defaultOpen={isExporting}>
+              /* Thinking messages — Reasoning component (ai-elements pattern).
+                 Open when it follows a message sent mid-turn: the model often
+                 answers such a message only here. */
+              <Reasoning defaultOpen={isExporting || Boolean(prevMessage?.type === 'user' && prevMessage.steerId)}>
                 <ReasoningTrigger />
                 <ReasoningContent>
                   <Markdown className="prose prose-sm prose-gray max-w-none font-serif dark:prose-invert">

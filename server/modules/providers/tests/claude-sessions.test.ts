@@ -2312,3 +2312,42 @@ test('a message sent while Claude worked reads as the user message it was', () =
   assert.deepEqual(steered({ commandMode: 'task-notification', prompt: '<task-notification>done</task-notification>' }), []);
   assert.deepEqual(steered({ commandMode: 'prompt', origin: { kind: 'channel' }, prompt: 'From a channel' }), []);
 });
+
+test('Claude history puts a message taken mid-turn where the model read it, not where it was sent', { concurrency: false }, async () => {
+  // The transcript writes the message after the tool result it went in with,
+  // but stamps it with the time it was sent, earlier than that result.
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'claude-steered-row-'));
+  const row = (fields: Record<string, unknown>) => JSON.stringify({ isSidechain: false, sessionId: SESSION_ID, cwd: tempRoot, ...fields });
+
+  try {
+    const transcriptPath = path.join(tempRoot, `${SESSION_ID}.jsonl`);
+    await writeFile(transcriptPath, [
+      row({ type: 'user', uuid: 'u1', parentUuid: null, timestamp: '2026-10-29T14:23:00.000Z', message: { role: 'user', content: 'Book the invoices' } }),
+      row({ type: 'assistant', uuid: 'a1', parentUuid: 'u1', timestamp: '2026-10-29T14:23:18.935Z', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'book 1' } }] } }),
+      row({ type: 'user', uuid: 'r1', parentUuid: 'a1', timestamp: '2026-10-29T14:23:33.467Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'booked' }] } }),
+      row({
+        type: 'attachment', uuid: 's1', parentUuid: 'r1', timestamp: '2026-10-29T14:23:20.600Z',
+        attachment: { type: 'queued_command', prompt: 'Remember the improvements', source_uuid: 'stdin-uuid', commandMode: 'prompt', timestamp: '2026-10-29T14:23:20.600Z' },
+      }),
+      row({ type: 'assistant', uuid: 'a2', parentUuid: 's1', timestamp: '2026-10-29T14:23:40.273Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Noted.' }] } }),
+      '',
+    ].join('\n'), 'utf8');
+
+    await withIsolatedDatabase(async () => {
+      const now = new Date().toISOString();
+      sessionsDb.createSession(SESSION_ID, 'claude', tempRoot, 'Steered session', now, now, transcriptPath);
+
+      const history = await new ClaudeSessionsProvider().fetchHistory(SESSION_ID, { providerSessionId: SESSION_ID });
+      const shown = history.messages
+        .filter((message) => message.kind === 'text' || message.kind === 'tool_use')
+        .map((message) => message.kind === 'tool_use' ? 'tool_use' : `${message.role}: ${message.content}`);
+      assert.deepEqual(shown, ['user: Book the invoices', 'tool_use', 'user: Remember the improvements', 'assistant: Noted.']);
+
+      const steered = history.messages.find((message) => message.content === 'Remember the improvements');
+      assert.equal(steered?.steerId, 'stdin-uuid', 'the id the live run showed it under');
+      assert.equal(steered?.timestamp, '2026-10-29T14:23:33.467Z', 'read with the tool result, so the live copy is retired for it');
+    });
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});

@@ -431,6 +431,7 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
               timestamp: msg.timestamp,
               images,
               files,
+              steerId: msg.steerId,
               ...sharedMetadata,
             });
           }

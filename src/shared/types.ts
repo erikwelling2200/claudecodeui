@@ -406,6 +406,8 @@ export type ChatMessage = {
    * already-sent one, naming the anchor it replaces. Local to this client.
    */
   replacesAnchorId?: string;
+  /** Set on a user message that was sent while a turn ran and went into it. */
+  steerId?: string;
   /**
    * The model that produced this assistant turn, as the provider reported it
    * on the transcript row. Absent on user turns and on rows the provider
