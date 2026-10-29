@@ -436,5 +436,10 @@
       "claimed": "claimed",
       "skippedNested": "Not copied, nested repositories outside the group: {{folders}}"
     }
+  },
+  "sessionTasks": {
+    "title": "Tasks",
+    "open": "{{count}} open",
+    "blockedBy": "Blocked by {{ids}}"
   }
 }

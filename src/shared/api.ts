@@ -445,6 +445,10 @@ export const api = {
     release: (unitKey: string, suffix: string) => post('/api/worktree-claims/release', { unit: unitKey, suffix }),
   },
 
+  sessionTasks: {
+    list: (sessionId: string) => get(`/api/session-tasks${query({ session: sessionId })}`),
+  },
+
   // Provider (coding agent) endpoints — models, capabilities, sessions, MCP, skills.
   providers: {
     capabilities: () => get('/api/providers/capabilities'),

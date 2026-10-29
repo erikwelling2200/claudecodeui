@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { GitBranch, Loader2, Unlock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { SessionTasksSection, useSessionTasks } from '@/modules/session-tasks';
 import { api, readApiJson } from '@/shared/api';
 import type { WorktreeCheckoutState, WorktreeLockInfo } from '@/shared/types';
 import { getFolderName } from '@/shared/utils';
@@ -21,9 +22,13 @@ type WorktreeClaimsSidebarProps = {
 // Claims are taken by the chat's hooks and run out on their own; nothing announces either, so the list is polled.
 const REFRESH_INTERVAL_MS = 15000;
 
-/** Rendered by the project-workspace module beside the chat: the worktrees this chat holds, each with a release button. */
+/**
+ * Rendered by the project-workspace module beside the chat: the task list this
+ * chat is keeping, and the worktrees it holds with a release button each.
+ */
 export function WorktreeClaimsSidebar({ sessionId }: WorktreeClaimsSidebarProps) {
   const { t } = useTranslation();
+  const tasks = useSessionTasks(sessionId);
   // The chat's live claims, refreshed on an interval; empty hides the sidebar.
   const [claims, setClaims] = useState<WorktreeClaim[]>([]);
   // `unit + suffix` of the claim whose release request is in flight, to disable its button.
@@ -62,13 +67,16 @@ export function WorktreeClaimsSidebar({ sessionId }: WorktreeClaimsSidebarProps)
     }
   }, [refresh]);
 
-  if (claims.length === 0) return null;
+  if (claims.length === 0 && tasks.length === 0) return null;
 
   return (
     <aside className="hidden w-64 flex-shrink-0 flex-col gap-3 overflow-y-auto border-l border-border/60 bg-card/40 p-3 lg:flex">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {t('worktreeClaims.sidebar.title')}
-      </h2>
+      {tasks.length > 0 && <SessionTasksSection tasks={tasks} />}
+      {claims.length > 0 && (
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t('worktreeClaims.sidebar.title')}
+        </h2>
+      )}
       {claims.map((claim) => {
         const key = `${claim.unit}\u0000${claim.suffix}`;
         return (

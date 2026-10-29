@@ -1990,6 +1990,27 @@ export type WorktreeLockInfo = {
   expiresAt: string;
 };
 
+/** The progress a chat's task can be in, as the CLI's task tools record it. */
+export type SessionTaskStatus = 'pending' | 'in_progress' | 'completed';
+
+/**
+ * One task from the list a chat keeps through the CLI's task tools, as the
+ * chat's sidebar shows it. The CLI stores these as a file per task, so a task
+ * outlives the turn that made it and survives a resume.
+ */
+export type SessionTask = {
+  id: string;
+  subject: string;
+  description: string;
+  /** Present-continuous label the CLI shows while the task runs, when it set one. */
+  activeForm: string | null;
+  status: SessionTaskStatus;
+  /** The teammate the task is assigned to, when it is assigned at all. */
+  owner: string | null;
+  /** Ids of the tasks that have to finish before this one can start. */
+  blockedBy: string[];
+};
+
 /** One repository's checkout within a worktree, with what is checked out there. */
 export type WorktreeCheckoutState = {
   repo: string;
