@@ -1,9 +1,20 @@
 import type { ProjectSortOrder } from '@/shared/types';
-import { readUserPreference } from '@/shared/userSettings';
+import { readUserPreference, writeUserPreference } from '@/shared/userSettings';
 
 export const readProjectSortOrder = (): ProjectSortOrder => (
   readUserPreference<ProjectSortOrder>('projectSortOrder', 'name') === 'date' ? 'date' : 'name'
 );
+
+/** Reads the ids of the projects the user hid from the Projects list. */
+export const readHiddenProjectIds = (): string[] => {
+  const stored = readUserPreference<unknown>('hiddenProjectIds', []);
+  return Array.isArray(stored) ? stored.filter((value): value is string => typeof value === 'string') : [];
+};
+
+/** Stores the hidden project ids; the preference store syncs them to the server. */
+export const writeHiddenProjectIds = (projectIds: string[]) => {
+  writeUserPreference('hiddenProjectIds', projectIds);
+};
 
 const LEGACY_STARRED_PROJECTS_STORAGE_KEY = 'starredProjects';
 

@@ -84,6 +84,8 @@ const listProps = (
   backgroundSessionIds: NO_SESSION_IDS,
   attentionSessionIds: NO_SESSION_IDS,
   isProjectStarred: () => false,
+  isProjectHidden: () => false,
+  onToggleHiddenProject: noop,
   onRenameDraftChange: noop,
   onToggleProject: noop,
   onProjectSelect: noop,

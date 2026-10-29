@@ -116,6 +116,9 @@ type SidebarContentProps = {
   onConversationResultClick: (projectId: string | null, sessionId: string, provider: string, messageTimestamp?: string | null, messageSnippet?: string | null) => void;
   onRefresh: () => void;
   isRefreshing: boolean;
+  hiddenProjectsCount: number;
+  showHiddenProjects: boolean;
+  onToggleShowHiddenProjects: () => void;
   onCreateProject: () => void;
   onCollapseSidebar: () => void;
   updateAvailable: boolean;
@@ -163,6 +166,9 @@ export default function SidebarContent({
   onConversationResultClick,
   onRefresh,
   isRefreshing,
+  hiddenProjectsCount,
+  showHiddenProjects,
+  onToggleShowHiddenProjects,
   onCreateProject,
   onCollapseSidebar,
   updateAvailable,
@@ -204,6 +210,9 @@ export default function SidebarContent({
         onSearchModeChange={onSearchModeChange}
         onRefresh={onRefresh}
         isRefreshing={isRefreshing}
+        hiddenProjectsCount={hiddenProjectsCount}
+        showHiddenProjects={showHiddenProjects}
+        onToggleShowHiddenProjects={onToggleShowHiddenProjects}
         onCreateProject={onCreateProject}
         onCollapseSidebar={onCollapseSidebar}
         t={t}

@@ -29,6 +29,8 @@ export default function SidebarProjectList({
   backgroundSessionIds,
   attentionSessionIds,
   isProjectStarred,
+  isProjectHidden,
+  onToggleHiddenProject,
   onRenameDraftChange,
   onToggleProject,
   onProjectSelect,
@@ -103,6 +105,7 @@ export default function SidebarProjectList({
                 isExpanded={isProjectExpanded(project.projectId)}
                 isDeleting={deletingProjects.has(project.projectId)}
                 isStarred={isProjectStarred(project.projectId)}
+                isHidden={isProjectHidden(project.projectId)}
                 isEditing={renamingProject !== null}
                 renameDraft={renamingProject?.draft ?? ''}
                 sessions={getProjectSessions(project)}
@@ -117,6 +120,7 @@ export default function SidebarProjectList({
                 onToggleProject={onToggleProject}
                 onProjectSelect={onProjectSelect}
                 onToggleStarProject={onToggleStarProject}
+                onToggleHiddenProject={onToggleHiddenProject}
                 onStartEditingProject={onStartEditingProject}
                 onCancelEditingProject={onCancelEditingProject}
                 onSaveProjectName={onSaveProjectName}

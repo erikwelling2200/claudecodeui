@@ -1617,6 +1617,9 @@ export type SidebarProjectListProps = SessionRowActions & {
   onLoadMoreSessions: (projectId: string) => void;
   loadingMoreProjects: Set<string>;
   isProjectStarred: (projectId: string) => boolean;
+  /** Whether the user hid the project; such a row is only listed while hidden projects are shown. */
+  isProjectHidden: (projectId: string) => boolean;
+  onToggleHiddenProject: (projectId: string) => void;
   onToggleProject: (projectId: string) => void;
   onProjectSelect: (project: Project) => void;
   onToggleStarProject: (projectId: string) => void;

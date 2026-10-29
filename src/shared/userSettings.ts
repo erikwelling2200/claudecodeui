@@ -21,6 +21,8 @@ export type UserPreferences = {
   userLanguage: string;
   tasksEnabled: boolean;
   projectSortOrder: 'name' | 'date';
+  /** Projects the sidebar leaves out of the Projects list unless hidden projects are shown. */
+  hiddenProjectIds: string[];
   claudePermissions: unknown;
   cursorPermissions: unknown;
   codexPermissions: unknown;
@@ -58,6 +60,8 @@ const LEGACY_STORAGE_KEYS: Record<UserPreferenceKey, string> = {
   userLanguage: 'userLanguage',
   tasksEnabled: 'tasks-enabled',
   projectSortOrder: 'claude-settings',
+  // Unused: hiding projects postdates the move to the server.
+  hiddenProjectIds: '',
   claudePermissions: 'claude-settings',
   cursorPermissions: 'cursor-tools-settings',
   codexPermissions: 'codex-settings',

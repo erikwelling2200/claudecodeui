@@ -13,7 +13,9 @@ import {
 import {
   clearLegacyStarredProjectIds,
   readLegacyStarredProjectIds,
+  readHiddenProjectIds,
   readProjectSortOrder,
+  writeHiddenProjectIds,
 } from '@/modules/sidebar/utils/sidebarStoredPreferences';
 
 
@@ -146,6 +148,10 @@ export function useSidebarController({
   const [initialSessionsLoaded, setInitialSessionsLoaded] = useState<Set<string>>(new Set());
   const [currentTime, setCurrentTime] = useState(new Date());
   const [projectSortOrder, setProjectSortOrder] = useState<ProjectSortOrder>('name');
+  // Mirrors the `hiddenProjectIds` preference so the list re-filters when it changes on any device.
+  const [hiddenProjectIds, setHiddenProjectIds] = useState<ReadonlySet<string>>(() => new Set(readHiddenProjectIds()));
+  // Whether hidden projects are listed anyway, so one can be opened or unhidden. Not persisted: it is a peek, not a mode.
+  const [showHiddenProjects, setShowHiddenProjects] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchFilter, setSearchFilter] = useState('');
   const [deletingProjects, setDeletingProjects] = useState<Set<string>>(new Set());
@@ -248,6 +254,10 @@ export function useSidebarController({
   useEffect(() => {
     const loadSortOrder = () => {
       setProjectSortOrder(readProjectSortOrder());
+      setHiddenProjectIds((previous) => {
+        const next = readHiddenProjectIds();
+        return next.length === previous.size && next.every((projectId) => previous.has(projectId)) ? previous : new Set(next);
+      });
     };
 
     loadSortOrder();
@@ -717,6 +727,24 @@ export function useSidebarController({
     void updateStar();
   }, [resolveProjectStarState, t]);
 
+  const toggleHiddenProject = useCallback((projectId: string) => {
+    const next = new Set(readHiddenProjectIds());
+    if (!next.delete(projectId)) {
+      next.add(projectId);
+    }
+    writeHiddenProjectIds([...next]);
+  }, []);
+
+  const isProjectHidden = useCallback((projectId: string) => hiddenProjectIds.has(projectId), [hiddenProjectIds]);
+
+  // Counts only projects that still exist, so a deleted project's stale id does not keep the toggle around.
+  const hiddenProjectsCount = useMemo(
+    () => projects.reduce((count, project) => count + (hiddenProjectIds.has(project.projectId) ? 1 : 0), 0),
+    [hiddenProjectIds, projects],
+  );
+
+  const toggleShowHiddenProjects = useCallback(() => setShowHiddenProjects((previous) => !previous), []);
+
   const isProjectStarred = useCallback(
     (projectId: string) => resolveProjectStarState(projectId),
     [resolveProjectStarState],
@@ -811,9 +839,17 @@ export function useSidebarController({
     }, []);
   }, [activeSessionIds, sortedProjects]);
 
+  // Hiding applies to the Projects list only: the Running tab keeps showing live work wherever it is.
+  const visibleProjects = useMemo(
+    () => (showHiddenProjects || hiddenProjectIds.size === 0
+      ? sortedProjects
+      : sortedProjects.filter((project) => !hiddenProjectIds.has(project.projectId))),
+    [hiddenProjectIds, showHiddenProjects, sortedProjects],
+  );
+
   const filteredProjects = useMemo(
-    () => filterProjects(searchMode === 'running' ? runningProjects : sortedProjects, debouncedSearchQuery),
-    [debouncedSearchQuery, runningProjects, searchMode, sortedProjects],
+    () => filterProjects(searchMode === 'running' ? runningProjects : visibleProjects, debouncedSearchQuery),
+    [debouncedSearchQuery, runningProjects, searchMode, visibleProjects],
   );
 
   const filteredArchivedSessions = useMemo(() => {
@@ -1347,6 +1383,11 @@ export function useSidebarController({
     forkSession,
     toggleStarProject,
     isProjectStarred,
+    toggleHiddenProject,
+    isProjectHidden,
+    hiddenProjectsCount,
+    showHiddenProjects,
+    toggleShowHiddenProjects,
     getProjectSessions,
     loadMoreSessionsForProject,
     startEditingProject,

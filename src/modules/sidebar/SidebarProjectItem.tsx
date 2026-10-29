@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef } from 'react';
-import { Check, ChevronDown, ChevronRight, Edit3, FolderCog, Star, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Edit3, Eye, EyeOff, FolderCog, Star, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { Button } from '@/shared/ui';
@@ -17,6 +17,8 @@ type SidebarProjectItemProps = {
   isExpanded: boolean;
   isDeleting: boolean;
   isStarred: boolean;
+  /** Hidden from the Projects list; the row is only rendered while hidden projects are shown. */
+  isHidden: boolean;
   /** Resolved for this row: only the project being renamed re-renders on a keystroke. */
   isEditing: boolean;
   renameDraft: string;
@@ -33,6 +35,7 @@ type SidebarProjectItemProps = {
   onToggleProject: (projectId: string) => void;
   onProjectSelect: (project: Project) => void;
   onToggleStarProject: (projectId: string) => void;
+  onToggleHiddenProject: (projectId: string) => void;
   onStartEditingProject: (project: Project) => void;
   onCancelEditingProject: () => void;
   onSaveProjectName: (projectId: string, nextName: string) => void;
@@ -65,7 +68,7 @@ const getSessionCountDisplay = (project: Project, sessions: SessionWithProvider[
   return String(total);
 };
 
-/** Rendered by SidebarProjectList for one project row, including its expand, rename, edit, star and delete controls. */
+/** Rendered by SidebarProjectList for one project row, including its expand, rename, edit, star, hide and delete controls. */
 function SidebarProjectItem({
   project,
   selectedProject,
@@ -73,6 +76,7 @@ function SidebarProjectItem({
   isExpanded,
   isDeleting,
   isStarred,
+  isHidden,
   isEditing,
   renameDraft,
   sessions,
@@ -87,6 +91,7 @@ function SidebarProjectItem({
   onToggleProject,
   onProjectSelect,
   onToggleStarProject,
+  onToggleHiddenProject,
   onStartEditingProject,
   onCancelEditingProject,
   onSaveProjectName,
@@ -150,6 +155,9 @@ function SidebarProjectItem({
 
   const toggleProject = () => onToggleProject(project.projectId);
   const toggleStarProject = () => onToggleStarProject(project.projectId);
+  const toggleHiddenProject = () => onToggleHiddenProject(project.projectId);
+  const hiddenToggleTitle = isHidden ? t('tooltips.unhideProject') : t('tooltips.hideProject');
+  const HiddenToggleIcon = isHidden ? EyeOff : Eye;
 
   const saveProjectName = () => {
     onSaveProjectName(project.projectId, renameDraft);
@@ -164,7 +172,7 @@ function SidebarProjectItem({
   };
 
   return (
-    <div className={cn('md:space-y-1', isDeleting && 'opacity-50 pointer-events-none')}>
+    <div className={cn('md:space-y-1', isDeleting && 'opacity-50 pointer-events-none', isHidden && !isDeleting && 'opacity-60')}>
       <div className="sticky top-0 z-10 md:group group">
         {isCompact && (
         <div className="bg-background">
@@ -282,6 +290,18 @@ function SidebarProjectItem({
                       }}
                     >
                       <Trash2 className="h-4 w-4 text-red-600 dark:text-red-400" />
+                    </button>
+
+                    <button
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/40 active:scale-90"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleHiddenProject();
+                      }}
+                      title={hiddenToggleTitle}
+                      aria-label={hiddenToggleTitle}
+                    >
+                      <HiddenToggleIcon className="h-4 w-4 text-muted-foreground" />
                     </button>
 
                     <button
@@ -435,6 +455,20 @@ function SidebarProjectItem({
               </>
             ) : (
               <>
+                <div
+                  className={cn(
+                    'touch:opacity-100 flex h-6 w-6 cursor-pointer items-center justify-center rounded transition-all duration-200 hover:bg-accent group-hover:opacity-100',
+                    !isHidden && 'opacity-0',
+                  )}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleHiddenProject();
+                  }}
+                  title={hiddenToggleTitle}
+                  aria-label={hiddenToggleTitle}
+                >
+                  <HiddenToggleIcon className="h-3 w-3" />
+                </div>
                 <div
                   className="touch:opacity-100 flex h-6 w-6 cursor-pointer items-center justify-center rounded opacity-0 transition-all duration-200 hover:bg-accent group-hover:opacity-100"
                   onClick={(event) => {

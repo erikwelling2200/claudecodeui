@@ -116,6 +116,11 @@ function Sidebar({
     handleSessionClick,
     toggleStarProject,
     isProjectStarred,
+    toggleHiddenProject,
+    isProjectHidden,
+    hiddenProjectsCount,
+    showHiddenProjects,
+    toggleShowHiddenProjects,
     getProjectSessions,
     loadingMoreProjects,
     loadMoreSessionsForProject,
@@ -220,6 +225,8 @@ function Sidebar({
     backgroundSessionIds,
     attentionSessionIds,
     isProjectStarred,
+    isProjectHidden,
+    onToggleHiddenProject: toggleHiddenProject,
     onRenameDraftChange: updateRenameDraft,
     onToggleProject: toggleProject,
     onProjectSelect: handleProjectSelect,
@@ -354,6 +361,9 @@ function Sidebar({
               void refreshProjects();
             }}
             isRefreshing={isRefreshing}
+            hiddenProjectsCount={hiddenProjectsCount}
+            showHiddenProjects={showHiddenProjects}
+            onToggleShowHiddenProjects={toggleShowHiddenProjects}
             onCreateProject={() => setShowNewProject(true)}
             onCollapseSidebar={handleCollapseSidebar}
             updateAvailable={updateAvailable}
