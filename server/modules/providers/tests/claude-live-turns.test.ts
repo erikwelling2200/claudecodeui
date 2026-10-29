@@ -427,7 +427,7 @@ test('a message steered into the turn in flight reaches the CLI and the turn com
     await waitFor(() => script.prompts.length === 2);
     assert.equal(await steerClaudeSDKTurn('app-steer-inline', 'only the unit tests', { steerId: STEER_ID }), true);
     await waitFor(() => script.prompts.length === 3);
-    assert.match(script.prompts[2] ?? '', /^only the unit tests\n\n<cloudcli_appended>\n.*visible message/s, 'with the ask to answer visibly');
+    assert.match(script.prompts[2] ?? '', /^only the unit tests\n\n<cloudcli_appended>\n.*text reply/s, 'with the ask to answer visibly');
     assert.equal(script.stdin[2]?.priority, 'next', 'taken the way the CLI takes a message typed mid-turn');
     assert.equal(script.stdin[2]?.uuid, STEER_ID, 'the CLI echoes it back under the client\'s id');
     const pending = second.writer.sent.filter((message) => message.kind === 'steer_pending');
