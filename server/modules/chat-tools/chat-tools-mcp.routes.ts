@@ -31,3 +31,18 @@ chatToolsMcpRoutes.post('/tools/set_chat_name', asyncHandler(async (req, res) =>
   const result = await chatToolsService.setChatName(readRequiredString(body.sessionId, 'sessionId'), readRequiredString(body.name, 'name'));
   res.json(createApiSuccessResponse(result));
 }));
+
+function readOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+chatToolsMcpRoutes.post('/tools/start_chat', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const result = await chatToolsService.startChat(readRequiredString(body.sessionId, 'sessionId'), {
+    message: readRequiredString(body.message, 'message'),
+    model: readRequiredString(body.model, 'model'),
+    effort: readOptionalString(body.effort),
+    projectPath: readOptionalString(body.projectPath),
+  });
+  res.json(createApiSuccessResponse(result));
+}));

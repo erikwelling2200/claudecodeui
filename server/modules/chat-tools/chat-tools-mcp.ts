@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stdio MCP server `cloudcli-chat`: tools an agent uses on the chat it runs in.
+// Stdio MCP server `cloudcli-chat`: tools an agent uses on the chat it runs in, and to start new chats.
 // Self-contained on purpose: it may run straight from source through tsx, where
 // the `@/` path aliases do not resolve.
 
@@ -25,6 +25,21 @@ const tools = [
         name: { type: 'string', description: 'The new chat name, 2 or 3 words.' },
       },
       required: ['name'],
+    },
+  },
+  {
+    name: 'start_chat',
+    description: 'Start a new CloudCLI chat that runs the given message as its first turn, in auto permission mode and on the same provider as this chat. '
+      + 'It shows in the CloudCLI sidebar right away. Returns as soon as the chat has started, without waiting for its answer.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'The first message. The new chat has no history, so it must stand alone.' },
+        model: { type: 'string', description: 'Model for the new chat, as the model picker names it (e.g. "opus", "sonnet", "fable").' },
+        effort: { type: 'string', description: 'Optional reasoning effort: "low", "medium", "high", "xhigh" or "max".' },
+        projectPath: { type: 'string', description: 'Optional project folder. Defaults to the project this chat runs in.' },
+      },
+      required: ['message', 'model'],
     },
   },
 ];
@@ -57,6 +72,10 @@ async function callTool(name: string, args: Record<string, unknown>) {
       case 'set_chat_name': {
         const result = await callChatToolsApi(name, { name: args.name }) as { summary?: string };
         return { content: [{ type: 'text', text: `Chat renamed to "${result?.summary ?? args.name}".` }] };
+      }
+      case 'start_chat': {
+        const result = await callChatToolsApi(name, { message: args.message, model: args.model, effort: args.effort, projectPath: args.projectPath }) as { sessionId: string; projectPath: string };
+        return { content: [{ type: 'text', text: `Started chat ${result.sessionId} in ${result.projectPath}.` }] };
       }
       default:
         throw new Error(`Unknown tool: ${name}`);
