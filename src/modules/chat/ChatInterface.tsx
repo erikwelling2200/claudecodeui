@@ -24,6 +24,7 @@ import { useChatSessionState } from '@/modules/chat/hooks/useChatSessionState';
 import { useChatRealtimeHandlers } from '@/modules/chat/hooks/useChatRealtimeHandlers';
 import { useChatComposerState } from '@/modules/chat/hooks/useChatComposerState';
 import { useSessionStore } from '@/modules/chat/hooks/useSessionStore';
+import { setRemoteControlWanted, useRemoteControl } from '@/modules/chat/utils/remoteControl';
 import {
   useProcessingSessions,
   useSessionProtectionActions,
@@ -410,6 +411,17 @@ function ChatInterface({
   // Lets a workflow card fetch its agents' timelines for this session.
   const transcriptSessionValue = useMemo(() => ({ sessionId: currentSessionId }), [currentSessionId]);
 
+  const remoteControlSessionId = currentSessionId || selectedSession?.id || null;
+  const remoteControl = useRemoteControl(remoteControlSessionId);
+  // A process that is up switches now; otherwise the next turn starts it.
+  const handleToggleRemoteControl = useCallback(() => {
+    const wanted = !remoteControl.wanted;
+    setRemoteControlWanted(remoteControlSessionId, wanted);
+    if (remoteControlSessionId) {
+      sendMessage({ type: 'chat.set-remote-control', sessionId: remoteControlSessionId, enabled: wanted });
+    }
+  }, [remoteControl.wanted, remoteControlSessionId, sendMessage]);
+
   // A composer pick becomes the default for new chats and, when a session is
   // open, is recorded against that session so reopening it restores this model.
   const handleSelectComposerModel = useCallback(async (model: string) => {
@@ -573,6 +585,8 @@ function ChatInterface({
           onScheduleMessage={handleScheduleMessage}
           onCancelScheduledMessage={cancelScheduledMessage}
           onToggleCommandMenu={handleToggleCommandMenu}
+          remoteControl={provider === 'claude' ? remoteControl : null}
+          onToggleRemoteControl={handleToggleRemoteControl}
           hasInput={Boolean(input.trim())}
           onClearInput={handleClearInput}
           onSubmit={handleSubmit}

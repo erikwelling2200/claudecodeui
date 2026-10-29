@@ -158,6 +158,9 @@ const activeSessions = new Map<string, ActiveSession>();
 // session is removed, and reset when a newer run takes the key over.
 const backgroundWork = createBackgroundWorkTracker();
 const pendingToolApprovals = new Map<string, ToolApprovalResolver>();
+// The claude.ai session URL of each live process with Remote Control on, keyed
+// like activeSessions. The bridge runs inside the process and ends with it.
+const remoteControlUrls = new Map<string, string>();
 // Sessions cancelled via abort-session. The abort handler already sent the
 // terminal `complete` (aborted: true) to the client, so the run loop must not
 // emit a second one when its generator winds down.
@@ -529,6 +532,7 @@ function addSession(
     // Whatever the superseded process had outstanding dies with it and will
     // never report, so the new run starts from an empty task set.
     backgroundWork.clear(sessionId);
+    remoteControlUrls.delete(sessionId);
   }
   const carried = superseding ? null : existing;
   activeSessions.set(sessionId, {
@@ -589,6 +593,7 @@ function removeSession(sessionId: string) {
   activeSessions.delete(sessionId);
   // No process, no background work: anything still tracked was killed with it.
   backgroundWork.clear(sessionId);
+  remoteControlUrls.delete(sessionId);
   // See addSession: a page cached while the process was up still says
   // `running` for any agent that never reported back.
   sessionHistoryCache.invalidate(sessionId);
@@ -1749,9 +1754,28 @@ async function queryClaudeSDK(
       settleTurn();
     };
 
+    // Starts Remote Control once the process is registered under its session,
+    // when the turn that launched it asked for it.
+    let remoteControlRequested = options.remoteControl === true;
+    const startRequestedRemoteControl = () => {
+      const key = sessionKey();
+      if (!remoteControlRequested || !key) {
+        return;
+      }
+      remoteControlRequested = false;
+      setClaudeSDKRemoteControl(key, true)
+        .catch((error: unknown): RemoteControlState => ({ enabled: false, sessionUrl: null, error: (error as Error)?.message || String(error) }))
+        .then((state) => {
+          if (state) {
+            turnWriter.send(createRemoteControlMessage(key, state));
+          }
+        });
+    };
+
     // Track the query instance for abort capability
     if (sessionKey()) {
       addSession(sessionKey()!, queryInstance, ws, releasePromptStream, liveProcess, applyPermissionMode);
+      startRequestedRemoteControl();
     }
 
     // Process streaming messages
@@ -1763,6 +1787,7 @@ async function queryClaudeSDK(
 
         capturedSessionId = message.session_id;
         addSession(sessionKey()!, queryInstance, turnWriter, releasePromptStream, liveProcess, applyPermissionMode);
+        startRequestedRemoteControl();
 
         // Set session ID on writer
         if (turnWriter.setSessionId && typeof turnWriter.setSessionId === 'function') {
@@ -2174,6 +2199,43 @@ async function setClaudeSDKPermissionMode(sessionId: string, permissionMode: str
   return true;
 }
 
+/** Whether a session's live process runs a Remote Control bridge, and where claude.ai shows it. */
+type RemoteControlState = { enabled: boolean; sessionUrl: string | null; error?: string };
+
+// The SDK's Query has this at runtime (0.3.165) but leaves it out of its typings.
+type RemoteControlQuery = {
+  enableRemoteControl?(enabled: boolean, name?: string): Promise<{ session_url?: string } | undefined>;
+};
+
+function createRemoteControlMessage(sessionId: string, state: RemoteControlState) {
+  return createNormalizedMessage({ kind: 'remote_control', sessionId, provider: 'claude', ...state });
+}
+
+/**
+ * Starts or stops Remote Control in a session's live process, so the chat can
+ * be followed and driven from claude.ai or the Claude app.
+ * @param {string} sessionId - Session identifier
+ * @param {boolean} enabled - Whether the bridge should run
+ * @returns {Promise<RemoteControlState|null>} Null when no live process holds the session
+ */
+async function setClaudeSDKRemoteControl(sessionId: string, enabled: boolean): Promise<RemoteControlState | null> {
+  const session = getSession(sessionId);
+  if (!session || session.status !== 'active') {
+    return null;
+  }
+  const instance = session.instance as unknown as RemoteControlQuery;
+  if (!instance.enableRemoteControl) {
+    throw new Error('This Claude Agent SDK version cannot start Remote Control.');
+  }
+  const response = await instance.enableRemoteControl(enabled);
+  if (enabled && response?.session_url) {
+    remoteControlUrls.set(sessionId, response.session_url);
+  } else {
+    remoteControlUrls.delete(sessionId);
+  }
+  return { enabled, sessionUrl: remoteControlUrls.get(sessionId) ?? null };
+}
+
 /**
  * Checks if an SDK session is currently active
  * @param {string} sessionId - Session identifier
@@ -2255,6 +2317,7 @@ export const claudeRuntime = {
   stopBackgroundTask: stopClaudeSDKTask,
   acceptsLiveTurn: acceptsClaudeSDKLiveTurn,
   setPermissionMode: setClaudeSDKPermissionMode,
+  setRemoteControl: setClaudeSDKRemoteControl,
   steerTurn: steerClaudeSDKTurn,
   interruptForSteer: interruptClaudeSDKTurnForSteer,
   releaseIdleProcess: releaseClaudeSDKIdleProcess,
@@ -2269,6 +2332,7 @@ export {
   stopClaudeSDKTask,
   acceptsClaudeSDKLiveTurn,
   setClaudeSDKPermissionMode,
+  setClaudeSDKRemoteControl,
   steerClaudeSDKTurn,
   interruptClaudeSDKTurnForSteer,
   releaseClaudeSDKIdleProcess,

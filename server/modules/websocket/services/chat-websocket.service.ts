@@ -89,6 +89,8 @@ export type ProviderRuntimeGateway = {
   abort(provider: LLMProvider, sessionId: string): Promise<boolean>;
   stopBackgroundTask(provider: LLMProvider, sessionId: string, taskId: string): Promise<boolean>;
   setPermissionMode(provider: LLMProvider, sessionId: string, permissionMode: string): Promise<boolean>;
+  /** Starts or stops Remote Control in the session's live process; null when it has none. */
+  setRemoteControl(provider: LLMProvider, sessionId: string, enabled: boolean): Promise<{ enabled: boolean; sessionUrl: string | null } | null>;
   /** Adds a message to the session's turn in flight; false when none can take it. */
   steerTurn(provider: LLMProvider, sessionId: string, command: string, options: AnyRecord): Promise<boolean>;
   /** Interrupts the turn in flight for a message still waiting to go into it; false when it is not waiting. */
@@ -625,6 +627,40 @@ async function handleChatSetPermissionMode(
 }
 
 /**
+ * Handles `chat.set-remote-control`: starts or stops Remote Control in the
+ * session's live process and answers with a `remote_control` event. A session
+ * with no live process gets no answer: its next `chat.send` carries the choice.
+ */
+async function handleChatSetRemoteControl(
+  ws: WebSocket,
+  data: AnyRecord,
+  dependencies: ChatWebSocketDependencies
+): Promise<void> {
+  const sessionId = readRequiredSessionId(data);
+  if (!sessionId) {
+    sendProtocolError(ws, 'SESSION_ID_REQUIRED', 'chat.set-remote-control requires a sessionId.');
+    return;
+  }
+
+  const session = sessionsDb.getSessionById(sessionId);
+  if (!session) {
+    sendProtocolError(ws, 'SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`, sessionId);
+    return;
+  }
+
+  const enabled = data.enabled === true;
+  let state: AnyRecord | null;
+  try {
+    state = await dependencies.runtime.setRemoteControl(session.provider as LLMProvider, sessionId, enabled);
+  } catch (error) {
+    state = { enabled: false, sessionUrl: null, error: (error as Error)?.message || String(error) };
+  }
+  if (state) {
+    sendJson(ws, { kind: 'remote_control', sessionId, provider: session.provider, timestamp: new Date().toISOString(), ...state });
+  }
+}
+
+/**
  * Handles `chat.subscribe`: for each requested session, reports whether a run
  * is processing, re-attaches the live stream to this socket, replays missed
  * events (seq > lastSeq), and includes pending permission requests.
@@ -836,6 +872,9 @@ export function handleChatConnection(
           return;
         case 'chat.set-permission-mode':
           await handleChatSetPermissionMode(ws, data, dependencies);
+          return;
+        case 'chat.set-remote-control':
+          await handleChatSetRemoteControl(ws, data, dependencies);
           return;
         case 'chat.subscribe':
           handleChatSubscribe(ws, data, dependencies);
