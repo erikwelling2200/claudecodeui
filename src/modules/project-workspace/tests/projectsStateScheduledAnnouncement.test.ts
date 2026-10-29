@@ -82,9 +82,36 @@ test('a scheduled-message announcement does not mark its session as needing atte
 
   emit({ kind: 'scheduled_messages_changed', sessionId: BACKGROUND_SESSION_ID, timestamp: '2026-10-19T17:22:09.000Z' });
   assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), false);
+  assert.equal(result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), false);
 
-  // The same session producing real output still does, so the check above
+  // The same session asking for permission still does, so the check above
   // is not passing just because nothing can mark this session.
-  emit({ kind: 'text', sessionId: BACKGROUND_SESSION_ID, content: 'DONE' });
+  emit({ kind: 'permission_request', sessionId: BACKGROUND_SESSION_ID });
   assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), true);
+});
+
+test('output marks a session unread only once its turn ends, and opening it clears that', async () => {
+  const { result } = await renderProjectsState();
+  await waitFor(() => assert.equal(result.current.sidebarSharedProps.isLoading, false));
+
+  emit({ kind: 'text', sessionId: BACKGROUND_SESSION_ID, content: 'DONE' });
+  assert.equal(result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), false);
+  assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), false);
+
+  emit({ kind: 'complete', sessionId: BACKGROUND_SESSION_ID, exitCode: 0 });
+  assert.equal(result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), true);
+
+  act(() => result.current.sidebarSharedProps.onSessionSelect(project.sessions![0]));
+  assert.equal(result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), false);
+});
+
+test('an answered permission request clears the amber dot', async () => {
+  const { result } = await renderProjectsState();
+  await waitFor(() => assert.equal(result.current.sidebarSharedProps.isLoading, false));
+
+  emit({ kind: 'permission_request', sessionId: BACKGROUND_SESSION_ID });
+  assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), true);
+
+  emit({ kind: 'permission_resolved', sessionId: BACKGROUND_SESSION_ID });
+  assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), false);
 });

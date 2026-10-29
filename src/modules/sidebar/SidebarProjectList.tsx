@@ -28,6 +28,7 @@ export default function SidebarProjectList({
   activeSessions,
   backgroundSessionIds,
   attentionSessionIds,
+  unreadSessionIds,
   isProjectStarred,
   isProjectHidden,
   onToggleHiddenProject,
@@ -134,6 +135,7 @@ export default function SidebarProjectList({
                 activeSessions={activeSessions}
                 backgroundSessionIds={backgroundSessionIds}
                 attentionSessionIds={attentionSessionIds}
+                unreadSessionIds={unreadSessionIds}
                 onNewSession={onNewSession}
                 onStartEditingSession={onStartEditingSession}
                 onCancelEditingSession={onCancelEditingSession}

@@ -8,7 +8,7 @@ import type { Project, SessionWithProvider, SidebarProjectListProps } from '@/sh
 
 /**
  * The Projects list draws a session's state as a dot on the row's left edge:
- * amber when it needs the user, green when it was touched lately. A session
+ * amber when it needs the user, green when its turn ended unseen. A session
  * whose turn has ended while the tasks it launched still run takes that slot
  * in the purple of the workflow and agent cards, saying what is still going
  * on — while the spinner and the destructive-action lockout stay reserved for
@@ -31,15 +31,16 @@ const NOW = new Date('2026-08-21T10:00:00.000Z');
 const noop = () => {};
 
 const PROJECT = { projectId: 'project-1', name: 'project-1', displayName: 'project one', fullPath: '/tmp/project-1', sessions: [] } as unknown as Project;
-// Touched a minute ago, so the green "recently active" dot would apply.
+// Touched a minute ago, which on its own no longer earns a dot.
 const SESSION = { id: 's1', summary: 'session one', lastActivity: '2026-08-21T09:59:00.000Z', __provider: 'claude' } as unknown as SessionWithProvider;
 
-const renderRow = (state: { isProcessing: boolean; hasBackgroundWork: boolean }) => render(
+const renderRow = (state: { isProcessing: boolean; hasBackgroundWork: boolean; hasUnreadOutput?: boolean }) => render(
   React.createElement(SidebarSessionItem, {
     project: PROJECT,
     session: SESSION,
     selectedSession: null,
     needsAttention: false,
+    hasUnreadOutput: false,
     currentTime: NOW,
     isEditing: false,
     renameDraft: '',
@@ -64,11 +65,11 @@ beforeEach(() => {
 });
 
 test('background work shows as the purple dot in place of the green one, with nothing spinning', () => {
-  const idle = renderRow({ isProcessing: false, hasBackgroundWork: false });
-  assert.ok(idle.container.querySelector('[role="status"].bg-green-500'), 'the fixture is a recently touched session');
+  const idle = renderRow({ isProcessing: false, hasBackgroundWork: false, hasUnreadOutput: true });
+  assert.ok(idle.container.querySelector('[role="status"].bg-green-500'), 'the fixture has unread output');
   idle.unmount();
 
-  const { container } = renderRow({ isProcessing: false, hasBackgroundWork: true });
+  const { container } = renderRow({ isProcessing: false, hasBackgroundWork: true, hasUnreadOutput: true });
 
   const dot = container.querySelector('[role="status"]');
   assert.ok(dot);
@@ -79,8 +80,14 @@ test('background work shows as the purple dot in place of the green one, with no
   assert.equal(recordedOptionsProps.at(-1)?.isProcessing, false, 'the row is not locked the way a responding one is');
 });
 
+test('a session touched lately but already read shows no dot', () => {
+  const { container } = renderRow({ isProcessing: false, hasBackgroundWork: false });
+
+  assert.equal(container.querySelector('[role="status"]'), null);
+});
+
 test('a response in flight still spins and shows no dot', () => {
-  const { container } = renderRow({ isProcessing: true, hasBackgroundWork: false });
+  const { container } = renderRow({ isProcessing: true, hasBackgroundWork: false, hasUnreadOutput: true });
 
   assert.equal(container.querySelector('[role="status"]'), null);
   assert.equal(container.querySelectorAll('.animate-spin').length, 1);

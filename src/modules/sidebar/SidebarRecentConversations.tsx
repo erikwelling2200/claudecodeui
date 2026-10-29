@@ -113,6 +113,11 @@ export default function SidebarRecentConversations({
           const isProcessing = sessionActions.activeSessions.has(conversation.sessionId) && !hasBackgroundWork;
           const showAttentionIndicator =
             sessionActions.attentionSessionIds.has(conversation.sessionId) && !isSelected;
+          const showUnreadIndicator = !showAttentionIndicator && !hasBackgroundWork && !isProcessing
+            && sessionActions.unreadSessionIds.has(conversation.sessionId) && !isSelected;
+          const indicatorLabel = showAttentionIndicator
+            ? t('tooltips.attentionRequiredIndicator', { defaultValue: 'Session needs attention' })
+            : t('tooltips.unreadOutputIndicator', { defaultValue: 'New output since you last opened it' });
           // Resolved per row so a keystroke in one rename does not redraw the rest.
           const rename = sessionActions.activeRename;
           const sessionRename =
@@ -136,21 +141,14 @@ export default function SidebarRecentConversations({
               className="group relative"
               {...getMiddleClickHandlers(() => sessionActions.onArchiveSessionNow(conversation.sessionId))}
             >
-              {/*
-                * Only the amber "needs attention" dot, and the spinner below. The
-                * Projects row also has a green dot for a session touched recently,
-                * which carries no information in a list ordered by recency.
-                */}
-              {showAttentionIndicator && (
+              {/* The amber and green dots only; running and background work show inline after the project name. */}
+              {(showAttentionIndicator || showUnreadIndicator) && (
                 <div className="absolute left-0 top-1/2 -translate-x-1 -translate-y-1/2 transform">
-                  <Tooltip
-                    content={t('tooltips.attentionRequiredIndicator', { defaultValue: 'Session needs attention' })}
-                    position="right"
-                  >
+                  <Tooltip content={indicatorLabel} position="right">
                     <div
                       role="status"
-                      aria-label={t('tooltips.attentionRequiredIndicator', { defaultValue: 'Session needs attention' })}
-                      className="h-2 w-2 animate-pulse rounded-full bg-amber-500"
+                      aria-label={indicatorLabel}
+                      className={cn('h-2 w-2 animate-pulse rounded-full', showAttentionIndicator ? 'bg-amber-500' : 'bg-green-500')}
                     />
                   </Tooltip>
                 </div>

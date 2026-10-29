@@ -103,6 +103,7 @@ const renderSessions = (overrides: ListOverrides = {}) =>
       activeSessions: NO_IDS,
       backgroundSessionIds: NO_IDS,
       attentionSessionIds: NO_IDS,
+      unreadSessionIds: NO_IDS,
       currentTime: NOW,
       sessionRenameId: null,
       sessionRenameDraft: '',

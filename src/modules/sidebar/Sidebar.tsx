@@ -18,6 +18,7 @@ type SidebarProps = {
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   attentionSessionIds: ReadonlySet<string>;
+  unreadSessionIds: ReadonlySet<string>;
   onProjectSelect: (project: Project) => void;
   onSessionSelect: (session: ProjectSession) => void;
   onNewSession: (project: Project) => void;
@@ -47,6 +48,7 @@ function Sidebar({
   selectedProject,
   selectedSession,
   attentionSessionIds,
+  unreadSessionIds,
   onProjectSelect,
   onSessionSelect,
   onNewSession,
@@ -224,6 +226,7 @@ function Sidebar({
     activeSessions,
     backgroundSessionIds,
     attentionSessionIds,
+    unreadSessionIds,
     isProjectStarred,
     isProjectHidden,
     onToggleHiddenProject: toggleHiddenProject,

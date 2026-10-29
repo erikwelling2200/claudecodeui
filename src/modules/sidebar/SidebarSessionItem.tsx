@@ -19,6 +19,8 @@ type SidebarSessionItemProps = {
   /** The session's turn has ended but the agents, workflows or commands it launched still run. */
   hasBackgroundWork: boolean;
   needsAttention: boolean;
+  /** The session's turn ended while it was not open. */
+  hasUnreadOutput: boolean;
   currentTime: Date;
   /** Resolved for this row, so a keystroke elsewhere does not invalidate it. */
   isEditing: boolean;
@@ -51,6 +53,7 @@ function SidebarSessionItem({
   isProcessing,
   hasBackgroundWork,
   needsAttention,
+  hasUnreadOutput,
   currentTime,
   isEditing,
   renameDraft,
@@ -74,15 +77,14 @@ function SidebarSessionItem({
   const compactSessionAge = formatCompactAge(sessionView.sessionTime, currentTime);
   const [isMobileOptionsOpen, setIsMobileOptionsOpen] = useState(false);
   const showAttentionIndicator = needsAttention && !isSelected;
-  // Background work takes the recent-activity dot's place: the session is
-  // still doing something, which says more than that it was touched lately.
+  // Background work outranks unread output: the session is still doing something.
   const showBackgroundIndicator = !showAttentionIndicator && hasBackgroundWork;
-  const showRecentIndicator = !showAttentionIndicator && !showBackgroundIndicator && !isProcessing && sessionView.isActive;
+  const showUnreadIndicator = !showAttentionIndicator && !showBackgroundIndicator && !isProcessing && hasUnreadOutput && !isSelected;
   const indicatorLabel = showAttentionIndicator
     ? t('tooltips.attentionRequiredIndicator', { defaultValue: 'Session needs attention' })
     : showBackgroundIndicator
       ? t('tooltips.backgroundWorkIndicator', { defaultValue: 'Background work running' })
-      : t('tooltips.activeSessionIndicator');
+      : t('tooltips.unreadOutputIndicator', { defaultValue: 'New output since you last opened it' });
   const providerLabel = PROVIDER_LABELS[session.__provider];
 
   // The desktop controls live in SessionOptions, which owns the rename panel and
@@ -154,7 +156,7 @@ function SidebarSessionItem({
 
   return (
     <div className="group relative" {...middleClickHandlers}>
-      {(showAttentionIndicator || showBackgroundIndicator || showRecentIndicator) && (
+      {(showAttentionIndicator || showBackgroundIndicator || showUnreadIndicator) && (
         <div className="absolute left-0 top-1/2 -translate-x-1 -translate-y-1/2 transform">
           <Tooltip content={indicatorLabel} position="right">
             <div

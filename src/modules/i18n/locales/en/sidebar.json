@@ -55,7 +55,7 @@
     "hideHiddenProjects": "Hide hidden projects ({{count}})",
     "editSessionName": "Manually edit session name",
     "deleteSession": "Delete this session permanently",
-    "activeSessionIndicator": "Recently active session (last 10 minutes)",
+    "unreadOutputIndicator": "New output since you last opened it",
     "save": "Save",
     "cancel": "Cancel",
     "clearSearch": "Clear search",

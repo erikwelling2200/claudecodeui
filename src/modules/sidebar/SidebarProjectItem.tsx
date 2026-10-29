@@ -50,6 +50,7 @@ type SidebarProjectItemProps = {
   activeSessions: ReadonlySet<string>;
   backgroundSessionIds: ReadonlySet<string>;
   attentionSessionIds: ReadonlySet<string>;
+  unreadSessionIds: ReadonlySet<string>;
   onNewSession: (project: Project) => void;
   onStartEditingSession: (projectId: string, sessionId: string, initialName: string) => void;
   onCancelEditingSession: () => void;
@@ -105,6 +106,7 @@ function SidebarProjectItem({
   activeSessions,
   backgroundSessionIds,
   attentionSessionIds,
+  unreadSessionIds,
   onNewSession,
   onStartEditingSession,
   onCancelEditingSession,
@@ -523,6 +525,7 @@ function SidebarProjectItem({
         activeSessions={activeSessions}
         backgroundSessionIds={backgroundSessionIds}
         attentionSessionIds={attentionSessionIds}
+        unreadSessionIds={unreadSessionIds}
         currentTime={currentTime}
         sessionRenameId={sessionRenameId}
         sessionRenameDraft={sessionRenameDraft}

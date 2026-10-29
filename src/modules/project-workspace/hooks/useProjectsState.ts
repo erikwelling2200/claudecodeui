@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
 
 import { api } from '@/shared/api';
@@ -79,6 +80,17 @@ type SessionDetailsApiPayload = {
 type ProjectSessionPage = Pick<Project, 'sessions' | 'sessionMeta'>;
 
 const DEFAULT_PROVIDER: LLMProvider = 'claude';
+
+/** The set without one session id, or the same set when it was not in it, so an unchanged set does not re-render. */
+const withoutSessionId = (ids: Set<string>, targetSessionId: string): Set<string> => {
+  if (!ids.has(targetSessionId)) {
+    return ids;
+  }
+
+  const next = new Set(ids);
+  next.delete(targetSessionId);
+  return next;
+};
 
 const serialize = (value: unknown) => JSON.stringify(value ?? null);
 
@@ -392,6 +404,7 @@ export function useProjectsState({
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedSession, setSelectedSession] = useState<ProjectSession | null>(null);
   const [attentionSessionIds, setAttentionSessionIds] = useState<Set<string>>(new Set());
+  const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<AppTab>(readPersistedTab);
 
   useEffect(() => {
@@ -473,17 +486,14 @@ export function useProjectsState({
     sessionLookupRef.current = null;
   }, [sessionId]);
 
-  const markSessionAttention = useCallback((targetSessionId?: string | null) => {
-    if (!targetSessionId) {
-      return;
-    }
-
+  /** Adds a session that is not the one on screen to an indicator set; a session the user is looking at has nothing to flag. */
+  const flagSession = useCallback((setIds: Dispatch<SetStateAction<Set<string>>>, targetSessionId: string) => {
     const viewedSessionId = selectedSessionRef.current?.id ?? sessionId ?? null;
     if (targetSessionId === viewedSessionId) {
       return;
     }
 
-    setAttentionSessionIds((previous) => {
+    setIds((previous) => {
       if (previous.has(targetSessionId)) {
         return previous;
       }
@@ -494,21 +504,29 @@ export function useProjectsState({
     });
   }, [sessionId]);
 
-  const clearSessionAttention = useCallback((targetSessionId?: string | null) => {
+  const markSessionAttention = useCallback(
+    (targetSessionId: string) => flagSession(setAttentionSessionIds, targetSessionId),
+    [flagSession],
+  );
+
+  const markSessionUnread = useCallback(
+    (targetSessionId: string) => flagSession(setUnreadSessionIds, targetSessionId),
+    [flagSession],
+  );
+
+  const clearSessionAttention = useCallback((targetSessionId: string) => {
+    setAttentionSessionIds((previous) => withoutSessionId(previous, targetSessionId));
+  }, []);
+
+  /** Drops every indicator for a session, once it is opened or gone. */
+  const clearSessionIndicators = useCallback((targetSessionId?: string | null) => {
     if (!targetSessionId) {
       return;
     }
 
-    setAttentionSessionIds((previous) => {
-      if (!previous.has(targetSessionId)) {
-        return previous;
-      }
-
-      const next = new Set(previous);
-      next.delete(targetSessionId);
-      return next;
-    });
-  }, []);
+    clearSessionAttention(targetSessionId);
+    setUnreadSessionIds((previous) => withoutSessionId(previous, targetSessionId));
+  }, [clearSessionAttention]);
 
   const fetchProjects = useCallback(async ({ showLoadingState = true }: FetchProjectsOptions = {}) => {
     // Claimed before the request starts and read again in `finally`, so the
@@ -755,23 +773,15 @@ export function useProjectsState({
       const eventSessionId = typeof event.sessionId === 'string' && event.sessionId
         ? event.sessionId
         : null;
-      const viewedSessionId = selectedSessionRef.current?.id ?? sessionId ?? null;
-
-      if (
-        eventSessionId
-        && eventSessionId !== viewedSessionId
-        && event.kind !== 'chat_subscribed'
-        && event.kind !== 'loading_progress'
-        && event.kind !== 'session_upserted'
-        // A change to the session's scheduled messages is not new activity in it.
-        && event.kind !== 'scheduled_messages_changed'
-        && event.kind !== 'status'
-        && event.kind !== 'stream_end'
-        && event.kind !== 'permission_resolved'
-        && event.kind !== 'permission_cancelled'
-        && event.kind !== 'websocket_reconnected'
-      ) {
-        markSessionAttention(eventSessionId);
+      if (eventSessionId) {
+        if (event.kind === 'permission_request') {
+          markSessionAttention(eventSessionId);
+        } else if (event.kind === 'permission_resolved' || event.kind === 'permission_cancelled') {
+          // Answered, possibly from another tab, so it no longer waits on the user.
+          clearSessionAttention(eventSessionId);
+        } else if (event.kind === 'complete') {
+          markSessionUnread(eventSessionId);
+        }
       }
 
       if (event.kind !== 'session_upserted') {
@@ -794,7 +804,10 @@ export function useProjectsState({
       ) {
         setExternalMessageUpdate((prev) => prev + 1);
       } else {
-        markSessionAttention(upsert.sessionId);
+        // The transcript grew while the session was not on screen, also for runs
+        // this tab never streamed (another tab, the CLI). The row hides the dot
+        // while the session is still running, so it appears once the turn ends.
+        markSessionUnread(upsert.sessionId);
       }
 
       setProjects((previousProjects) => {
@@ -878,7 +891,7 @@ export function useProjectsState({
     };
 
     return subscribe(handleEvent);
-  }, [isSessionProcessing, markSessionAttention, navigate, refreshProjectsSilently, sessionId, subscribe]);
+  }, [clearSessionAttention, isSessionProcessing, markSessionAttention, markSessionUnread, navigate, refreshProjectsSilently, sessionId, subscribe]);
 
   useEffect(() => {
     return () => {
@@ -890,8 +903,8 @@ export function useProjectsState({
   }, []);
 
   useEffect(() => {
-    clearSessionAttention(selectedSession?.id ?? sessionId ?? null);
-  }, [clearSessionAttention, selectedSession?.id, sessionId]);
+    clearSessionIndicators(selectedSession?.id ?? sessionId ?? null);
+  }, [clearSessionIndicators, selectedSession?.id, sessionId]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -1038,7 +1051,7 @@ export function useProjectsState({
 
   const handleSessionSelect = useCallback(
     (session: ProjectSession) => {
-      clearSessionAttention(session.id);
+      clearSessionIndicators(session.id);
       setSelectedSession(session);
 
       if (activeTab === 'tasks' || activeTab === 'browser') {
@@ -1060,7 +1073,7 @@ export function useProjectsState({
 
       navigate(`/session/${session.id}`);
     },
-    [activeTab, clearSessionAttention, isMobile, navigate, selectedProject?.projectId],
+    [activeTab, clearSessionIndicators, isMobile, navigate, selectedProject?.projectId],
   );
 
   const handleNewSession = useCallback(
@@ -1080,7 +1093,7 @@ export function useProjectsState({
 
   const handleSessionDelete = useCallback(
     (sessionIdToDelete: string) => {
-      clearSessionAttention(sessionIdToDelete);
+      clearSessionIndicators(sessionIdToDelete);
 
       if (selectedSession?.id === sessionIdToDelete) {
         setSelectedSession(null);
@@ -1091,7 +1104,7 @@ export function useProjectsState({
         prevProjects.map((project) => removeSessionFromProject(project, sessionIdToDelete)),
       );
     },
-    [clearSessionAttention, navigate, selectedSession?.id],
+    [clearSessionIndicators, navigate, selectedSession?.id],
   );
 
   const handleSidebarRefresh = useCallback(async () => {
@@ -1258,6 +1271,7 @@ export function useProjectsState({
       selectedProject,
       selectedSession,
       attentionSessionIds,
+      unreadSessionIds,
       onProjectSelect: handleProjectSelect,
       onSessionSelect: handleSessionSelect,
       onNewSession: handleNewSession,
@@ -1275,6 +1289,7 @@ export function useProjectsState({
     }),
     [
       attentionSessionIds,
+      unreadSessionIds,
       handleNewSession,
       handleProjectDelete,
       handleProjectSelect,
