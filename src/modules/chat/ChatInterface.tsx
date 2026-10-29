@@ -221,6 +221,8 @@ function ChatInterface({
     queuedDraft,
     editQueuedDraft,
     deleteQueuedDraft,
+    pendingSteers,
+    sendPendingSteerNow,
     handleVoiceTranscript,
     handleInputChange,
     handleKeyDown,
@@ -580,6 +582,8 @@ function ChatInterface({
           onResolveBackgroundSendPrompt={resolveBackgroundSendPrompt}
           onEditQueuedDraft={editQueuedDraft}
           onDeleteQueuedDraft={deleteQueuedDraft}
+          pendingSteers={pendingSteers}
+          onSendPendingSteerNow={sendPendingSteerNow}
           attachedFiles={attachedFiles}
           onRemoveAttachment={(index) =>
             setAttachedFiles((previous) =>

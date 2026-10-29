@@ -7,6 +7,7 @@ import { parseLiveTurnTerms, playChatCompletionSound, playNotificationSound } fr
 import type { SessionStore } from '@/modules/chat/hooks/useSessionStore';
 import { normalizedToChatMessages } from '@/modules/chat/hooks/useChatMessages';
 import { collectRunningBackgroundTasks, listRunningBackgroundLaunches, readBackgroundTaskId, readBackgroundTaskStatus } from '@/modules/chat/utils/backgroundTasks';
+import { addPendingSteer, clearPendingSteers, declinePendingSteer, takePendingSteer } from '@/modules/chat/utils/pendingSteers';
 
 const isActionablePermissionRequest = (request: { toolName?: unknown } | null | undefined): boolean => {
   return request?.toolName !== 'ExitPlanMode' && request?.toolName !== 'exit_plan_mode';
@@ -233,8 +234,32 @@ export function useChatRealtimeHandlers({
         case 'scheduled_messages_changed':
           return;
 
+        // A message sent mid-turn, waiting for the CLI to take it. Shown by
+        // the composer, not as a transcript row.
+        case 'steer_pending':
+          if (sid && typeof msg.steerId === 'string') {
+            addPendingSteer({
+              steerId: msg.steerId,
+              sessionId: sid,
+              content: typeof msg.content === 'string' ? msg.content : '',
+              attachmentCount: 0,
+            });
+          }
+          return;
+
+        case 'steer_declined':
+          if (typeof msg.steerId === 'string') {
+            declinePendingSteer(msg.steerId);
+          }
+          return;
+
         default:
           break;
+      }
+
+      // The CLI took a waiting message: it is now this user row.
+      if (msg.kind === 'text' && typeof msg.steerId === 'string') {
+        takePendingSteer(msg.steerId);
       }
 
       /* -------------------------------------------------------------- */
@@ -301,6 +326,10 @@ export function useChatRealtimeHandlers({
             sessionStore.finalizeStreaming(sid);
           }
           accumulatedStreamRef.current = '';
+          // A message still waiting when the turn ends was never taken.
+          if (sid) {
+            clearPendingSteers(sid);
+          }
 
           // `complete` is the unified terminal event — every provider run ends
           // with exactly one, regardless of success, failure, or abort. The

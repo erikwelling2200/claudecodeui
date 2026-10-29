@@ -1835,8 +1835,15 @@ export class ClaudeSessionsProvider implements IProviderSessions {
     }
 
     const normalized: NormalizedMessage[] = [];
+    let previousTimestamp: string | null = null;
     for (const raw of rawMessages) {
-      normalized.push(...this.normalizeMessage(raw, sessionId));
+      // A message taken mid-turn is stamped with when it was sent, but belongs
+      // where the model read it: after the row it was taken in with.
+      const readLater = previousTimestamp !== null && readSteeredPromptRow(raw) && previousTimestamp > raw.timestamp;
+      normalized.push(...this.normalizeMessage(readLater ? { ...raw, timestamp: previousTimestamp } : raw, sessionId));
+      if (typeof raw.timestamp === 'string') {
+        previousTimestamp = raw.timestamp;
+      }
     }
 
     for (const msg of normalized) {

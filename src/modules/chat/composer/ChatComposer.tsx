@@ -31,7 +31,9 @@ import ComposerAttachment from '@/modules/chat/composer/ComposerAttachment';
 import VoiceInputButton from '@/modules/chat/composer/VoiceInputButton';
 import PermissionRequestsBanner from '@/modules/chat/composer/PermissionRequestsBanner';
 import TokenUsageSummary from '@/modules/chat/composer/TokenUsageSummary';
+import PendingSteerCard from '@/modules/chat/composer/PendingSteerCard';
 import QueuedMessageCard from '@/modules/chat/composer/QueuedMessageCard';
+import type { PendingSteer } from '@/modules/chat/utils/pendingSteers';
 import BackgroundSendDialog from '@/modules/chat/composer/BackgroundSendDialog';
 import { ScheduleMessagePopover } from '@/modules/chat/composer/ScheduleMessagePopover';
 import { ScheduledMessageList } from '@/modules/chat/composer/ScheduledMessageList';
@@ -85,6 +87,8 @@ type ChatComposerProps = {
   onCancelScheduledMessage: (id: string) => void;
   onEditQueuedDraft: () => void;
   onDeleteQueuedDraft: () => void;
+  pendingSteers: PendingSteer[];
+  onSendPendingSteerNow: (steerId: string) => void;
   attachedFiles: File[];
   onRemoveAttachment: (index: number) => void;
   fileErrors: Map<string, string>;
@@ -160,6 +164,8 @@ export default function ChatComposer({
   onCancelScheduledMessage,
   onEditQueuedDraft,
   onDeleteQueuedDraft,
+  pendingSteers,
+  onSendPendingSteerNow,
   attachedFiles,
   onRemoveAttachment,
   fileErrors,
@@ -325,6 +331,16 @@ export default function ChatComposer({
         prompt={backgroundSendPrompt}
         onResolve={onResolveBackgroundSendPrompt}
       />
+
+      {pendingSteers.map((steer) => (
+        <PendingSteerCard
+          key={steer.steerId}
+          content={steer.content}
+          attachmentCount={steer.attachmentCount}
+          interrupting={steer.interrupting}
+          onSendNow={() => onSendPendingSteerNow(steer.steerId)}
+        />
+      ))}
 
       {queuedDraft && (
         <QueuedMessageCard

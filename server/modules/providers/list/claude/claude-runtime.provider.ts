@@ -42,7 +42,7 @@ import {
   getReportedClaudeContextWindow,
   rememberClaudeContextWindow
 } from '@/modules/providers/services/provider-token-usage.service.js';
-import { buildAgentSessionEnv, createCompleteMessage, createNormalizedMessage } from '@/shared/utils.js';
+import { appendPromptText, buildAgentSessionEnv, createCompleteMessage, createNormalizedMessage } from '@/shared/utils.js';
 import type {
   AnyRecord,
   BackgroundTaskSummary,
@@ -120,8 +120,17 @@ type LiveProcess = {
    * typed while it works: it reaches the model at the next tool boundary, or,
    * should the turn end first, runs as a turn of its own that the client sees
    * as part of this one. False when no turn is in flight.
+   *
+   * The client is told with `steer_pending` until the CLI takes it, and then
+   * gets it as the user message it is, at that point in the turn.
    */
-  steerTurn(messages: unknown[]): boolean;
+  steerTurn(messages: unknown[], steer: { steerId: string; content: string }): boolean;
+  /**
+   * Interrupts the turn in flight so a steered message still waiting goes in
+   * at once: the CLI keeps the message and runs it next. False when the message
+   * is not waiting (anymore).
+   */
+  interruptForSteer(steerId: string): Promise<boolean>;
 };
 
 type ToolApprovalDecision = AnyRecord | null;
@@ -1283,10 +1292,10 @@ async function queryClaudeSDK(
   // waits does not end the turn, because the CLI runs that message next.
   const pendingSteers = new Set<string>();
   let steerPickupTimer: ReturnType<typeof setTimeout> | null = null;
-  const trackPrompt = (messages: unknown[]): AnyRecord[] => messages.map((message) => {
-    const uuid = crypto.randomUUID();
-    ownPromptUuids.add(uuid);
-    return { ...(message as AnyRecord), uuid };
+  const trackPrompt = (messages: unknown[], uuid?: string): AnyRecord[] => messages.map((message, index) => {
+    const messageUuid = index === 0 && uuid ? uuid : crypto.randomUUID();
+    ownPromptUuids.add(messageUuid);
+    return { ...(message as AnyRecord), uuid: messageUuid };
   });
 
   // Marks the process as between turns once a turn is over, and notes whether
@@ -1628,7 +1637,7 @@ async function queryClaudeSDK(
         return { settled };
       },
 
-      steerTurn: (messages) => {
+      steerTurn: (messages, steer) => {
         const key = sessionKey();
         if (
           !key
@@ -1638,17 +1647,33 @@ async function queryClaudeSDK(
           || promptReleased
           || abortedSessionIds.has(key)
           || getSession(key)?.instance !== instance
+          || ownPromptUuids.has(steer.steerId)
         ) {
           return false;
         }
         // `next` is the CLI's own priority for a message typed mid-turn.
-        const steered = trackPrompt(messages).map((message): AnyRecord => ({ ...message, priority: 'next' }));
+        const steered = trackPrompt(messages, steer.steerId).map((message): AnyRecord => ({ ...message, priority: 'next' }));
         if (!pushPrompt(steered)) {
           return false;
         }
         for (const message of steered) {
           pendingSteers.add(message.uuid);
         }
+        turnWriter.send(createNormalizedMessage({
+          kind: 'steer_pending',
+          steerId: steer.steerId,
+          content: steer.content,
+          sessionId: capturedSessionId || sessionId || null,
+          provider: 'claude',
+        }));
+        return true;
+      },
+
+      interruptForSteer: async (steerId) => {
+        if (!pendingSteers.has(steerId) || turnCompleteSent) {
+          return false;
+        }
+        await instance.interrupt();
         return true;
       },
 
@@ -1754,9 +1779,22 @@ async function queryClaudeSDK(
       }
 
       if (message.type === 'user' && message.isReplay && ownPromptUuids.delete(message.uuid)) {
-        if (pendingSteers.delete(message.uuid) && pendingSteers.size === 0 && steerPickupTimer) {
-          clearTimeout(steerPickupTimer);
-          steerPickupTimer = null;
+        if (pendingSteers.delete(message.uuid)) {
+          // Shown where the model read it. The `local_` id lets the client
+          // retire it for the transcript's own row once that is loaded.
+          const delivered = context.normalizeMessage({
+            type: 'user',
+            uuid: message.uuid,
+            timestamp: new Date().toISOString(),
+            message: message.message,
+          }, capturedSessionId || sessionId || null);
+          delivered.forEach((row, index) => {
+            turnWriter.send({ ...row, id: `local_steer_${message.uuid}_${index}`, steerId: message.uuid });
+          });
+          if (pendingSteers.size === 0 && steerPickupTimer) {
+            clearTimeout(steerPickupTimer);
+            steerPickupTimer = null;
+          }
         }
         continue;
       }
@@ -2033,20 +2071,38 @@ function acceptsClaudeSDKLiveTurn(sessionId: string, options: AnyRecord): boolea
   return Boolean(liveProcess?.canTakeTurn() && liveTurnTermsAccept(liveProcess.terms, readLiveTurnTerms(options)));
 }
 
+// The model reads a message taken mid-turn inside a tool loop, and left to
+// itself often answers it only in its thinking, which the user sees collapsed:
+// across 440 such messages in local transcripts, 154 got a visible reply.
+const STEER_REPLY_INSTRUCTION = 'The user sent this while you were working. Answer it in a visible message to the user '
+  + 'before your next tool call, not only in your thinking, then continue.';
+
 /**
  * Adds a message to the session's turn in flight, as LiveProcess.steerTurn.
  * @param {string} sessionId - Session identifier
  * @param {string} command - The message text
- * @param {Object} options - `images`, `files` and `cwd`, as a `chat.send` turn gets them
+ * @param {Object} options - `steerId`, and the `images`, `files` and `cwd` a `chat.send` turn gets
  * @returns {Promise<boolean>} False when the session has no turn in flight
  */
 async function steerClaudeSDKTurn(sessionId: string, command: string, options: AnyRecord) {
   const liveProcess = getSession(sessionId)?.liveProcess;
-  if (!liveProcess) {
+  if (!liveProcess || typeof options.steerId !== 'string') {
     return false;
   }
-  const messages = await buildPromptMessages(command, options.images, options.files, options.cwd);
-  return liveProcess.steerTurn(messages);
+  const prompt = appendPromptText(command, STEER_REPLY_INSTRUCTION);
+  const messages = await buildPromptMessages(prompt, options.images, options.files, options.cwd);
+  return liveProcess.steerTurn(messages, { steerId: options.steerId, content: command });
+}
+
+/**
+ * Interrupts a session's turn for a steered message still waiting, as
+ * LiveProcess.interruptForSteer.
+ * @param {string} sessionId - Session identifier
+ * @param {string} steerId - The id the message was steered with
+ * @returns {Promise<boolean>} False when the message is not waiting
+ */
+async function interruptClaudeSDKTurnForSteer(sessionId: string, steerId: string) {
+  return Boolean(await getSession(sessionId)?.liveProcess?.interruptForSteer(steerId));
 }
 
 /**
@@ -2200,6 +2256,7 @@ export const claudeRuntime = {
   acceptsLiveTurn: acceptsClaudeSDKLiveTurn,
   setPermissionMode: setClaudeSDKPermissionMode,
   steerTurn: steerClaudeSDKTurn,
+  interruptForSteer: interruptClaudeSDKTurnForSteer,
   releaseIdleProcess: releaseClaudeSDKIdleProcess,
   closeAll: closeAllClaudeSDKProcesses,
 };
@@ -2213,6 +2270,7 @@ export {
   acceptsClaudeSDKLiveTurn,
   setClaudeSDKPermissionMode,
   steerClaudeSDKTurn,
+  interruptClaudeSDKTurnForSteer,
   releaseClaudeSDKIdleProcess,
   closeAllClaudeSDKProcesses,
   isClaudeSDKSessionActive,
