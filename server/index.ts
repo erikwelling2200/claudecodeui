@@ -51,6 +51,7 @@ import {
 } from './modules/scheduled-messages/index.js';
 import browserUseRoutes from './modules/browser-use/browser-use.routes.js';
 import { assetsRoutes } from './modules/assets/index.js';
+import { chatToolsMcpRoutes, chatToolsRoutes, chatToolsService } from './modules/chat-tools/index.js';
 import { fileTreeRoutes } from './modules/file-tree/index.js';
 import { worktreesRoutes } from './modules/worktrees/index.js';
 import { worktreeClaimsRoutes } from './modules/worktree-claims/index.js';
@@ -201,6 +202,10 @@ app.use('/api/browser-use-mcp', browserUseMcpRoutes);
 
 // Browser API Routes (protected)
 app.use('/api/browser-use', authenticateToken, browserUseRoutes);
+
+// Chat tools MCP bridge (local token protected) and its settings (protected)
+app.use('/api/chat-tools-mcp', chatToolsMcpRoutes);
+app.use('/api/chat-tools', authenticateToken, chatToolsRoutes);
 
 // Unified provider MCP routes (protected)
 app.use('/api/providers', authenticateToken, providerRoutes);
@@ -388,6 +393,10 @@ async function startServer() {
             // Start server-side plugin processes for enabled plugins
             startEnabledPluginServers().catch(err => {
                 console.error('[Plugins] Error during startup:', err.message);
+            });
+
+            chatToolsService.ensureMcpRegistered().catch((error: unknown) => {
+                console.error('[ChatTools] Could not register the cloudcli-chat MCP server:', getErrorMessage(error));
             });
         });
 

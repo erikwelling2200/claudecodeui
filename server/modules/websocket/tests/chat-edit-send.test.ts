@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { chatToolsService } from '@/modules/chat-tools/index.js';
 import { closeConnection, initializeDatabase, projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { sessionsService } from '@/modules/providers/index.js';
 import { handleChatConnection } from '@/modules/websocket/services/chat-websocket.service.js';
@@ -88,6 +89,8 @@ async function withGateway(
   closeConnection();
   process.env.DATABASE_PATH = path.join(tempDirectory, 'auth.db');
   await initializeDatabase();
+  // These tests assert the exact prompt a provider receives.
+  await chatToolsService.updateSettings({ appendMode: 'off' });
 
   const runs: RunCall[] = [];
   const socket = createFakeSocket();

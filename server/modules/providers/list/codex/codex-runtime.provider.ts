@@ -16,6 +16,7 @@ import type { ModelReasoningEffort, Thread, ThreadOptions } from '@openai/codex-
 
 import {
   appendFilesInputTag,
+  buildAgentSessionEnv,
   buildCodexInputItems,
   normalizeImageDescriptors,
   createCompleteMessage,
@@ -43,6 +44,11 @@ const CODEX_IMAGE_ONLY_PROMPT = 'Please analyze the attached image(s).';
  * user waits on — a shell command's output, an MCP call, and the running plan.
  */
 const PROGRESSIVE_CODEX_ITEM_TYPES = new Set(['command_execution', 'mcp_tool_call', 'todo_list']);
+
+/** process.env as the string record the Codex SDK `env` option expects. */
+function readDefinedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+}
 
 function readUsageNumber(value: unknown) {
   const parsed = Number(value);
@@ -309,7 +315,8 @@ async function queryCodex(
   const sessionKey = () => sessionId || capturedSessionId || null;
 
   try {
-    codex = new Codex();
+    // Passing `env` stops the SDK from inheriting process.env, so it is copied in explicitly.
+    codex = new Codex({ env: { ...readDefinedEnv(process.env), ...buildAgentSessionEnv(sessionId) } });
 
     const threadOptions: ThreadOptions = {
       workingDirectory,

@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import type { WebSocket } from 'ws';
 
+import { chatToolsService } from '@/modules/chat-tools/index.js';
 import { projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { providerModelsService, sessionsService } from '@/modules/providers/index.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
@@ -264,7 +265,10 @@ async function dispatchRun(
   }
 
   const clientOptions = (data.options ?? {}) as AnyRecord;
-  const command = typeof data.content === 'string' ? data.content : '';
+  // A session without a provider id has not run its first turn yet. Editing the
+  // first message also restarts from scratch, but the chat already had its first turn.
+  const isFirstMessage = !session.provider_session_id && !extraRuntimeOptions.resumeFromScratch;
+  const command = chatToolsService.appendToPrompt(typeof data.content === 'string' ? data.content : '', isFirstMessage);
 
   // Record what this turn runs with so reopening the session later restores the
   // same model and reasoning effort, and so the resume path has a

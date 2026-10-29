@@ -1087,7 +1087,8 @@ export function readProviderSkillMarkdownDefinitionFromContent(
  * If the normalized input is empty, it returns the supplied fallback title.
  */
 export function normalizeSessionName(rawValue: string | undefined, fallback: string): string {
-  const normalized = (rawValue ?? '').replace(/\s+/g, ' ').trim();
+  // A title taken from a prompt must not show the server-appended instructions.
+  const normalized = stripAppendedPromptText(rawValue ?? '').replace(/\s+/g, ' ').trim();
   if (!normalized) {
     return fallback;
   }
@@ -1568,4 +1569,48 @@ export function findApplicationRoot(startDirectory: string): string {
   return path.basename(parentDirectory) === 'dist-server'
     ? path.dirname(parentDirectory)
     : parentDirectory;
+}
+
+// ---------------------------
+//----------------- AGENT SESSION ENVIRONMENT UTILITIES ------------
+/**
+ * Name of the environment variable that carries the app session id into a
+ * provider CLI, and from there into the stdio MCP servers it launches. The
+ * `cloudcli-chat` MCP server reads it to know which chat its tools act on.
+ * The MCP entrypoint repeats this literal because it runs without path aliases.
+ */
+export const AGENT_SESSION_ID_ENV = 'CLOUDCLI_SESSION_ID';
+
+/**
+ * Builds the environment entries every provider runtime adds to the CLI it
+ * spawns for one chat turn. Returns an empty record when there is no app
+ * session id (legacy/direct API callers), so callers can always spread it.
+ */
+export function buildAgentSessionEnv(sessionId: unknown): Record<string, string> {
+  return typeof sessionId === 'string' && sessionId ? { [AGENT_SESSION_ID_ENV]: sessionId } : {};
+}
+
+// ---------------------------
+//----------------- APPENDED PROMPT TEXT UTILITIES ------------
+const APPENDED_PROMPT_TEXT_PATTERN = /\s*<cloudcli_appended>[\s\S]*?<\/cloudcli_appended>\s*/g;
+
+/**
+ * Appends server-configured instructions to a user prompt inside a
+ * `<cloudcli_appended>` block, so transcript readers can hide it again with
+ * {@link stripAppendedPromptText}. Returns the prompt unchanged for blank text.
+ */
+export function appendPromptText(prompt: string, appendedText: string): string {
+  const trimmed = appendedText.trim();
+  if (!trimmed) return prompt;
+  return `${prompt}\n\n<cloudcli_appended>\n${trimmed}\n</cloudcli_appended>`;
+}
+
+/**
+ * Removes every `<cloudcli_appended>` block from persisted prompt text, so a
+ * reloaded chat shows the message the user typed. Text without a block is
+ * returned unchanged.
+ */
+export function stripAppendedPromptText(text: string): string {
+  if (!text.includes('<cloudcli_appended>')) return text;
+  return text.replace(APPENDED_PROMPT_TEXT_PATTERN, '\n').trim();
 }
