@@ -498,6 +498,30 @@ async function readTranscriptRows(jsonlPath: string, providerSessionId: string):
   return rows;
 }
 
+/**
+ * A message the user sent while Claude was working, as the user row it reads
+ * as, or null for any other row. The CLI stores such a message as a
+ * `queued_command` attachment of the turn it went into, the same shape it uses
+ * for a background task's report, which `commandMode` tells apart.
+ */
+function readSteeredPromptRow(row: AnyRecord): AnyRecord | null {
+  const attachment = row.type === 'attachment' ? row.attachment : null;
+  if (
+    attachment?.type !== 'queued_command'
+    || attachment.commandMode !== 'prompt'
+    || (attachment.origin && attachment.origin.kind !== 'human')
+    || !attachment.prompt
+  ) {
+    return null;
+  }
+  return {
+    type: 'user',
+    uuid: row.uuid,
+    timestamp: row.timestamp,
+    message: { role: 'user', content: attachment.prompt },
+  };
+}
+
 /** True for a row the user typed, as opposed to a tool result or an injected note. */
 function isUserPromptRow(row: AnyRecord): boolean {
   if (row.type !== 'user' || row.isMeta === true || row.isCompactSummary === true) {
@@ -1271,6 +1295,11 @@ export class ClaudeSessionsProvider implements IProviderSessions {
     }
     if (raw.type === 'content_block_stop') {
       return [createNormalizedMessage({ kind: 'stream_end', sessionId, provider: PROVIDER })];
+    }
+
+    const steeredPrompt = readSteeredPromptRow(raw);
+    if (steeredPrompt) {
+      return this.normalizeMessageRows(steeredPrompt, sessionId);
     }
 
     const messages: NormalizedMessage[] = [];

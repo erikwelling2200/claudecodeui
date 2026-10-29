@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test, vi } from 'vitest';
 import { i18n } from '@/modules/i18n';
 import { useChatComposerState } from '@/modules/chat/hooks/useChatComposerState';
 import { readDraftText, resetChatDrafts, writeDraftText } from '@/shared/chatDrafts';
-import type { BackgroundSendChoice, ChatMessage, PermissionMode, Project, ProjectSession, SessionActivityMap } from '@/shared/types';
+import type { BackgroundSendChoice, ChatMessage, LLMProvider, PermissionMode, Project, ProjectSession, SessionActivityMap } from '@/shared/types';
 
 /**
  * #1587: follow-ups submitted while a turn runs used to replace each other in
@@ -18,6 +18,9 @@ import type { BackgroundSendChoice, ChatMessage, PermissionMode, Project, Projec
  * server implements, so these tests see what would be stored in
  * `session_drafts.queued_message` (what the dispatcher sends), not only what
  * the card renders.
+ *
+ * A Claude turn takes a follow-up while it runs, so the queue is exercised with
+ * Codex; the Claude tests at the end cover what does still queue there.
  */
 
 type StoredQueued = { content: string; options?: Record<string, unknown>; attachments: unknown[] };
@@ -146,14 +149,16 @@ type Props = {
   processingSessions?: SessionActivityMap;
 };
 
-const render = (initialProps: Partial<Props> = {}) => {
+const render = (initialProps: Partial<Props> = {}, provider: LLMProvider = 'codex') => {
   const errors: ChatMessage[] = [];
+  const shown: ChatMessage[] = [];
+  const sent: Array<Record<string, unknown>> = [];
   const view = renderHook(
     ({ session, isLoading, model, processingSessions }: Props) => useChatComposerState({
       selectedProject: PROJECT,
       selectedSession: session,
       currentSessionId: session.id ?? null,
-      provider: 'claude',
+      provider,
       permissionMode: 'default',
       cyclePermissionMode: () => undefined,
       resolvePermissionModeForProvider: () => 'default' as PermissionMode,
@@ -163,17 +168,18 @@ const render = (initialProps: Partial<Props> = {}) => {
       processingSessions,
       canAbortSession: false,
       tokenBudget: null,
-      sendMessage: () => undefined,
+      sendMessage: (message) => { sent.push(message as Record<string, unknown>); },
       scrollToBottom: () => undefined,
       addMessage: (message) => {
         if (message.type === 'error') errors.push(message);
+        shown.push(message);
       },
       setIsUserScrolledUp: () => undefined,
       setPendingPermissionRequests: () => undefined,
     }),
     { initialProps: { session: SESSION_1, isLoading: true, model: 'model-1', ...initialProps } },
   );
-  return { view, errors };
+  return { view, errors, shown, sent };
 };
 
 type View = ReturnType<typeof render>['view'];
@@ -702,4 +708,31 @@ test('a session switch during the upload keeps a draft that changed in the sessi
 
   assert.equal(queuedOnServer('session-1')?.content, 'follow-up B');
   assert.equal(readDraftText('session-1'), 'written on the laptop');
+});
+
+test('a Claude follow-up goes into the running turn at once instead of waiting for it', async () => {
+  const { view, shown, sent } = render({}, 'claude');
+
+  await submit(view, 'only the unit tests', [new File(['n'], 'notes.txt', { type: 'text/plain' })]);
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]?.type, 'chat.steer');
+  assert.equal(sent[0]?.sessionId, 'session-1');
+  assert.equal(sent[0]?.content, 'only the unit tests');
+  assert.deepEqual((sent[0]?.options as { attachments?: unknown })?.attachments, [{ name: 'notes.txt', path: '/uploads/notes.txt' }]);
+  assert.equal(shown.find((message) => message.type === 'user')?.content, 'only the unit tests', 'shown as sent');
+  assert.equal(queuedOnServer(), null);
+  assert.equal(appendRequestCount, 0);
+  assert.equal(view.result.current.queuedDraft, null);
+  assert.equal(view.result.current.input, '');
+});
+
+test('a Claude slash command sent during a turn still waits for it', async () => {
+  const { view, sent } = render({}, 'claude');
+
+  await submit(view, '/compact');
+
+  assert.deepEqual(sent, []);
+  assert.equal(queuedOnServer()?.content, '/compact');
+  assert.equal(view.result.current.queuedDraft?.content, '/compact');
 });

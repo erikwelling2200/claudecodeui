@@ -2286,3 +2286,29 @@ test('extractFirstValidJsonlData closes the file stream on the no-match path', {
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('a message sent while Claude worked reads as the user message it was', () => {
+  // The CLI stores a message it took mid-turn as a `queued_command` attachment
+  // of that turn, the same shape a background task's report takes.
+  const steered = (attachment: Record<string, unknown>) => new ClaudeSessionsProvider().normalizeMessage({
+    type: 'attachment',
+    sessionId: SESSION_ID,
+    uuid: 'steer-row',
+    timestamp: '2026-10-19T13:31:00.690Z',
+    attachment: { type: 'queued_command', source_uuid: 'stdin-uuid', ...attachment },
+  }, SESSION_ID);
+
+  const [message] = steered({
+    commandMode: 'prompt',
+    origin: { kind: 'human' },
+    prompt: [{ type: 'text', text: 'Only the unit tests, please' }],
+  });
+  assert.equal(message?.kind, 'text');
+  assert.equal(message?.role, 'user');
+  assert.equal(message?.content, 'Only the unit tests, please');
+  assert.equal(message?.transcriptAnchorId, 'steer-row');
+
+  assert.equal(steered({ commandMode: 'prompt', prompt: 'Sent through the SDK' })[0]?.content, 'Sent through the SDK');
+  assert.deepEqual(steered({ commandMode: 'task-notification', prompt: '<task-notification>done</task-notification>' }), []);
+  assert.deepEqual(steered({ commandMode: 'prompt', origin: { kind: 'channel' }, prompt: 'From a channel' }), []);
+});

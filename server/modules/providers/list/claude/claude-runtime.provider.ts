@@ -115,6 +115,13 @@ type LiveProcess = {
    * stops as it always has.
    */
   interruptTurn(): Promise<boolean>;
+  /**
+   * Adds a user message to the turn in flight, the way the CLI takes a message
+   * typed while it works: it reaches the model at the next tool boundary, or,
+   * should the turn end first, runs as a turn of its own that the client sees
+   * as part of this one. False when no turn is in flight.
+   */
+  steerTurn(messages: unknown[]): boolean;
 };
 
 type ToolApprovalDecision = AnyRecord | null;
@@ -1119,6 +1126,11 @@ function liveTurnTermsAccept(launch: LiveTurnTerms, next: LiveTurnTerms): boolea
 // moments; the wait only keeps it from being taken for the new turn's.
 const INTERRUPT_SETTLE_MS = 5000;
 
+// How long a turn whose `result` lands with a steered message still unread
+// waits for the CLI to start that message as a turn of its own. The CLI starts
+// it at once; the wait only keeps a message it dropped from holding the turn open.
+const STEER_PICKUP_MS = 5000;
+
 /**
  * Loads MCP server configurations from ~/.claude.json
  * @param {string} cwd - Current working directory for project-specific configs
@@ -1262,6 +1274,20 @@ async function queryClaudeSDK(
   let mainThreadModel: string | null = null;
   let lastSentTokenBudget: TokenBudget | null = null;
 
+  // Uuids of the user messages this run pushed into the CLI. The CLI echoes
+  // each one back once it takes it (--replay-user-messages); the client already
+  // shows them, so the echo is a receipt and is not forwarded.
+  const ownPromptUuids = new Set<string>();
+  // Steered messages the CLI has not taken yet. A `result` that lands while one
+  // waits does not end the turn, because the CLI runs that message next.
+  const pendingSteers = new Set<string>();
+  let steerPickupTimer: ReturnType<typeof setTimeout> | null = null;
+  const trackPrompt = (messages: unknown[]): AnyRecord[] => messages.map((message) => {
+    const uuid = crypto.randomUUID();
+    ownPromptUuids.add(uuid);
+    return { ...(message as AnyRecord), uuid };
+  });
+
   // Marks the process as between turns once a turn is over, and notes whether
   // that turn left background work going. The process stays up either way.
   //
@@ -1314,6 +1340,9 @@ async function queryClaudeSDK(
     });
     const planModeGrants = new Set<string>();
     syncPlanModeTools(sdkOptions.allowedTools, planModeGrants, options.permissionMode);
+    // The echo of a steered message is the only word on whether the CLI took it
+    // inside the running turn or will run it as a turn of its own.
+    sdkOptions.extraArgs = { ...(sdkOptions.extraArgs || {}), 'replay-user-messages': null };
 
     const mcpServers = await loadMcpConfig(options.cwd);
     if (mcpServers) {
@@ -1465,7 +1494,8 @@ async function queryClaudeSDK(
     // The SDK's own `query`, unless the caller supplies one (tests script the
     // stream to drive the hold logic below without a CLI process).
     const createQuery = context.createQuery ?? query;
-    let heldPrompt = createHeldPromptStream(promptMessages);
+    const ownPromptMessages = trackPrompt(promptMessages);
+    let heldPrompt = createHeldPromptStream(ownPromptMessages);
     releasePromptStream = () => {
       promptReleased = true;
       heldPrompt.release();
@@ -1483,7 +1513,7 @@ async function queryClaudeSDK(
       delete sdkOptions.hooks;
       // Discard the abandoned stream and build a fresh one for the retry.
       heldPrompt.release();
-      heldPrompt = createHeldPromptStream(promptMessages);
+      heldPrompt = createHeldPromptStream(ownPromptMessages);
       queryInstance = createQuery({
         prompt: heldPrompt.stream as AsyncIterable<SDKUserMessage>,
         options: sdkOptions
@@ -1593,8 +1623,32 @@ async function queryClaudeSDK(
         }
 
         const settled = new Promise<void>((resolve) => { settleDeliveredTurn = resolve; });
-        pushPrompt(turn.messages);
+        pushPrompt(trackPrompt(turn.messages));
         return { settled };
+      },
+
+      steerTurn: (messages) => {
+        const key = sessionKey();
+        if (
+          !key
+          || betweenTurns
+          || turnCompleteSent
+          || deliveredTurnInterrupted
+          || promptReleased
+          || abortedSessionIds.has(key)
+          || getSession(key)?.instance !== instance
+        ) {
+          return false;
+        }
+        // `next` is the CLI's own priority for a message typed mid-turn.
+        const steered = trackPrompt(messages).map((message): AnyRecord => ({ ...message, priority: 'next' }));
+        if (!pushPrompt(steered)) {
+          return false;
+        }
+        for (const message of steered) {
+          pendingSteers.add(message.uuid);
+        }
+        return true;
       },
 
       interruptTurn: async () => {
@@ -1605,7 +1659,8 @@ async function queryClaudeSDK(
         // own `result` must not complete it a second time.
         turnCompleteSent = true;
         deliveredTurnInterrupted = true;
-        interruptSettled = new Promise<void>((resolve) => { resolveInterruptSettled = resolve; });
+        pendingSteers.clear();
+        interruptSettled =new Promise<void>((resolve) => { resolveInterruptSettled = resolve; });
         try {
           await instance.interrupt();
         } catch (error) {
@@ -1638,6 +1693,36 @@ async function queryClaudeSDK(
       syncPlanModeTools(sdkOptions.allowedTools, planModeGrants, permissionMode);
     };
 
+    // Tells the client the turn is over; the process stays up for the next one.
+    const completeTurn = () => {
+      turnCompleteSent = true;
+      turnWriter.send({
+        ...createCompleteMessage({ provider: 'claude', sessionId: capturedSessionId || sessionId || null, exitCode: 0 }),
+        // Tells the composer the next turn can go into this process.
+        ...(liveProcess.canTakeTurn() ? { liveTurn: launchTerms } : {}),
+      });
+      notifyRunStopped({
+        userId: turnWriter?.userId || null,
+        provider: 'claude',
+        sessionId: sessionId || capturedSessionId || null,
+        sessionName: turnSessionSummary,
+        stopReason: 'completed'
+      });
+    };
+
+    // Completes a turn whose `result` was held for a steered message the CLI
+    // never started.
+    const stopWaitingForSteers = () => {
+      steerPickupTimer = null;
+      if (pendingSteers.size === 0 || turnCompleteSent) {
+        return;
+      }
+      pendingSteers.clear();
+      settleBetweenTurns();
+      completeTurn();
+      settleTurn();
+    };
+
     // Track the query instance for abort capability
     if (sessionKey()) {
       addSession(sessionKey()!, queryInstance, ws, releasePromptStream, liveProcess, applyPermissionMode);
@@ -1665,6 +1750,14 @@ async function queryClaudeSDK(
         }
       } else {
         // session_id already captured
+      }
+
+      if (message.type === 'user' && message.isReplay && ownPromptUuids.delete(message.uuid)) {
+        if (pendingSteers.delete(message.uuid) && pendingSteers.size === 0 && steerPickupTimer) {
+          clearTimeout(steerPickupTimer);
+          steerPickupTimer = null;
+        }
+        continue;
       }
 
       // Transform and normalize message via adapter
@@ -1739,6 +1832,15 @@ async function queryClaudeSDK(
         // The turn is done as far as the client is concerned.
         const abortPending = sessionKey() ? abortedSessionIds.has(sessionKey()) : false;
         const completesTurn = !turnCompleteSent && !abortPending;
+        // The CLI runs a steered message it did not take within this turn as
+        // a turn of its own, which the client sees as the rest of this one.
+        if (completesTurn && pendingSteers.size > 0) {
+          if (!steerPickupTimer) {
+            steerPickupTimer = setTimeout(stopWaitingForSteers, STEER_PICKUP_MS);
+            steerPickupTimer.unref?.();
+          }
+          continue;
+        }
         // A result after the turn already reported complete means the work we
         // held the process open for has finished and pushed a follow-up turn
         // — the last of it, when nothing else is still running.
@@ -1750,19 +1852,7 @@ async function queryClaudeSDK(
         settleBetweenTurns();
 
         if (completesTurn) {
-          turnCompleteSent = true;
-          turnWriter.send({
-            ...createCompleteMessage({ provider: 'claude', sessionId: capturedSessionId || sessionId || null, exitCode: 0 }),
-            // Tells the composer the next turn can go into this process.
-            ...(liveProcess.canTakeTurn() ? { liveTurn: launchTerms } : {}),
-          });
-          notifyRunStopped({
-            userId: turnWriter?.userId || null,
-            provider: 'claude',
-            sessionId: sessionId || capturedSessionId || null,
-            sessionName: turnSessionSummary,
-            stopReason: 'completed'
-          });
+          completeTurn();
         } else if (reportsBackgroundWorkDone) {
           notifyBackgroundWorkCompleted({
             userId: turnWriter?.userId || null,
@@ -1850,6 +1940,9 @@ async function queryClaudeSDK(
       error
     });
   } finally {
+    if (steerPickupTimer) {
+      clearTimeout(steerPickupTimer);
+    }
     // Always close stdin — otherwise an aborted or failed run leaves the CLI
     // process (and its MCP servers) alive until the server exits.
     releasePromptStream();
@@ -1937,6 +2030,22 @@ function listClaudeSDKBackgroundWork(): Array<{
 function acceptsClaudeSDKLiveTurn(sessionId: string, options: AnyRecord): boolean {
   const liveProcess = getSession(sessionId)?.liveProcess;
   return Boolean(liveProcess?.canTakeTurn() && liveTurnTermsAccept(liveProcess.terms, readLiveTurnTerms(options)));
+}
+
+/**
+ * Adds a message to the session's turn in flight, as LiveProcess.steerTurn.
+ * @param {string} sessionId - Session identifier
+ * @param {string} command - The message text
+ * @param {Object} options - `images`, `files` and `cwd`, as a `chat.send` turn gets them
+ * @returns {Promise<boolean>} False when the session has no turn in flight
+ */
+async function steerClaudeSDKTurn(sessionId: string, command: string, options: AnyRecord) {
+  const liveProcess = getSession(sessionId)?.liveProcess;
+  if (!liveProcess) {
+    return false;
+  }
+  const messages = await buildPromptMessages(command, options.images, options.files, options.cwd);
+  return liveProcess.steerTurn(messages);
 }
 
 /**
@@ -2089,6 +2198,7 @@ export const claudeRuntime = {
   stopBackgroundTask: stopClaudeSDKTask,
   acceptsLiveTurn: acceptsClaudeSDKLiveTurn,
   setPermissionMode: setClaudeSDKPermissionMode,
+  steerTurn: steerClaudeSDKTurn,
   releaseIdleProcess: releaseClaudeSDKIdleProcess,
   closeAll: closeAllClaudeSDKProcesses,
 };
@@ -2101,6 +2211,7 @@ export {
   stopClaudeSDKTask,
   acceptsClaudeSDKLiveTurn,
   setClaudeSDKPermissionMode,
+  steerClaudeSDKTurn,
   releaseClaudeSDKIdleProcess,
   closeAllClaudeSDKProcesses,
   isClaudeSDKSessionActive,

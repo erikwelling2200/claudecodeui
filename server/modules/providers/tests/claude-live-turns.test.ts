@@ -13,6 +13,7 @@ import {
   listClaudeSDKBackgroundWork,
   queryClaudeSDK,
   releaseClaudeSDKIdleProcess,
+  steerClaudeSDKTurn,
 } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import type { NormalizedMessage, ProviderRuntimeContext } from '@/shared/types.js';
 
@@ -34,6 +35,8 @@ type Scripted = {
   released: () => boolean;
   /** Prompt texts the CLI has read from stdin, in order. */
   prompts: string[];
+  /** The stdin messages behind `prompts`. */
+  stdin: Array<Record<string, unknown>>;
   calls: string[];
 };
 
@@ -49,6 +52,7 @@ function createScriptedQuery(): { createQuery: NonNullable<ProviderRuntimeContex
   const streams: Stream[] = [{ queue: [], wake: null, released: false }];
   let queries = 0;
   const prompts: string[] = [];
+  const stdin: Array<Record<string, unknown>> = [];
   const calls: string[] = [];
   const push = (stream: Stream, message: Record<string, unknown> | null) => {
     stream.queue.push(message);
@@ -62,6 +66,7 @@ function createScriptedQuery(): { createQuery: NonNullable<ProviderRuntimeContex
     end: () => { for (const stream of streams) push(stream, null); },
     released: () => Boolean(streams[0]?.released),
     prompts,
+    stdin,
     calls,
   };
 
@@ -74,6 +79,7 @@ function createScriptedQuery(): { createQuery: NonNullable<ProviderRuntimeContex
     void (async () => {
       for await (const message of prompt) {
         prompts.push(String((message as { message: { content: unknown } }).message.content));
+        stdin.push(message as Record<string, unknown>);
       }
       stream.released = true;
     })();
@@ -129,6 +135,12 @@ const taskNotification = (taskId: string, toolUseId: string, status: string) => 
   type: 'system', subtype: 'task_notification', session_id: NATIVE_ID, task_id: taskId, tool_use_id: toolUseId, status, summary: `Task ${taskId} ${status}`, output_file: '',
 });
 const result = () => ({ type: 'result', subtype: 'success', session_id: NATIVE_ID, result: 'done', duration_ms: 1, num_turns: 1 });
+// The CLI's receipt for a stdin message it took (--replay-user-messages).
+const replayOf = (stdinMessage: Record<string, unknown> | undefined) => ({
+  type: 'user', session_id: NATIVE_ID, parent_tool_use_id: null, isReplay: true,
+  uuid: stdinMessage?.uuid, message: stdinMessage?.message,
+});
+const userTexts = (writer: Writer) => writer.sent.filter((message) => message.kind === 'text' && message.role === 'user');
 
 type Writer = { sent: NormalizedMessage[]; writer: never; completes: () => NormalizedMessage[] };
 const createWriter = (): Writer => {
@@ -400,5 +412,79 @@ test('server shutdown closes every session process', async () => {
     closeAllClaudeSDKProcesses();
     assert.deepEqual(script.calls, ['close']);
     await waitFor(() => script.released());
+  }, {}, { withBackgroundAgent: false });
+});
+
+test('a message steered into the turn in flight reaches the CLI and the turn completes once', async () => {
+  await withHeldSession('app-steer-inline', async ({ script, first, send }) => {
+    // The CLI's receipt for the first prompt is not shown a second time.
+    script.emit(replayOf(script.stdin[0]));
+
+    const second = send('run the tests');
+    await waitFor(() => script.prompts.length === 2);
+    assert.equal(await steerClaudeSDKTurn('app-steer-inline', 'only the unit tests', {}), true);
+    await waitFor(() => script.prompts.length === 3);
+    assert.equal(script.prompts[2], 'only the unit tests');
+    assert.equal(script.stdin[2]?.priority, 'next', 'taken the way the CLI takes a message typed mid-turn');
+
+    // Taken at the next tool boundary, inside the same turn.
+    script.emit(replayOf(script.stdin[1]));
+    script.emit(toolUse('toolu_bash', 'Bash', { command: 'npm test' }));
+    script.emit(replayOf(script.stdin[2]));
+    script.emit(text('Unit tests pass.'));
+    script.emit(result());
+    await second.run;
+    assert.equal(second.writer.completes().length, 1);
+    assert.deepEqual(userTexts(first), []);
+    assert.deepEqual(userTexts(second.writer), [], 'the client already shows what it sent');
+    assert.equal(acceptsClaudeSDKLiveTurn('app-steer-inline', {}), true);
+  }, {}, { withBackgroundAgent: false });
+});
+
+test('a steered message the turn ended before taking keeps the turn open until it has run', async () => {
+  await withHeldSession('app-steer-after', async ({ script, send }) => {
+    const second = send('summarise');
+    await waitFor(() => script.prompts.length === 2);
+    assert.equal(await steerClaudeSDKTurn('app-steer-after', 'in Dutch', {}), true);
+    await waitFor(() => script.prompts.length === 3);
+
+    script.emit(text('Summary.'));
+    script.emit(result());
+    await settle();
+    assert.equal(second.writer.completes().length, 0, 'the CLI runs the steered message next');
+    assert.equal(acceptsClaudeSDKLiveTurn('app-steer-after', {}), false);
+
+    script.emit(replayOf(script.stdin[2]));
+    script.emit(text('Samenvatting.'));
+    script.emit(result());
+    await second.run;
+    assert.equal(second.writer.completes().length, 1);
+    assert.ok(second.writer.sent.some((message) => message.kind === 'text' && message.content === 'Samenvatting.'));
+  }, {}, { withBackgroundAgent: false });
+});
+
+test('a turn whose steered message the CLI never starts completes after a short wait', async () => {
+  await withHeldSession('app-steer-dropped', async ({ script, send }) => {
+    const second = send('summarise');
+    await waitFor(() => script.prompts.length === 2);
+    assert.equal(await steerClaudeSDKTurn('app-steer-dropped', 'in Dutch', {}), true);
+    script.emit(result());
+    await settle();
+    assert.equal(second.writer.completes().length, 0);
+    // The runtime's wait does not keep the process alive; this one does.
+    let keepAlive: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([second.run, new Promise((resolve) => { keepAlive = setTimeout(resolve, 10_000); })]);
+    clearTimeout(keepAlive);
+    assert.equal(second.writer.completes().length, 1);
+    assert.equal(acceptsClaudeSDKLiveTurn('app-steer-dropped', {}), true);
+  }, {}, { withBackgroundAgent: false });
+});
+
+test('nothing is steered into a session with no turn in flight', async () => {
+  await withHeldSession('app-steer-idle', async ({ script }) => {
+    assert.equal(await steerClaudeSDKTurn('app-steer-idle', 'hello?', {}), false);
+    assert.equal(await steerClaudeSDKTurn('app-steer-unknown', 'hello?', {}), false);
+    await settle();
+    assert.equal(script.prompts.length, 1);
   }, {}, { withBackgroundAgent: false });
 });
