@@ -1,6 +1,6 @@
 import { memo, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { Check, CheckSquare, Edit2, Loader2, MoreHorizontal, Square, Trash2, X } from 'lucide-react';
+import { Check, CheckSquare, ChevronDown, ChevronRight, Edit2, Loader2, MoreHorizontal, Square, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { Badge, Dialog, DialogContent, DialogTitle, LLMProviderLogo, Tooltip, buttonVariants } from '@/shared/ui';
@@ -42,8 +42,37 @@ type SidebarSessionItemProps = {
   isChecked: boolean;
   /** Takes the owning projectId so this memoized row binds itself without the list making a closure per row. */
   onToggleSessionSelected: (projectId: string, sessionId: string) => void;
+  /** Loaded threads folded under this row; 0 for a thread or a chat without threads. */
+  threadCount?: number;
+  areThreadsExpanded?: boolean;
+  /** One of the folded threads is processing; shown on the toggle while they are hidden. */
+  hasRunningThread?: boolean;
+  /** Takes this row's id so the memoized row binds itself without a per-row closure. */
+  onSetThreadsExpanded?: (parentSessionId: string, expanded: boolean) => void;
   t: TFunction;
 };
+
+type ThreadToggleContentProps = {
+  threadCount: number;
+  areThreadsExpanded: boolean;
+  hasRunningThread: boolean;
+};
+
+// The chevron and count of a parent row's thread fold-out. Rendered once as the
+// real button and, on desktop, once invisibly in the row's flow to reserve its width.
+function ThreadToggleContent({ threadCount, areThreadsExpanded, hasRunningThread }: ThreadToggleContentProps) {
+  const Chevron = areThreadsExpanded ? ChevronDown : ChevronRight;
+  return (
+    <>
+      <Chevron className="h-3 w-3" />
+      <span className="tabular-nums">{threadCount}</span>
+      {hasRunningThread && !areThreadsExpanded && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
+    </>
+  );
+}
+
+const THREAD_TOGGLE_CLASS_NAME =
+  'flex h-[18px] flex-shrink-0 items-center gap-0.5 rounded px-1 text-[11px] leading-none text-muted-foreground';
 
 /** Rendered by SidebarProjectSessions for one session row, including its rename, copy and delete controls. */
 function SidebarSessionItem({
@@ -69,6 +98,10 @@ function SidebarSessionItem({
   isSelecting,
   isChecked,
   onToggleSessionSelected,
+  threadCount = 0,
+  areThreadsExpanded = false,
+  hasRunningThread = false,
+  onSetThreadsExpanded,
   t,
 }: SidebarSessionItemProps) {
   const isCompact = useCompactSidebar();
@@ -154,6 +187,33 @@ function SidebarSessionItem({
 
   const middleClickHandlers = getMiddleClickHandlers(() => onArchiveSessionNow(session.id));
 
+  const hasThreadToggle = threadCount > 0 && onSetThreadsExpanded !== undefined;
+  const threadToggleLabel = areThreadsExpanded ? t('sessions.hideThreads') : t('sessions.showThreads');
+  const threadToggleContent = (
+    <ThreadToggleContent
+      threadCount={threadCount}
+      areThreadsExpanded={areThreadsExpanded}
+      hasRunningThread={hasRunningThread}
+    />
+  );
+  // Folds the threads only: the row's own click still opens the parent chat.
+  const threadToggleButton = (className?: string) => (
+    <button
+      type="button"
+      aria-label={threadToggleLabel}
+      aria-expanded={areThreadsExpanded}
+      title={threadToggleLabel}
+      className={cn(THREAD_TOGGLE_CLASS_NAME, 'transition-colors hover:bg-muted hover:text-foreground', className)}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onSetThreadsExpanded?.(session.id, !areThreadsExpanded);
+      }}
+    >
+      {threadToggleContent}
+    </button>
+  );
+
   return (
     <div className="group relative" {...middleClickHandlers}>
       {(showAttentionIndicator || showBackgroundIndicator || showUnreadIndicator) && (
@@ -226,7 +286,8 @@ function SidebarSessionItem({
                   <span className="ml-auto flex-shrink-0 text-[11px] text-muted-foreground">{compactSessionAge}</span>
                 )}
               </div>
-              <div className="mt-0.5 flex items-center">
+              <div className="mt-0.5 flex items-center gap-1">
+                {hasThreadToggle && threadToggleButton()}
                 {sessionView.messageCount > 0 && (
                   <Badge variant="secondary" className="px-1 py-0 text-xs">
                     {sessionView.messageCount}
@@ -462,12 +523,23 @@ function SidebarSessionItem({
                   </span>
                 )}
               </div>
-              <div className="mt-0.5 flex items-center">
+              <div className="mt-0.5 flex items-center gap-1">
+                {/* Holds the toggle's place in the row; the real button sits
+                    over it, outside the link, since a link cannot hold a button. */}
+                {hasThreadToggle && (
+                  <span aria-hidden="true" className={cn(THREAD_TOGGLE_CLASS_NAME, 'invisible')}>
+                    {threadToggleContent}
+                  </span>
+                )}
                 {sessionView.messageCount > 0 && <Badge variant="secondary" className="px-1 py-0 text-xs">{sessionView.messageCount}</Badge>}
               </div>
             </div>
           </div>
         </a>
+
+        {/* Offsets: border + padding + provider logo + gap, plus the checkbox and gap while selecting. */}
+        {hasThreadToggle &&
+          threadToggleButton(cn('absolute bottom-[9px]', isSelecting ? 'left-[61px]' : 'left-[37px]'))}
 
         {!isSelecting && (
           <SessionOptions

@@ -223,21 +223,34 @@ export const chatToolsService = {
 
   /**
    * Starts a new chat on an agent's request, with the same provider as the
-   * calling chat and in its project unless another folder is named. The first
-   * turn runs detached, like a scheduled message, so it does not wait for the
-   * new chat's answer; the chat shows in every open sidebar right away.
+   * calling chat and in its project unless another folder is named. By default
+   * the new chat is a thread of the calling chat; `parentSessionId` names
+   * another parent, and `topLevel` starts an ordinary chat instead. Threads are
+   * one level deep, so a thread asked of a thread goes to that thread's parent.
+   * The first turn runs detached, like a scheduled message, so it does not wait
+   * for the new chat's answer; the chat shows in every open sidebar right away.
    */
   async startChat(
     callerSessionId: string,
-    input: { message: string; model: string; effort?: string; projectPath?: string },
+    input: { message: string; model: string; effort?: string; projectPath?: string; parentSessionId?: string; topLevel?: boolean },
     runtime: ProviderRuntimeGateway = providerRuntimeService,
-  ): Promise<{ sessionId: string; projectPath: string }> {
+  ): Promise<{ sessionId: string; projectPath: string; parentSessionId: string | null }> {
     const caller = sessionsDb.getSessionById(callerSessionId);
     if (!caller) {
       throw new AppError(`Session "${callerSessionId}" was not found.`, { code: 'SESSION_NOT_FOUND', statusCode: 404 });
     }
 
-    const created = sessionsService.createAppSession(caller.provider as LLMProvider, input.projectPath ?? caller.project_path ?? '', input.message);
+    let parentSessionId: string | undefined;
+    if (!input.topLevel) {
+      const requestedParent = input.parentSessionId ? sessionsDb.getSessionById(input.parentSessionId) : caller;
+      if (!requestedParent) {
+        throw new AppError(`Session "${input.parentSessionId}" was not found.`, { code: 'SESSION_NOT_FOUND', statusCode: 404 });
+      }
+      parentSessionId = requestedParent.parent_session_id ?? requestedParent.session_id;
+    }
+
+    const projectPath = input.projectPath ?? caller.project_path ?? '';
+    const created = sessionsService.createAppSession(caller.provider as LLMProvider, projectPath, input.message, parentSessionId);
     await broadcastSessionUpserted(created.sessionId);
 
     // 'auto' is a Claude permission mode; other providers keep their own default.
@@ -251,6 +264,6 @@ export const chatToolsService = {
         console.error(`[ChatTools] The chat started by session ${callerSessionId} failed:`, error instanceof Error ? error.message : error);
       });
 
-    return { sessionId: created.sessionId, projectPath: created.projectPath };
+    return { sessionId: created.sessionId, projectPath: created.projectPath, parentSessionId: parentSessionId ?? null };
   },
 };

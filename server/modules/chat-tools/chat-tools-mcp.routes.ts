@@ -43,6 +43,8 @@ chatToolsMcpRoutes.post('/tools/start_chat', asyncHandler(async (req, res) => {
     model: readRequiredString(body.model, 'model'),
     effort: readOptionalString(body.effort),
     projectPath: readOptionalString(body.projectPath),
+    parentSessionId: readOptionalString(body.parentSessionId),
+    topLevel: body.topLevel === true,
   });
   res.json(createApiSuccessResponse(result));
 }));

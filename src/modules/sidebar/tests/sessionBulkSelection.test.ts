@@ -88,6 +88,10 @@ type ListOverrides = {
   onToggleSessionSelected?: (projectId: string, sessionId: string) => void;
   onCancelSessionSelection?: () => void;
   onDeleteSelectedSessions?: (sessionIds: string[]) => void;
+  selectedSession?: SessionWithProvider | null;
+  onSessionSelect?: (session: SessionWithProvider, projectName: string) => void;
+  expandedThreadParentIds?: ReadonlySet<string>;
+  onSetThreadsExpanded?: (parentSessionId: string, expanded: boolean) => void;
 };
 
 const renderSessions = (overrides: ListOverrides = {}) =>
@@ -122,6 +126,8 @@ const renderSessions = (overrides: ListOverrides = {}) =>
       onToggleSessionSelected: noop,
       onCancelSessionSelection: noop,
       onDeleteSelectedSessions: noop,
+      expandedThreadParentIds: NO_IDS,
+      onSetThreadsExpanded: noop,
       t,
       ...overrides,
     }),
@@ -686,4 +692,71 @@ test('an empty saved set also preserves a collapsed selection restored after mou
 test('without saved expansion, initial project selection still opens normally', () => {
   const controller = renderController(vi.fn(), { ...IDLE, keepProjectsExpanded: true, selectedProject: PROJECT });
   assert.equal(controller.result.current.isProjectExpanded(PROJECT.projectId), true);
+});
+
+// s1 is a parent with one thread, t1; s2 is an ordinary chat.
+const thread = (id: string, parentSessionId: string): SessionWithProvider =>
+  ({ ...session(id), parentSessionId }) as SessionWithProvider;
+const THREADED_SESSIONS = [session('s1'), thread('t1', 's1'), session('s2')];
+
+const rowTitles = (container: HTMLElement): string[] =>
+  [...container.querySelectorAll<HTMLElement>('[title^="session "]')].map((row) => row.title);
+
+test('a folded parent hides its threads and its toggle neither opens the chat nor clears the selection', () => {
+  const onSetThreadsExpanded = vi.fn();
+  const onSessionSelect = vi.fn();
+  const onCancelSessionSelection = vi.fn();
+  const { container } = renderSessions({
+    sessions: THREADED_SESSIONS,
+    onSetThreadsExpanded,
+    onSessionSelect,
+    onCancelSessionSelection,
+  });
+
+  assert.deepEqual(rowTitles(container), ['session s1', 'session s2']);
+  const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="sessions.showThreads"]');
+  assert.ok(toggle, 'the parent offers a fold-out');
+  assert.equal(toggle.textContent, '1', 'with the thread count as a plain number');
+
+  fireEvent.click(toggle);
+  assert.deepEqual(onSetThreadsExpanded.mock.calls, [['s1', true]]);
+  assert.equal(onSessionSelect.mock.calls.length, 0);
+  assert.equal(onCancelSessionSelection.mock.calls.length, 0);
+});
+
+test('an unfolded parent lists its threads, and only rows on screen can be ticked', () => {
+  const onSetSessionSelection = vi.fn();
+  const folded = renderSessions({ sessions: THREADED_SESSIONS, selectedSessionIds: new Set(), onSetSessionSelection });
+  fireEvent.click(buttonWithText(folded.container, 'sessions.selectAll')!);
+  assert.deepEqual([...onSetSessionSelection.mock.calls[0][0].sessionIds], ['s1', 's2']);
+  folded.unmount();
+
+  const unfolded = renderSessions({
+    sessions: THREADED_SESSIONS,
+    expandedThreadParentIds: new Set(['s1']),
+  });
+  assert.deepEqual(rowTitles(unfolded.container), ['session s1', 'session t1', 'session s2']);
+  assert.ok(unfolded.container.querySelector('button[aria-label="sessions.hideThreads"]'));
+});
+
+test('opening a thread unfolds its parent', () => {
+  const onSetThreadsExpanded = vi.fn();
+  renderSessions({ sessions: THREADED_SESSIONS, selectedSession: THREADED_SESSIONS[1], onSetThreadsExpanded });
+  assert.deepEqual(onSetThreadsExpanded.mock.calls, [['s1', true]]);
+});
+
+test('thread fold-outs persist in browser storage and leave the selection alone', () => {
+  const { result, unmount } = renderController();
+  act(() => result.current.toggleSessionSelected('project-1', 's1'));
+  act(() => result.current.setThreadsExpanded('s1', true));
+
+  assert.deepEqual([...result.current.expandedThreadParentIds], ['s1']);
+  assert.deepEqual(JSON.parse(localStorage.getItem('cloudcli-expanded-threads')!), ['s1']);
+  assert.deepEqual([...(result.current.sessionSelection?.sessionIds ?? [])], ['s1']);
+  unmount();
+
+  const restored = renderController();
+  assert.deepEqual([...restored.result.current.expandedThreadParentIds], ['s1']);
+  act(() => restored.result.current.setThreadsExpanded('s1', false));
+  assert.deepEqual(JSON.parse(localStorage.getItem('cloudcli-expanded-threads')!), []);
 });

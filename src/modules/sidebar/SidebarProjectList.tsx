@@ -54,6 +54,8 @@ export default function SidebarProjectList({
   onToggleSessionSelected,
   onCancelSessionSelection,
   onDeleteSelectedSessions,
+  expandedThreadParentIds,
+  onSetThreadsExpanded,
   t,
 }: SidebarProjectListProps) {
   const pageTitle = getPageTitle(selectedProject, selectedSession);
@@ -145,6 +147,8 @@ export default function SidebarProjectList({
                 onToggleSessionSelected={onToggleSessionSelected}
                 onCancelSessionSelection={onCancelSessionSelection}
                 onDeleteSelectedSessions={onDeleteSelectedSessions}
+                expandedThreadParentIds={expandedThreadParentIds}
+                onSetThreadsExpanded={onSetThreadsExpanded}
                 t={t}
               />
             );

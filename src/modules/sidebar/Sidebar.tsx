@@ -115,6 +115,8 @@ function Sidebar({
     reloadRecentConversations,
     loadMoreRecentConversations,
     toggleProject,
+    expandedThreadParentIds,
+    setThreadsExpanded,
     handleSessionClick,
     toggleStarProject,
     isProjectStarred,
@@ -253,6 +255,8 @@ function Sidebar({
     onToggleSessionSelected: toggleSessionSelected,
     onCancelSessionSelection: cancelSessionSelection,
     onDeleteSelectedSessions: showDeleteSelectedSessionsConfirmation,
+    expandedThreadParentIds,
+    onSetThreadsExpanded: setThreadsExpanded,
     t,
   };
 

@@ -75,6 +75,8 @@ test('start_chat creates a session in the caller project and runs the message in
     assert.equal(runs[0].options.permissionMode, 'auto');
     assert.equal(runs[0].options.model, 'opus');
     assert.equal(runs[0].options.effort, 'high');
+    assert.equal(result.parentSessionId, CALLER_SESSION_ID);
+    assert.equal(sessionsDb.getSessionById(result.sessionId)?.parent_session_id, CALLER_SESSION_ID);
     release();
   });
 });
@@ -83,5 +85,22 @@ test('start_chat refuses a caller session that does not exist', async () => {
   await withIsolatedDatabase(async () => {
     const { runtime } = createRuntime([]);
     await assert.rejects(chatToolsService.startChat('missing', { message: 'hi', model: 'opus' }, runtime), /was not found/);
+  });
+});
+
+test('start_chat from a thread starts a thread of its parent, and topLevel starts no thread', async () => {
+  await withIsolatedDatabase(async () => {
+    const { runtime, release } = createRuntime([]);
+
+    const thread = await chatToolsService.startChat(CALLER_SESSION_ID, { message: 'First thread', model: 'opus' }, runtime);
+    const nested = await chatToolsService.startChat(thread.sessionId, { message: 'Second thread', model: 'opus' }, runtime);
+    const named = await chatToolsService.startChat(thread.sessionId, { message: 'Named parent', model: 'opus', parentSessionId: CALLER_SESSION_ID }, runtime);
+    const topLevel = await chatToolsService.startChat(CALLER_SESSION_ID, { message: 'Own chat', model: 'opus', topLevel: true }, runtime);
+
+    assert.equal(nested.parentSessionId, CALLER_SESSION_ID);
+    assert.equal(named.parentSessionId, CALLER_SESSION_ID);
+    assert.equal(topLevel.parentSessionId, null);
+    assert.equal(sessionsDb.getSessionById(topLevel.sessionId)?.parent_session_id, null);
+    release();
   });
 });

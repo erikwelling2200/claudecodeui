@@ -1,3 +1,4 @@
+import { Fragment, useEffect, useMemo } from 'react';
 import { CheckSquare, Plus, Trash2 } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
@@ -6,6 +7,7 @@ import { cn } from '@/shared/utils';
 import type { LLMProvider, Project, ProjectSession, SessionWithProvider, SidebarSessionSelection } from '@/shared/types';
 import SidebarSessionItem from '@/modules/sidebar/SidebarSessionItem';
 import { useCompactSidebar } from '@/modules/sidebar/hooks/useCompactSidebar';
+import { groupSessionThreads } from '@/modules/sidebar/utils/sidebarProjectFormatting';
 
 type SidebarProjectSessionsProps = {
   project: Project;
@@ -41,8 +43,21 @@ type SidebarProjectSessionsProps = {
   onToggleSessionSelected: (projectId: string, sessionId: string) => void;
   onCancelSessionSelection: () => void;
   onDeleteSelectedSessions: (sessionIds: string[]) => void;
+  /** Parent sessions whose threads are folded out, across all projects. */
+  expandedThreadParentIds: ReadonlySet<string>;
+  onSetThreadsExpanded: (parentSessionId: string, expanded: boolean) => void;
   t: TFunction;
 };
+
+// The thread fold-out state handed to one row; primitives so the row's memo holds.
+type ThreadRowProps = {
+  threadCount: number;
+  areThreadsExpanded: boolean;
+  hasRunningThread: boolean;
+};
+
+// Handed to every thread row and to rows without threads.
+const NO_THREADS: ThreadRowProps = { threadCount: 0, areThreadsExpanded: false, hasRunningThread: false };
 
 function SessionListSkeleton() {
   return (
@@ -94,9 +109,32 @@ export default function SidebarProjectSessions({
   onToggleSessionSelected,
   onCancelSessionSelection,
   onDeleteSelectedSessions,
+  expandedThreadParentIds,
+  onSetThreadsExpanded,
   t,
 }: SidebarProjectSessionsProps) {
   const isCompact = useCompactSidebar();
+  // `sessions` is a cached array per project, so this regroups only when the
+  // project's sessions actually change.
+  const sessionGroups = useMemo(() => groupSessionThreads(sessions), [sessions]);
+  const selectedSessionId = selectedSession?.id ?? null;
+  const selectedThreadParentId = useMemo(
+    () =>
+      selectedSessionId
+        ? sessionGroups.find(({ threads }) => threads.some((thread) => thread.id === selectedSessionId))
+          ?.session.id ?? null
+        : null,
+    [selectedSessionId, sessionGroups],
+  );
+
+  // Folds out the parent of the open thread so the open chat is always in view.
+  // Runs only when the selection or its parent changes, so a parent the user
+  // folds back in afterwards stays folded.
+  useEffect(() => {
+    if (selectedThreadParentId) {
+      onSetThreadsExpanded(selectedThreadParentId, true);
+    }
+  }, [onSetThreadsExpanded, selectedSessionId, selectedThreadParentId]);
 
   if (!isExpanded) {
     return null;
@@ -108,7 +146,15 @@ export default function SidebarProjectSessions({
   // row's options menu applies — so it is not selectable either.
   const isSessionRunning = (session: SessionWithProvider) =>
     activeSessions.has(session.id) && !backgroundSessionIds.has(session.id);
-  const selectableSessionIds = sessions.filter((session) => !isSessionRunning(session)).map((session) => session.id);
+  const areThreadsExpanded = (parentSessionId: string) => expandedThreadParentIds.has(parentSessionId);
+  // Only rows on screen can be ticked: threads folded away under their parent
+  // are not, so a bulk delete never takes a row the user cannot see.
+  const visibleSessions = sessionGroups.flatMap(({ session, threads }) =>
+    areThreadsExpanded(session.id) ? [session, ...threads] : [session],
+  );
+  const selectableSessionIds = visibleSessions
+    .filter((session) => !isSessionRunning(session))
+    .map((session) => session.id);
   // Re-derived from the selectable rows rather than read straight off the
   // selection, so a row that started running after it was ticked drops out of
   // the count, the button and the ids the confirmation is opened with.
@@ -126,6 +172,39 @@ export default function SidebarProjectSessions({
     : hasMoreSessions
       ? t('sessions.selectAllLoaded')
       : t('sessions.selectAll');
+
+  const renderSessionRow = (session: SessionWithProvider, threadProps: ThreadRowProps) => (
+    <SidebarSessionItem
+      key={session.id}
+      project={project}
+      session={session}
+      selectedSession={selectedSession}
+      isProcessing={isSessionRunning(session)}
+      hasBackgroundWork={backgroundSessionIds.has(session.id)}
+      needsAttention={attentionSessionIds.has(session.id)}
+      hasUnreadOutput={unreadSessionIds.has(session.id)}
+      currentTime={currentTime}
+      onRenameDraftChange={onRenameDraftChange}
+      isEditing={session.id === sessionRenameId}
+      renameDraft={session.id === sessionRenameId ? sessionRenameDraft : ''}
+      onStartEditingSession={onStartEditingSession}
+      onCancelEditingSession={onCancelEditingSession}
+      onSaveEditingSession={onSaveEditingSession}
+      onProjectSelect={onProjectSelect}
+      onSessionSelect={onSessionSelect}
+      onDeleteSession={onDeleteSession}
+      onForkSession={onForkSession}
+      onArchiveSessionNow={onArchiveSessionNow}
+      isSelecting={isSelecting}
+      isChecked={checkedSessionIds.has(session.id)}
+      onToggleSessionSelected={onToggleSessionSelected}
+      threadCount={threadProps.threadCount}
+      areThreadsExpanded={threadProps.areThreadsExpanded}
+      hasRunningThread={threadProps.hasRunningThread}
+      onSetThreadsExpanded={onSetThreadsExpanded}
+      t={t}
+    />
+  );
 
   return (
     <div className="ml-3 space-y-1 border-l border-border pl-3">
@@ -223,34 +302,23 @@ export default function SidebarProjectSessions({
         </div>
       ) : (
         <>
-          {sessions.map((session) => (
-            <SidebarSessionItem
-              key={session.id}
-              project={project}
-              session={session}
-              selectedSession={selectedSession}
-              isProcessing={isSessionRunning(session)}
-              hasBackgroundWork={backgroundSessionIds.has(session.id)}
-              needsAttention={attentionSessionIds.has(session.id)}
-              hasUnreadOutput={unreadSessionIds.has(session.id)}
-              currentTime={currentTime}
-              onRenameDraftChange={onRenameDraftChange}
-              isEditing={session.id === sessionRenameId}
-              renameDraft={session.id === sessionRenameId ? sessionRenameDraft : ''}
-              onStartEditingSession={onStartEditingSession}
-              onCancelEditingSession={onCancelEditingSession}
-              onSaveEditingSession={onSaveEditingSession}
-              onProjectSelect={onProjectSelect}
-              onSessionSelect={onSessionSelect}
-              onDeleteSession={onDeleteSession}
-              onForkSession={onForkSession}
-              onArchiveSessionNow={onArchiveSessionNow}
-              isSelecting={isSelecting}
-              isChecked={checkedSessionIds.has(session.id)}
-              onToggleSessionSelected={onToggleSessionSelected}
-              t={t}
-            />
-          ))}
+          {sessionGroups.map(({ session, threads }) => {
+            const threadsExpanded = threads.length > 0 && areThreadsExpanded(session.id);
+            return (
+              <Fragment key={session.id}>
+                {renderSessionRow(session, {
+                  threadCount: threads.length,
+                  areThreadsExpanded: threadsExpanded,
+                  hasRunningThread: threads.some(isSessionRunning),
+                })}
+                {threadsExpanded && (
+                  <div className="ml-3 space-y-1 border-l border-border/60 pl-2">
+                    {threads.map((thread) => renderSessionRow(thread, NO_THREADS))}
+                  </div>
+                )}
+              </Fragment>
+            );
+          })}
 
           {hasMoreSessions && (
             <Button

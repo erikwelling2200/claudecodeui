@@ -61,6 +61,9 @@ type SidebarProjectItemProps = {
   onToggleSessionSelected: (projectId: string, sessionId: string) => void;
   onCancelSessionSelection: () => void;
   onDeleteSelectedSessions: (sessionIds: string[]) => void;
+  /** Parent sessions whose threads are folded out, across all projects. */
+  expandedThreadParentIds: ReadonlySet<string>;
+  onSetThreadsExpanded: (parentSessionId: string, expanded: boolean) => void;
   t: TFunction;
 };
 
@@ -116,6 +119,8 @@ function SidebarProjectItem({
   onToggleSessionSelected,
   onCancelSessionSelection,
   onDeleteSelectedSessions,
+  expandedThreadParentIds,
+  onSetThreadsExpanded,
   t,
 }: SidebarProjectItemProps) {
   // Project identity is tracked by the DB-assigned `projectId` everywhere
@@ -545,6 +550,8 @@ function SidebarProjectItem({
         onToggleSessionSelected={onToggleSessionSelected}
         onCancelSessionSelection={onCancelSessionSelection}
         onDeleteSelectedSessions={onDeleteSelectedSessions}
+        expandedThreadParentIds={expandedThreadParentIds}
+        onSetThreadsExpanded={onSetThreadsExpanded}
         t={t}
       />
     </div>

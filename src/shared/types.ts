@@ -98,6 +98,9 @@ export type ProjectSession = {
   messageCount?: number;
   provider?: LLMProvider;
   __provider?: LLMProvider;
+  // The chat this session is a thread of, or null for an ordinary chat. Threads
+  // are one level deep; the sidebar folds a thread under its loaded parent.
+  parentSessionId?: string | null;
   // Tags the session with the owning project's DB `projectId` so UI handlers
   // (session switching, sidebar focus, etc.) can match against selectedProject.
   __projectId?: string;
@@ -1654,6 +1657,10 @@ export type SidebarProjectListProps = SessionRowActions & {
   onCancelSessionSelection: () => void;
   /** Opens the bulk delete confirmation for the ids the list resolved as still deletable. */
   onDeleteSelectedSessions: (sessionIds: string[]) => void;
+  /** Parent sessions whose threads are folded out; persisted browser-locally. */
+  expandedThreadParentIds: ReadonlySet<string>;
+  /** Folds a parent session's threads out or in. Leaves any bulk selection alone. */
+  onSetThreadsExpanded: (parentSessionId: string, expanded: boolean) => void;
   t: TFunction;
 };
 
