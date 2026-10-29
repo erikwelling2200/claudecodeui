@@ -76,3 +76,11 @@ test('setChatName renames the chat and rejects blank or overlong names', async (
 test('a chat title taken from a prompt leaves out the appended text', () => {
   assert.equal(normalizeSessionName(appendPromptText('Fix the login form', 'Name this chat first.'), 'Untitled'), 'Fix the login form');
 });
+
+test('the registered MCP command answers the handshake when started outside the repo', async () => {
+  await withIsolatedDatabase(async () => {
+    // The test runner itself runs under `tsx --tsconfig server/tsconfig.json`, so this
+    // process carries the relative TSX_TSCONFIG_PATH an agent CLI would pass on.
+    assert.equal(await chatToolsService.checkMcpStarts(), null);
+  });
+});

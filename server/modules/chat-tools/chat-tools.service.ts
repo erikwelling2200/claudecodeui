@@ -1,6 +1,8 @@
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -8,7 +10,7 @@ import { appConfigDb } from '@/modules/database/index.js';
 import { providerMcpService, sessionsService } from '@/modules/providers/index.js';
 import { broadcastSessionUpserted } from '@/modules/websocket/index.js';
 import type { ChatToolsAppendMode, ChatToolsSettings } from '@/shared/types.js';
-import { AGENT_SESSION_ID_ENV, AppError, appendPromptText, getModuleDirectory } from '@/shared/utils.js';
+import { AGENT_SESSION_ID_ENV, AppError, appendPromptText, findServerRoot, getModuleDirectory } from '@/shared/utils.js';
 
 const require = createRequire(import.meta.url);
 const moduleDirectory = getModuleDirectory(import.meta.url);
@@ -18,6 +20,7 @@ const MCP_TOKEN_KEY = 'chat_tools_mcp_token';
 // The MCP config last written to the providers, so startup only rewrites their config files when it changed.
 const MCP_REGISTRATION_KEY = 'chat_tools_mcp_registration';
 const MCP_SERVER_NAME = 'cloudcli-chat';
+const MCP_START_TIMEOUT_MS = 15000;
 const MAX_CHAT_NAME_LENGTH = 80;
 
 const DEFAULT_APPEND_TEXT = 'Before you start on this message, name this chat: call the `set_chat_name` tool (MCP server `cloudcli-chat`) '
@@ -54,18 +57,27 @@ function getOrCreateMcpToken(): string {
  * The compiled build ships `chat-tools-mcp.js` beside this file; a server
  * running from source through tsx only has the `.ts`, which node runs with the
  * tsx loader.
+ *
+ * `tsx --tsconfig server/tsconfig.json` hands that relative path to every child
+ * process in TSX_TSCONFIG_PATH. The agent CLI passes it on to this MCP server,
+ * which starts in the chat's project folder, where the relative path does not
+ * exist and tsx exits before the handshake. An absolute path overrides it.
  */
-function getMcpCommand(): { command: string; args: string[] } {
+function getMcpCommand(): { command: string; args: string[]; env: Record<string, string> } {
   const compiledScript = path.join(moduleDirectory, 'chat-tools-mcp.js');
   if (fs.existsSync(compiledScript)) {
-    return { command: process.execPath, args: [compiledScript] };
+    return { command: process.execPath, args: [compiledScript], env: {} };
   }
   const tsxLoader = pathToFileURL(require.resolve('tsx')).href;
-  return { command: process.execPath, args: ['--import', tsxLoader, path.join(moduleDirectory, 'chat-tools-mcp.ts')] };
+  return {
+    command: process.execPath,
+    args: ['--import', tsxLoader, path.join(moduleDirectory, 'chat-tools-mcp.ts')],
+    env: { TSX_TSCONFIG_PATH: path.join(findServerRoot(moduleDirectory), 'tsconfig.json') },
+  };
 }
 
 function buildMcpServerInput() {
-  const { command, args } = getMcpCommand();
+  const { command, args, env } = getMcpCommand();
   const port = process.env.SERVER_PORT || process.env.PORT || '3001';
   return {
     name: MCP_SERVER_NAME,
@@ -74,6 +86,7 @@ function buildMcpServerInput() {
     command,
     args,
     env: {
+      ...env,
       CLOUDCLI_CHAT_TOOLS_MCP_TOKEN: getOrCreateMcpToken(),
       CLOUDCLI_CHAT_TOOLS_API_URL: `http://127.0.0.1:${port}/api/chat-tools-mcp`,
     },
@@ -89,6 +102,37 @@ async function registerMcp(): Promise<void> {
     console.warn(`[ChatTools] Could not register the ${MCP_SERVER_NAME} MCP server with ${failed.provider}: ${failed.error}`);
   }
   appConfigDb.set(MCP_REGISTRATION_KEY, JSON.stringify(input));
+}
+
+/**
+ * Launches the MCP server the way an agent CLI does (inherited environment,
+ * a folder outside this repo) and waits for its `initialize` answer.
+ * Resolves with null when it answered, or with the reason it did not.
+ */
+function checkMcpStarts(input: ReturnType<typeof buildMcpServerInput>): Promise<string | null> {
+  return new Promise((resolve) => {
+    const child = spawn(input.command, input.args, {
+      cwd: os.homedir(),
+      env: { ...process.env, ...input.env, [AGENT_SESSION_ID_ENV]: 'startup-check' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const finish = (reason: string | null) => {
+      clearTimeout(timer);
+      child.kill();
+      resolve(reason);
+    };
+    const timer = setTimeout(() => finish(`no answer within ${MCP_START_TIMEOUT_MS} ms. ${stderr.trim()}`), MCP_START_TIMEOUT_MS);
+    child.stdout.on('data', (chunk) => {
+      stdout += String(chunk);
+      if (stdout.includes('"result"')) finish(null);
+    });
+    child.stderr.on('data', (chunk) => { stderr = (stderr + String(chunk)).slice(-2000); });
+    child.on('error', (error) => finish(error.message));
+    child.on('exit', (code) => finish(`exited with code ${code} before answering. ${stderr.trim()}`));
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })}\n`);
+  });
 }
 
 async function unregisterMcp(): Promise<void> {
@@ -132,8 +176,15 @@ export const chatToolsService = {
    */
   async ensureMcpRegistered(): Promise<void> {
     if (!readSettings().renameToolEnabled) return;
-    if (appConfigDb.get(MCP_REGISTRATION_KEY) === JSON.stringify(buildMcpServerInput())) return;
-    await registerMcp();
+    if (appConfigDb.get(MCP_REGISTRATION_KEY) !== JSON.stringify(buildMcpServerInput())) await registerMcp();
+
+    const failure = await this.checkMcpStarts();
+    if (failure) console.error(`[ChatTools] The ${MCP_SERVER_NAME} MCP server does not start, so agents cannot use set_chat_name: ${failure}`);
+  },
+
+  /** Starts the registered MCP command once, as an agent would; null when it answered the handshake. */
+  checkMcpStarts(): Promise<string | null> {
+    return checkMcpStarts(buildMcpServerInput());
   },
 
   /**
