@@ -30,7 +30,8 @@ const tools = [
   {
     name: 'start_chat',
     description: 'Start a new CloudCLI chat that runs the given message as its first turn, in auto permission mode and on the same provider as this chat. '
-      + 'It shows in the CloudCLI sidebar right away. Returns as soon as the chat has started, without waiting for its answer.',
+      + 'By default it is a thread of this chat, folded under it in the CloudCLI sidebar. It is a full chat the user can open and talk to, not a subagent. '
+      + 'Returns as soon as the chat has started, without waiting for its answer.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -38,6 +39,8 @@ const tools = [
         model: { type: 'string', description: 'Model for the new chat, as the model picker names it (e.g. "opus", "sonnet", "fable").' },
         effort: { type: 'string', description: 'Optional reasoning effort: "low", "medium", "high", "xhigh" or "max".' },
         projectPath: { type: 'string', description: 'Optional project folder. Defaults to the project this chat runs in.' },
+        parentSessionId: { type: 'string', description: 'Optional session id of the chat to make this a thread of. Defaults to this chat. Threads are one level deep: a thread of a thread goes to its parent.' },
+        topLevel: { type: 'boolean', description: 'Start an ordinary top-level chat instead of a thread.' },
       },
       required: ['message', 'model'],
     },
@@ -74,8 +77,10 @@ async function callTool(name: string, args: Record<string, unknown>) {
         return { content: [{ type: 'text', text: `Chat renamed to "${result?.summary ?? args.name}".` }] };
       }
       case 'start_chat': {
-        const result = await callChatToolsApi(name, { message: args.message, model: args.model, effort: args.effort, projectPath: args.projectPath }) as { sessionId: string; projectPath: string };
-        return { content: [{ type: 'text', text: `Started chat ${result.sessionId} in ${result.projectPath}.` }] };
+        const input = { message: args.message, model: args.model, effort: args.effort, projectPath: args.projectPath, parentSessionId: args.parentSessionId, topLevel: args.topLevel };
+        const result = await callChatToolsApi(name, input) as { sessionId: string; projectPath: string; parentSessionId: string | null };
+        const placement = result.parentSessionId ? `as a thread of ${result.parentSessionId}` : 'as a top-level chat';
+        return { content: [{ type: 'text', text: `Started chat ${result.sessionId} in ${result.projectPath} ${placement}.` }] };
       }
       default:
         throw new Error(`Unknown tool: ${name}`);

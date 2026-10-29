@@ -15,6 +15,8 @@ type SessionRow = {
   effort: string | null;
   /** The app session this one was branched from; NULL unless it is a fork. */
   forked_from_session_id: string | null;
+  /** The app session this one is a thread of; NULL for a top-level chat. */
+  parent_session_id: string | null;
   isArchived: number;
   created_at: string;
   updated_at: string;
@@ -26,7 +28,7 @@ type RecentSessionsPage = {
 };
 
 const SESSION_ROW_COLUMNS =
-  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, forked_from_session_id, isArchived, created_at, updated_at';
+  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, forked_from_session_id, parent_session_id, isArchived, created_at, updated_at';
 
 const SQLITE_UTC_TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
@@ -180,6 +182,7 @@ export const sessionsDb = {
     provider: string,
     projectPath: string,
     customName?: string,
+    parentSessionId?: string,
   ): string {
     const db = getConnection();
     const normalizedProjectPath = normalizeProjectPathForProvider(provider, projectPath);
@@ -187,9 +190,9 @@ export const sessionsDb = {
     projectsDb.createProjectPath(normalizedProjectPath);
 
     db.prepare(
-      `INSERT INTO sessions (session_id, provider, provider_session_id, custom_name, project_path, jsonl_path, isArchived, created_at, updated_at)
-       VALUES (?, ?, NULL, ?, ?, NULL, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
-    ).run(sessionId, provider, customName ?? null, normalizedProjectPath);
+      `INSERT INTO sessions (session_id, provider, provider_session_id, custom_name, project_path, jsonl_path, parent_session_id, isArchived, created_at, updated_at)
+       VALUES (?, ?, NULL, ?, ?, NULL, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+    ).run(sessionId, provider, customName ?? null, normalizedProjectPath, parentSessionId ?? null);
 
     return sessionId;
   },
@@ -626,16 +629,31 @@ export const sessionsDb = {
     return normalizeSessionRows(rows);
   },
 
+  /**
+   * One page of a project's sessions, most recent activity first. A parent
+   * counts its threads' activity as its own and sorts before them on a tie, so
+   * it is never on a later page than its threads and the sidebar can fold
+   * them under it.
+   */
   getSessionsByProjectPathPage(projectPath: string, limit: number, offset: number): SessionRow[] {
     const db = getConnection();
     const normalizedProjectPath = normalizeProjectPath(projectPath);
     const rows = db
       .prepare(
         `SELECT ${SESSION_ROW_COLUMNS}
-         FROM sessions
+         FROM sessions s
          WHERE project_path = ?
            AND isArchived = 0
-         ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, session_id DESC
+         ORDER BY MAX(
+             datetime(COALESCE(updated_at, created_at)),
+             COALESCE((
+               SELECT MAX(datetime(COALESCE(c.updated_at, c.created_at)))
+               FROM sessions c
+               WHERE c.parent_session_id = s.session_id AND c.isArchived = 0 AND c.project_path = s.project_path
+             ), '')
+           ) DESC,
+           parent_session_id IS NOT NULL,
+           session_id DESC
          LIMIT ? OFFSET ?`
       )
       .all(normalizedProjectPath, limit, offset) as SessionRow[];

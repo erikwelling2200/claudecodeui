@@ -33,6 +33,20 @@ function readExpandedProjects(): Set<string> | null {
   }
 }
 
+const EXPANDED_THREADS_STORAGE_KEY = 'cloudcli-expanded-threads';
+
+/** Read the browser-local set of parent sessions whose threads are folded out. */
+function readExpandedThreadParentIds(): Set<string> {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(EXPANDED_THREADS_STORAGE_KEY) ?? 'null');
+    return Array.isArray(saved)
+      ? new Set(saved.filter((id): id is string => typeof id === 'string'))
+      : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
 type ArchivedSessionsApiPayload = {
   success?: boolean;
   data?: {
@@ -136,6 +150,17 @@ export function useSidebarController({
       localStorage.setItem(EXPANDED_PROJECTS_STORAGE_KEY, JSON.stringify([...expandedProjects]));
     } catch { /* Keep navigation working when browser storage is unavailable. */ }
   }, [expandedProjects, keepProjectsExpanded, selectedProject?.projectId]);
+  // Parent sessions whose threads are folded out. Collapsed is the default, so
+  // only the exceptions are kept, browser-locally like project expansion, and
+  // shared by the Projects and Running tabs.
+  const [expandedThreadParentIds, setExpandedThreadParentIds] = useState<ReadonlySet<string>>(
+    readExpandedThreadParentIds,
+  );
+  useEffect(() => {
+    try {
+      localStorage.setItem(EXPANDED_THREADS_STORAGE_KEY, JSON.stringify([...expandedThreadParentIds]));
+    } catch { /* Keep the fold-out working when browser storage is unavailable. */ }
+  }, [expandedThreadParentIds]);
   // Running groups start expanded and remember manual collapses independently of Projects.
   const [collapsedRunningProjects, setCollapsedRunningProjects] = useState<Set<string>>(new Set());
   // The one rename the sidebar has open, as a single value so a project and a
@@ -641,6 +666,23 @@ export function useSidebarController({
     },
     [searchMode, keepProjectsExpanded],
   );
+
+  // Unlike toggleProject this keeps the bulk selection: the rows stay in the
+  // same list, and a ticked thread that folds away simply stops counting.
+  const setThreadsExpanded = useCallback((parentSessionId: string, expanded: boolean) => {
+    setExpandedThreadParentIds((previous) => {
+      if (previous.has(parentSessionId) === expanded) {
+        return previous;
+      }
+      const next = new Set(previous);
+      if (expanded) {
+        next.add(parentSessionId);
+      } else {
+        next.delete(parentSessionId);
+      }
+      return next;
+    });
+  }, []);
 
   const isProjectExpanded = useCallback(
     (projectId: string) =>
@@ -1379,6 +1421,8 @@ export function useSidebarController({
     reloadRecentConversations,
     loadMoreRecentConversations,
     toggleProject,
+    expandedThreadParentIds,
+    setThreadsExpanded,
     handleSessionClick,
     forkSession,
     toggleStarProject,

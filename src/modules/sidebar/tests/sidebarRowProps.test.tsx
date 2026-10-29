@@ -108,6 +108,8 @@ const listProps = (
   onToggleSessionSelected: noop,
   onCancelSessionSelection: noop,
   onDeleteSelectedSessions: noop,
+  expandedThreadParentIds: NO_SESSION_IDS,
+  onSetThreadsExpanded: noop,
   t,
 });
 
@@ -262,6 +264,8 @@ const sessionsProps = (
   onToggleSessionSelected: noop,
   onCancelSessionSelection: noop,
   onDeleteSelectedSessions: noop,
+  expandedThreadParentIds: NO_SESSION_IDS,
+  onSetThreadsExpanded: noop,
   t,
 });
 

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { closeConnection } from '@/modules/database/connection.js';
+import { closeConnection, getConnection } from '@/modules/database/connection.js';
 import { initializeDatabase } from '@/modules/database/init-db.js';
 import { projectsDb } from '@/modules/database/repositories/projects.db.js';
 import { sessionsDb } from '@/modules/database/repositories/sessions.db.js';
@@ -164,5 +164,22 @@ test('recent sessions are globally ordered, paginated, and limited to visible co
       secondPage.sessions.map((session) => session.session_id),
       ['session-middle', 'session-oldest'],
     );
+  });
+});
+
+test('a project page sorts a parent by its latest thread and before its threads', async () => {
+  await withIsolatedDatabase(() => {
+    const fixtures: Array<Parameters<typeof sessionsDb.createSession>> = [
+      ['session-parent', 'claude', '/workspace/threads', 'Parent', '2026-07-18T08:00:00.000Z', '2026-07-18T08:00:00.000Z'],
+      ['session-other', 'claude', '/workspace/threads', 'Other', '2026-07-18T10:00:00.000Z', '2026-07-18T10:00:00.000Z'],
+      ['session-thread', 'claude', '/workspace/threads', 'Thread', '2026-07-18T11:00:00.000Z', '2026-07-18T11:00:00.000Z'],
+    ];
+    for (const fixture of fixtures) sessionsDb.createSession(...fixture);
+    getConnection().prepare('UPDATE sessions SET parent_session_id = ? WHERE session_id = ?').run('session-parent', 'session-thread');
+
+    const page = sessionsDb.getSessionsByProjectPathPage('/workspace/threads', 10, 0);
+
+    assert.deepEqual(page.map((row) => row.session_id), ['session-parent', 'session-thread', 'session-other']);
+    assert.equal(page[1].parent_session_id, 'session-parent');
   });
 });

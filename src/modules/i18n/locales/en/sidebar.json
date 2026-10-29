@@ -38,7 +38,9 @@
     "selectAllLoaded": "Select all loaded",
     "clearSelection": "Clear",
     "deleteSelected_one": "Delete {{count}} session",
-    "deleteSelected_other": "Delete {{count}} sessions"
+    "deleteSelected_other": "Delete {{count}} sessions",
+    "showThreads": "Show threads",
+    "hideThreads": "Hide threads"
   },
   "tooltips": {
     "viewEnvironments": "View Environments",

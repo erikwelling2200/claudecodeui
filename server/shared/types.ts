@@ -292,6 +292,8 @@ export type SessionUpsertedEvent = {
     summary: string;
     messageCount: number;
     lastActivity: string;
+    /** The session this one is a thread of; null for a top-level chat. */
+    parentSessionId: string | null;
   };
   project: SessionUpsertedProject | null;
   timestamp: string;

@@ -89,6 +89,58 @@ export const getAllSessions = (project: Project): SessionWithProvider[] => {
   return sessions;
 };
 
+// One top-level row of a session list and the threads folded under it.
+type SessionThreadGroup = {
+  session: SessionWithProvider;
+  /** Newest activity first; empty for a session without loaded threads. */
+  threads: SessionWithProvider[];
+};
+
+/**
+ * Folds each thread under its parent, for the per-project list and the
+ * Running tab. Only the sessions passed in count: a thread whose parent is not
+ * among them (not loaded yet, deleted, archived, in another project, or not
+ * running on the Running tab) stays a top-level row, so no session ever drops
+ * out of the list. Threads are one level deep, so a session is only a parent
+ * when it is itself top-level. Top-level rows are ordered newest first by
+ * their own or their threads' activity, whichever is later.
+ */
+export const groupSessionThreads = (sessions: SessionWithProvider[]): SessionThreadGroup[] => {
+  const loadedIds = new Set(sessions.map((session) => session.id));
+  const getLoadedParentId = (session: SessionWithProvider): string | null => {
+    const parentId = session.parentSessionId;
+    return parentId && parentId !== session.id && loadedIds.has(parentId) ? parentId : null;
+  };
+  // A parent that is itself a thread of a loaded session cannot hold threads.
+  const topLevelIds = new Set(
+    sessions.filter((session) => getLoadedParentId(session) === null).map((session) => session.id),
+  );
+
+  const threadsByParentId = new Map<string, SessionWithProvider[]>();
+  const topLevel: SessionWithProvider[] = [];
+  for (const session of sessions) {
+    const parentId = getLoadedParentId(session);
+    if (parentId && topLevelIds.has(parentId)) {
+      const threads = threadsByParentId.get(parentId) ?? [];
+      threads.push(session);
+      threadsByParentId.set(parentId, threads);
+    } else {
+      topLevel.push(session);
+    }
+  }
+
+  const groups = topLevel.map((session) => ({
+    session,
+    threads: (threadsByParentId.get(session.id) ?? []).sort(
+      (a, b) => getSessionDate(b).getTime() - getSessionDate(a).getTime(),
+    ),
+  }));
+  // A parent sits where its most recent thread's activity puts it, as the server pages it.
+  const getGroupActivity = (group: SessionThreadGroup): number =>
+    Math.max(getSessionDate(group.session).getTime(), ...group.threads.map((thread) => getSessionDate(thread).getTime()));
+  return groups.sort((a, b) => getGroupActivity(b) - getGroupActivity(a));
+};
+
 const getProjectLastActivity = (project: Project): Date => {
   const sessions = getAllSessions(project);
   if (sessions.length === 0) {

@@ -161,6 +161,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- normally. Informational only: a fork is a fully independent provider
     -- session, and deleting the source does not affect it.
     forked_from_session_id TEXT,
+    -- The app session this one is a thread of, NULL for a top-level chat. The
+    -- sidebar folds threads under their parent; when the parent is gone they
+    -- show at the top level again.
+    parent_session_id TEXT,
     isArchived BOOLEAN DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
