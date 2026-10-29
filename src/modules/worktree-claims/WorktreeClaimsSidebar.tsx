@@ -51,8 +51,6 @@ export function WorktreeClaimsSidebar({ sessionId }: WorktreeClaimsSidebarProps)
   }, [refresh]);
 
   const release = useCallback(async (claim: WorktreeClaim) => {
-    const label = `${claim.unitName} [${claim.suffix || 'main'}]`;
-    if (!window.confirm(t('worktreeClaims.sidebar.confirmRelease', { worktree: label }))) return;
     setReleasingKey(`${claim.unit}\u0000${claim.suffix}`);
     try {
       await readApiJson(await api.worktreeClaims.release(claim.unit, claim.suffix));
@@ -62,7 +60,7 @@ export function WorktreeClaimsSidebar({ sessionId }: WorktreeClaimsSidebarProps)
       setReleasingKey(null);
       void refresh();
     }
-  }, [refresh, t]);
+  }, [refresh]);
 
   if (claims.length === 0) return null;
 

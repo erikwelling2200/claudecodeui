@@ -418,7 +418,6 @@
     "sidebar": {
       "title": "Worktrees",
       "release": "Release",
-      "confirmRelease": "Release {{worktree}}? Another chat can then write there.",
       "freeAt": "Free at {{time}}"
     },
     "groups": {
