@@ -720,8 +720,10 @@ export const sessionsService = {
    * Archives or permanently deletes one persisted session row by id.
    *
    * Soft-delete mirrors the project behavior by toggling `isArchived` so the
-   * row disappears from active lists but remains restorable. Force-delete
-   * optionally removes the transcript file before deleting the database row.
+   * row disappears from active lists but remains restorable, and archives the
+   * session's threads with it (`threadSessionIds`). Force-delete optionally
+   * removes the transcript file before deleting the database row; it leaves
+   * threads alone, which then show as top-level chats.
    */
   async deleteOrArchiveSessionById(
     sessionId: string,
@@ -731,7 +733,7 @@ export const sessionsService = {
       /** Stop every CLI process attached to the session first, and let its transcript settle. */
       stopProcesses?: boolean;
     } = {},
-  ): Promise<{ sessionId: string; action: 'archived' | 'deleted'; deletedFromDisk: boolean }> {
+  ): Promise<{ sessionId: string; action: 'archived' | 'deleted'; deletedFromDisk: boolean; threadSessionIds: string[] }> {
     const session = sessionsDb.getSessionById(sessionId);
     if (!session) {
       throw new AppError(`Session "${sessionId}" was not found.`, {
@@ -740,22 +742,28 @@ export const sessionsService = {
       });
     }
 
-    if (options.stopProcesses) {
-      await sessionsService.stopSessionProcesses(sessionId);
-    } else {
-      // A closed chat does not keep its CLI process (and MCP servers) alive.
-      // A turn still running is left to finish, as a plain archive always has.
-      for (const provider of providerRegistry.listProviders()) {
-        provider.runtime.releaseIdleProcess?.(sessionId);
+    const threadSessionIds = options.force ? [] : sessionsDb.getThreadSessionIds(sessionId, false);
+    for (const closingSessionId of [sessionId, ...threadSessionIds]) {
+      if (options.stopProcesses) {
+        await sessionsService.stopSessionProcesses(closingSessionId);
+      } else {
+        // A closed chat does not keep its CLI process (and MCP servers) alive.
+        // A turn still running is left to finish, as a plain archive always has.
+        for (const provider of providerRegistry.listProviders()) {
+          provider.runtime.releaseIdleProcess?.(closingSessionId);
+        }
       }
     }
 
     if (!options.force) {
-      sessionsDb.updateSessionIsArchived(sessionId, true);
+      for (const archivingSessionId of [sessionId, ...threadSessionIds]) {
+        sessionsDb.updateSessionIsArchived(archivingSessionId, true);
+      }
       return {
         sessionId,
         action: 'archived',
         deletedFromDisk: false,
+        threadSessionIds,
       };
     }
 
@@ -788,6 +796,7 @@ export const sessionsService = {
       sessionId,
       action: 'deleted',
       deletedFromDisk: removedFromDisk,
+      threadSessionIds,
     };
   },
 
@@ -834,7 +843,8 @@ export const sessionsService = {
   },
 
   /**
-   * Restores one archived session back into the active sidebar lists.
+   * Restores one archived session back into the active sidebar lists, with
+   * its archived threads.
    */
   async restoreSessionById(sessionId: string): Promise<{ sessionId: string; isArchived: false }> {
     const session = sessionsDb.getSessionById(sessionId);
@@ -845,9 +855,11 @@ export const sessionsService = {
       });
     }
 
-    sessionsDb.updateSessionIsArchived(sessionId, false);
-    // Lets every open sidebar list the session again without a full refetch.
-    await broadcastSessionUpserted(sessionId);
+    for (const restoringSessionId of [sessionId, ...sessionsDb.getThreadSessionIds(sessionId, true)]) {
+      sessionsDb.updateSessionIsArchived(restoringSessionId, false);
+      // Lets every open sidebar list the session again without a full refetch.
+      await broadcastSessionUpserted(restoringSessionId);
+    }
     return { sessionId, isArchived: false };
   },
 

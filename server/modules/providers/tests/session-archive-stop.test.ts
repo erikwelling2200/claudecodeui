@@ -90,3 +90,28 @@ test('archiving or deleting a chat lets go of the process it keeps between turns
     assert.deepEqual(released, ['closed-chat', 'deleted-chat']);
   });
 });
+
+test('archiving a parent stops and archives its threads, and restoring it brings them back', { concurrency: false }, async () => {
+  await withIsolatedDatabase(async (tempDirectory) => {
+    sessionsDb.createAppSession('parent', 'claude', tempDirectory);
+    sessionsDb.createAppSession('thread', 'claude', tempDirectory, undefined, 'parent');
+    sessionsDb.createAppSession('unrelated', 'claude', tempDirectory);
+    const stopped: string[] = [];
+    sessionsService.setAppSessionProcessStopper(async (sessionId) => {
+      stopped.push(sessionId);
+      return false;
+    });
+
+    const result = await sessionsService.deleteOrArchiveSessionById('parent', { stopProcesses: true });
+
+    assert.deepEqual(result.threadSessionIds, ['thread']);
+    assert.deepEqual(stopped, ['parent', 'thread']);
+    assert.equal(sessionsDb.getSessionById('thread')?.isArchived, 1);
+    assert.equal(sessionsDb.getSessionById('unrelated')?.isArchived, 0);
+
+    await sessionsService.restoreSessionById('parent');
+
+    assert.equal(sessionsDb.getSessionById('parent')?.isArchived, 0);
+    assert.equal(sessionsDb.getSessionById('thread')?.isArchived, 0);
+  });
+});
