@@ -1,5 +1,9 @@
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
+
+// `waitFor` and `findBy*` give up after 1 s by default, which a render under a
+// loaded CPU can exceed; they still return as soon as their condition holds.
+configure({ asyncUtilTimeout: 5_000 });
 
 // Auto-cleanup only self-registers when vitest globals are enabled, and they are
 // not. Without this, a hook rendered in one test stays mounted — with its timers

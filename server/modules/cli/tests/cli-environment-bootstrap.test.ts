@@ -144,7 +144,8 @@ export function createCliApplication() {
         cwd: applicationRoot,
         encoding: 'utf8',
         env: childEnvironment,
-        timeout: 30_000,
+        // Hang guard only: the child compiles the CLI through tsx, which takes far longer while the suite runs in parallel.
+        timeout: 120_000,
       },
     );
     const resultLine = stdout

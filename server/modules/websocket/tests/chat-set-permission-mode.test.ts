@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,20 +8,9 @@ import { closeConnection, initializeDatabase, sessionsDb } from '@/modules/datab
 import { handleChatConnection } from '@/modules/websocket/services/chat-websocket.service.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
 import { connectedClients } from '@/modules/websocket/services/websocket-state.service.js';
+import { createFakeSocket } from '@/modules/websocket/tests/fake-chat-socket.js';
 
 const SESSION_ID = 'live-session';
-
-function createFakeSocket() {
-  const socket = new EventEmitter() as EventEmitter & {
-    readyState: number;
-    frames: Array<Record<string, unknown>>;
-    send: (data: string) => void;
-  };
-  socket.readyState = 1;
-  socket.frames = [];
-  socket.send = (data: string) => socket.frames.push(JSON.parse(data) as Record<string, unknown>);
-  return socket;
-}
 
 type ModeCall = { provider: string; sessionId: string; permissionMode: string };
 
@@ -71,13 +59,9 @@ async function withGateway(
   }
 }
 
-/** The handler is async and the socket listener does not await it. */
-const settle = () => new Promise((resolve) => { setTimeout(resolve, 30); });
-
 test('chat.set-permission-mode switches the session through its provider runtime', async () => {
   await withGateway(true, async ({ socket, calls }) => {
-    socket.emit('message', JSON.stringify({ type: 'chat.set-permission-mode', sessionId: SESSION_ID, permissionMode: 'auto' }));
-    await settle();
+    await socket.deliver({ type: 'chat.set-permission-mode', sessionId: SESSION_ID, permissionMode: 'auto' });
 
     // The provider comes from the session row, never from the frame.
     assert.deepEqual(calls, [{ provider: 'claude', sessionId: SESSION_ID, permissionMode: 'auto' }]);
@@ -87,8 +71,7 @@ test('chat.set-permission-mode switches the session through its provider runtime
 
 test('a session with no live process is not an error', async () => {
   await withGateway(false, async ({ socket, calls }) => {
-    socket.emit('message', JSON.stringify({ type: 'chat.set-permission-mode', sessionId: SESSION_ID, permissionMode: 'auto' }));
-    await settle();
+    await socket.deliver({ type: 'chat.set-permission-mode', sessionId: SESSION_ID, permissionMode: 'auto' });
 
     assert.equal(calls.length, 1);
     assert.deepEqual(socket.frames, []);
@@ -97,8 +80,7 @@ test('a session with no live process is not an error', async () => {
 
 test('a switch without a mode never reaches the runtime', async () => {
   await withGateway(true, async ({ socket, calls }) => {
-    socket.emit('message', JSON.stringify({ type: 'chat.set-permission-mode', sessionId: SESSION_ID }));
-    await settle();
+    await socket.deliver({ type: 'chat.set-permission-mode', sessionId: SESSION_ID });
 
     assert.equal(calls.length, 0);
     assert.equal(socket.frames.at(-1)?.code, 'PERMISSION_MODE_REQUIRED');
@@ -107,8 +89,7 @@ test('a switch without a mode never reaches the runtime', async () => {
 
 test('a switch for a session that does not exist is refused', async () => {
   await withGateway(true, async ({ socket, calls }) => {
-    socket.emit('message', JSON.stringify({ type: 'chat.set-permission-mode', sessionId: 'no-such-session', permissionMode: 'auto' }));
-    await settle();
+    await socket.deliver({ type: 'chat.set-permission-mode', sessionId: 'no-such-session', permissionMode: 'auto' });
 
     assert.equal(calls.length, 0);
     assert.equal(socket.frames.at(-1)?.code, 'SESSION_NOT_FOUND');

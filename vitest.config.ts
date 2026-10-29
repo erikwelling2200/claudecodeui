@@ -22,6 +22,10 @@ export default defineConfig({
     env: {
       VITE_IS_PLATFORM: 'false',
     },
+    // A hang guard, not a speed check: a test that imports inside its body pays for
+    // transforming that module graph, which takes well over the 5 s default while
+    // the suite shares the machine with other work.
+    testTimeout: 30_000,
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     restoreMocks: true,

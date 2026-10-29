@@ -13,6 +13,7 @@ import { closeConnection, initializeDatabase, sessionsDb } from '@/modules/datab
 import { chatRunRegistry, connectedClients } from '@/modules/websocket/index.js';
 import type { NormalizedMessage } from '@/shared/types.js';
 import { createNormalizedMessage } from '@/shared/utils.js';
+import { waitFor } from '@/shared/tests/wait-for.js';
 
 import { createAgentRouter } from '../agent.routes.js';
 
@@ -125,10 +126,7 @@ test('an API run is registered like a chat send: listed while running, streamed 
     const runtime = createHeldRuntime();
     await withAgentServer(createDependencies(runtime.queryClaude), async (baseUrl) => {
       const responsePromise = post(baseUrl, { projectPath: '/home/test/project', message: 'Run it' });
-      // Wait for the runtime to be entered.
-      for (let i = 0; i < 50 && runtime.seen.length === 0; i += 1) {
-        await new Promise((resolve) => { setTimeout(resolve, 20); });
-      }
+      await waitFor(() => runtime.seen.length > 0, 'the provider runtime has been entered');
 
       const [running] = chatRunRegistry.listRunningRuns();
       assert.ok(running, 'the run is on the running-sessions list while the provider works');
@@ -161,9 +159,7 @@ test('a second API request on a session mid-run is refused with 409, as the chat
     const runtime = createHeldRuntime();
     await withAgentServer(createDependencies(runtime.queryClaude), async (baseUrl) => {
       const first = post(baseUrl, { projectPath: '/home/test/project', message: 'Run it' });
-      for (let i = 0; i < 50 && runtime.seen.length === 0; i += 1) {
-        await new Promise((resolve) => { setTimeout(resolve, 20); });
-      }
+      await waitFor(() => runtime.seen.length > 0, 'the provider runtime has been entered');
       const [running] = chatRunRegistry.listRunningRuns();
       assert.ok(running);
 
@@ -281,9 +277,7 @@ test('a busy session is refused before anything is cloned', async () => {
     dependencies.spawnProcess = (() => { clones += 1; throw new Error('no clone expected'); }) as unknown as AgentDependencies['spawnProcess'];
     await withAgentServer(dependencies, async (baseUrl) => {
       const first = post(baseUrl, { projectPath: '/home/test/project', message: 'Run it' });
-      for (let i = 0; i < 50 && runtime.seen.length === 0; i += 1) {
-        await new Promise((resolve) => { setTimeout(resolve, 20); });
-      }
+      await waitFor(() => runtime.seen.length > 0, 'the provider runtime has been entered');
       const [running] = chatRunRegistry.listRunningRuns();
       assert.ok(running);
 
@@ -307,9 +301,7 @@ test('a run a tab aborted ends without branching or opening a PR, and says so', 
     dependencies.spawnProcess = (() => { gitCalls += 1; throw new Error('git should not run after an abort'); }) as unknown as AgentDependencies['spawnProcess'];
     await withAgentServer(dependencies, async (baseUrl) => {
       const responsePromise = post(baseUrl, { projectPath: '/home/test/project', message: 'Run it', createBranch: true, stream: false });
-      for (let i = 0; i < 50 && runtime.seen.length === 0; i += 1) {
-        await new Promise((resolve) => { setTimeout(resolve, 20); });
-      }
+      await waitFor(() => runtime.seen.length > 0, 'the provider runtime has been entered');
       const [running] = chatRunRegistry.listRunningRuns();
       assert.ok(running);
       // What chat.abort does: the run completes as aborted; the runtime then returns.

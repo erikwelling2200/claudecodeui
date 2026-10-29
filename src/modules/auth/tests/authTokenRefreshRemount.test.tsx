@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
-import { useEffect } from 'react';
+import { useLayoutEffect } from 'react';
 import { afterEach, beforeEach, test, vi } from 'vitest';
 
 import { AuthProvider, useAuth } from '@/modules/auth/context/AuthContext';
@@ -56,19 +56,21 @@ const stubServer = () => {
 
 // Mirrors ProtectedRoute's gate: the workspace only exists while auth is not
 // loading, so every loading pass after sign-in is an unmount + remount.
+// Counted in layout effects, which run in the same commit as the DOM update, so a
+// count read right after `findByText` is never one render behind.
 let workspaceMounts = 0;
 let loadingPasses = 0;
 let seenToken: string | null = null;
 
 function Workspace() {
-  useEffect(() => {
+  useLayoutEffect(() => {
     workspaceMounts += 1;
   }, []);
   return <div>workspace</div>;
 }
 
 function LoadingScreen() {
-  useEffect(() => {
+  useLayoutEffect(() => {
     loadingPasses += 1;
   }, []);
   return <div>loading</div>;
@@ -76,7 +78,7 @@ function LoadingScreen() {
 
 function Gate() {
   const { isLoading, user, token, hasCompletedOnboarding: onboarded } = useAuth();
-  useEffect(() => {
+  useLayoutEffect(() => {
     seenToken = token;
   }, [token]);
   if (isLoading) {
@@ -173,7 +175,7 @@ test('signing out after a token rotation still shows the login screen without a 
   let logout: (() => void) | null = null;
   function LogoutProbe() {
     const { logout: authLogout } = useAuth();
-    useEffect(() => {
+    useLayoutEffect(() => {
       logout = authLogout;
     }, [authLogout]);
     return null;
@@ -235,7 +237,7 @@ test('signing in before onboarding shows onboarding without mounting the workspa
   let login: ((username: string, password: string) => Promise<unknown>) | null = null;
   function LoginProbe() {
     const { login: authLogin } = useAuth();
-    useEffect(() => {
+    useLayoutEffect(() => {
       login = authLogin;
     }, [authLogin]);
     return null;

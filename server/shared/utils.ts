@@ -1513,6 +1513,11 @@ function parseCliVersion(output: string): string | null {
  * CLI update service (the version before and after an update).
  */
 export function probeCliVersion(command: string, args: string[] = ['--version']): CliVersionProbe {
+  // Spawning would end in ENOENT anyway; on Windows a missing `.cmd` still starts cmd.exe, which can hit the timeout.
+  if (path.isAbsolute(command) && !fs.existsSync(command)) {
+    return { installed: false, exitCode: null, version: null };
+  }
+
   const result = spawn.sync(command, args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
