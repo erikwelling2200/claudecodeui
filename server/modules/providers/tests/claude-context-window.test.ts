@@ -25,6 +25,7 @@ async function runScripted(
   appSessionId: string,
   stream: Emitted[],
   resumeProviderSessionId: string | null = null,
+  model?: string,
 ): Promise<NormalizedMessage[]> {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'claude-context-window-'));
   const sent: NormalizedMessage[] = [];
@@ -45,7 +46,7 @@ async function runScripted(
   };
 
   try {
-    await queryClaudeSDK('hello', { sessionId: appSessionId, cwd }, writer as never, context);
+    await queryClaudeSDK('hello', { sessionId: appSessionId, cwd, model }, writer as never, context);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -166,7 +167,7 @@ test('CONTEXT_WINDOW stays the fallback when the SDK reports no window', async (
       { type: 'system', subtype: 'init', session_id: nativeId },
       assistant(nativeId, 'claude-local'),
       result(nativeId, { 'claude-local': modelUsageEntry(undefined) }),
-    ]);
+    ], null, 'claude-local');
 
     const budgets = tokenBudgets(sent);
     assert.ok(budgets.length > 0);
@@ -237,5 +238,34 @@ test('a resumed session measures its first reading against the window it last re
     const budgets = tokenBudgets(resumed);
     // No 160000 flash before the turn ends, and nothing re-sent when the window did not change.
     assert.deepEqual(budgets.map((budget) => budget.total), [1_000_000]);
+  });
+});
+
+test('a new session starts from the window its model last reported', async () => {
+  await withContextWindowEnv('160000', async () => {
+    await runScripted('app-model-first', [
+      { type: 'system', subtype: 'init', session_id: 'native-model-first' },
+      assistant('native-model-first', 'claude-local-large'),
+      result('native-model-first', { 'claude-local-large': modelUsageEntry(500_000) }),
+    ], null, 'claude-local-large');
+
+    const second = await runScripted('app-model-second', [
+      { type: 'system', subtype: 'init', session_id: 'native-model-second' },
+      assistant('native-model-second', 'claude-local-large'),
+      result('native-model-second', { 'claude-local-large': modelUsageEntry(500_000) }),
+    ], null, 'claude-local-large');
+
+    assert.deepEqual(tokenBudgets(second).map((budget) => budget.total), [500_000]);
+  });
+});
+
+test('an Opus session starts at 1M before any turn has reported a window', async () => {
+  await withContextWindowEnv('160000', async () => {
+    const sent = await runScripted('app-opus-first', [
+      { type: 'system', subtype: 'init', session_id: 'native-opus-first' },
+      assistant('native-opus-first', 'claude-opus-5-5'),
+    ], null, 'claude-opus-5-5');
+
+    assert.deepEqual(tokenBudgets(sent).map((budget) => budget.total), [1_000_000]);
   });
 });

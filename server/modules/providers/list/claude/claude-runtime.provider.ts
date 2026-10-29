@@ -40,6 +40,7 @@ import {
 import { sessionHistoryCache } from '@/modules/providers/services/session-history-cache.service.js';
 import {
   getReportedClaudeContextWindow,
+  getReportedClaudeModelContextWindow,
   rememberClaudeContextWindow
 } from '@/modules/providers/services/provider-token-usage.service.js';
 import { appendPromptText, buildAgentSessionEnv, createCompleteMessage, createNormalizedMessage } from '@/shared/utils.js';
@@ -662,6 +663,14 @@ function resolveContextWindow(reportedContextWindow?: number | null): number {
     return reportedContextWindow;
   }
   return parseInt(process.env.CONTEXT_WINDOW ?? '', 10) || 160000;
+}
+
+/**
+ * The window a requested model id is known to have before any turn reports one: Opus and
+ * every `[1m]` variant run with 1M. A reported window replaces this after the first turn.
+ */
+function knownClaudeContextWindow(requestedModel: string | null | undefined): number | null {
+  return requestedModel && /opus|\[1m\]$/i.test(requestedModel) ? 1_000_000 : null;
 }
 
 /**
@@ -1353,6 +1362,7 @@ async function queryClaudeSDK(
       model: resolvedModel || options.model,
       effortModels,
     });
+    reportedContextWindow ??= getReportedClaudeModelContextWindow(sdkOptions.model) ?? knownClaudeContextWindow(sdkOptions.model);
     const planModeGrants = new Set<string>();
     syncPlanModeTools(sdkOptions.allowedTools, planModeGrants, options.permissionMode);
     // The echo of a steered message is the only word on whether the CLI took it
@@ -1855,7 +1865,7 @@ async function queryClaudeSDK(
       const contextWindowChanged = Boolean(turnContextWindow) && turnContextWindow !== reportedContextWindow;
       if (turnContextWindow) {
         reportedContextWindow = turnContextWindow;
-        rememberClaudeContextWindow(message.session_id || capturedSessionId, turnContextWindow);
+        rememberClaudeContextWindow(message.session_id || capturedSessionId, turnContextWindow, sdkOptions.model);
         if (contextWindowChanged && sessionKey()) {
           // A history page cached before this turn ended carries the old total.
           sessionHistoryCache.invalidate(sessionKey());
