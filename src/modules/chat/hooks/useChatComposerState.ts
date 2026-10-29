@@ -751,10 +751,13 @@ export function useChatComposerState({
   // server refuses the message, it goes back into the composer, in front of
   // anything typed since, and the composer says so, rather than showing a card
   // nothing will send.
+  //
+  // `fromComposer: false` queues a message that already left the composer (a
+  // mid-turn message the server could not take), so the composer is left as it is.
   const queueMessage = useCallback(
-    async (durableDraft: QueuedDraft, queuedSessionKey: string | null) => {
+    async (durableDraft: QueuedDraft, queuedSessionKey: string | null, { fromComposer = true } = {}) => {
       const queuedFromOpenComposer = !queuedSessionKey || sessionKeyRef.current === queuedSessionKey;
-      if (queuedFromOpenComposer) {
+      if (queuedFromOpenComposer && fromComposer) {
         setInput('');
         inputValueRef.current = '';
         setAttachedFiles([]);
@@ -920,8 +923,11 @@ export function useChatComposerState({
         // Claude reads a message sent mid-turn at its next step, as in the CLI.
         // It shows as pending until then, and as the user message it is from
         // the point the model read it. A slash command is a turn of its own and
-        // an edit rewinds the conversation, so those still wait for the turn.
-        if (provider === 'claude' && steerSessionId && !editingAnchorId && !currentInput.trimStart().startsWith('/')) {
+        // an edit rewinds the conversation, so those still wait for the turn,
+        // as does a turn this app cannot interrupt: one a Claude CLI process
+        // it does not drive is running, which it cannot add a message to either.
+        const runsHere = processingSessionsRef.current?.get(steerSessionId ?? '')?.canInterrupt !== false;
+        if (provider === 'claude' && steerSessionId && runsHere && !editingAnchorId && !currentInput.trimStart().startsWith('/')) {
           const steerId = crypto.randomUUID();
           addPendingSteer({
             steerId,
@@ -1289,19 +1295,14 @@ export function useChatComposerState({
     sendMessage({ type: 'chat.steer-now', sessionId: steerSessionId, steerId });
   }, [sendMessage, steerSessionId]);
 
-  // A message the server declined (the turn had ended just before it arrived)
-  // goes back into this composer, so it is sent like any other once Enter is pressed.
+  // A message the server could not add to a turn (it ended just before, or it
+  // is not one this server runs) is queued, as any message sent while the chat
+  // is busy was before mid-turn sending: the server sends it once the chat is idle.
   useEffect(() => onPendingSteerDeclined((steer) => {
-    if (!steer.resend || steer.sessionId !== steerSessionId) {
-      return;
+    if (steer.resend) {
+      void queueMessage(steer.resend, steer.sessionId, { fromComposer: false });
     }
-    const { content, attachments } = steer.resend;
-    const typed = inputValueRef.current;
-    const next = typed.trim() ? `${content}\n\n${typed}` : content;
-    setInput(next);
-    inputValueRef.current = next;
-    setAttachedFiles((current) => [...attachments, ...current]);
-  }), [setInput, steerSessionId]);
+  }), [queueMessage]);
 
   // A voice transcript either fills the input (to edit before sending) or, when the
   // user tapped "stop and send", is submitted straight away. Mirror the value into
