@@ -84,6 +84,13 @@
     "reportIssue": "Report Issue",
     "starOnGithub": "Star on GitHub"
   },
+  "usage": {
+    "asOf": "as of {{age}} ago",
+    "noReading": "no reading yet, click to refresh",
+    "clickToRefresh": "click to refresh",
+    "refreshing": "refreshing...",
+    "resetsIn": "Resets in {{time}}"
+  },
   "branding": {
     "openSource": "Open Source"
   },

@@ -657,6 +657,12 @@ export const api = {
   system: {
     update: () => post('/api/system/update'),
   },
+
+  // Claude plan limits shown at the bottom of the sidebar
+  usage: {
+    get: () => get('/api/usage'),
+    refresh: () => post('/api/usage/refresh'),
+  },
 };
 
 // ---------------------------
