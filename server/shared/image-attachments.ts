@@ -2,6 +2,8 @@ import { promises as fs, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { stripAppendedPromptText } from '@/shared/utils.js';
+
 /**
  * Shared chat-attachment plumbing for every provider runtime.
  *
@@ -277,13 +279,16 @@ function parseNumberedImageEntries(inner: string): ParsedImageAttachment[] {
 
 /**
  * Strips the last provider-neutral file reference block from persisted prompt
- * text and restores its attachment descriptors for chat history.
+ * text and restores its attachment descriptors for chat history. Every
+ * provider's history reader passes user prompts through here, so it also drops
+ * the server-appended instructions (`<cloudcli_appended>`).
  */
-export function parseFilesInputTag(text: string): {
+export function parseFilesInputTag(rawText: string): {
   text: string;
   filePaths: string[];
   attachments: ParsedImageAttachment[];
 } {
+  const text = typeof rawText === 'string' ? stripAppendedPromptText(rawText) : rawText;
   if (typeof text !== 'string' || !text.includes('<files_input>')) {
     return { text, filePaths: [], attachments: [] };
   }

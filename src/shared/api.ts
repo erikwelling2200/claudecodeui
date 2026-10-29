@@ -625,6 +625,11 @@ export const api = {
       ),
   },
 
+  chatTools: {
+    settings: () => get('/api/chat-tools/settings'),
+    saveSettings: (settings: unknown) => put('/api/chat-tools/settings', settings),
+  },
+
   browserUse: {
     status: () => get('/api/browser-use/status'),
     settings: () => get('/api/browser-use/settings'),

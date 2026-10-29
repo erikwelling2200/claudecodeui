@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { chatToolsService } from '@/modules/chat-tools/index.js';
 import { closeConnection, initializeDatabase, scheduledMessagesDb, sessionDraftsDb, sessionsDb, userDb } from '@/modules/database/index.js';
 import { dispatchDueScheduledMessages, dispatchQueuedMessages } from '@/modules/scheduled-messages/services/scheduled-message-dispatcher.service.js';
 import { scheduledMessagesService } from '@/modules/scheduled-messages/services/scheduled-messages.service.js';
@@ -18,6 +19,8 @@ async function withIsolatedDatabase(runTest: (userId: number) => void | Promise<
   closeConnection();
   process.env.DATABASE_PATH = path.join(tempDirectory, 'auth.db');
   await initializeDatabase();
+  // These tests assert the exact prompt a provider receives.
+  await chatToolsService.updateSettings({ appendMode: 'off' });
 
   try {
     const user = userDb.createUser('scheduler', 'hash');

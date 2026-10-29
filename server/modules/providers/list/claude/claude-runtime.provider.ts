@@ -42,7 +42,7 @@ import {
   getReportedClaudeContextWindow,
   rememberClaudeContextWindow
 } from '@/modules/providers/services/provider-token-usage.service.js';
-import { createCompleteMessage, createNormalizedMessage } from '@/shared/utils.js';
+import { buildAgentSessionEnv, createCompleteMessage, createNormalizedMessage } from '@/shared/utils.js';
 import type {
   AnyRecord,
   BackgroundTaskSummary,
@@ -386,6 +386,7 @@ function syncPlanModeTools(allowedTools: string[], granted: Set<string>, permiss
 /** Exported for the Providers tests; the runtime below is its only production caller. */
 export function mapCliOptionsToSDK(options: AnyRecord = {}) {
   const {
+    sessionId,
     providerSessionId,
     cwd,
     additionalDirectories,
@@ -398,7 +399,7 @@ export function mapCliOptionsToSDK(options: AnyRecord = {}) {
 
   const sdkOptions: AnyRecord = {};
 
-  sdkOptions.env = buildClaudeSdkEnv();
+  sdkOptions.env = { ...buildClaudeSdkEnv(), ...buildAgentSessionEnv(sessionId) };
 
   // Resolve the executable eagerly on Windows because the SDK uses raw child_process.spawn,
   // which does not reliably follow npm's shell wrappers like cross-spawn does.

@@ -1765,3 +1765,24 @@ export type CliApplication = {
 export type SandboxCommandService = {
   execute(argumentsList: string[]): Promise<number>;
 };
+
+// ---------------------------
+//----------------- CHAT TOOLS SETTINGS TYPES ------------
+/**
+ * Which user messages get the configured text appended before they reach the
+ * provider: none, only the first message of a chat, or every message.
+ */
+export type ChatToolsAppendMode = 'off' | 'first' | 'every';
+
+/**
+ * Server-wide settings of the chat-tools module, stored in `app_config`.
+ * The chat-tools service reads and writes them; its routes parse request
+ * bodies into a partial of this shape.
+ */
+export type ChatToolsSettings = {
+  appendMode: ChatToolsAppendMode;
+  /** Instructions appended to a user message; blank text appends nothing. */
+  appendText: string;
+  /** Whether the `cloudcli-chat` MCP server (the `set_chat_name` tool) is registered with every provider. */
+  renameToolEnabled: boolean;
+};

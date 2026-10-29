@@ -125,6 +125,7 @@
   "mainTabs": {
     "label": "Settings",
     "agents": "Agents",
+    "messages": "Messages",
     "appearance": "Appearance",
     "git": "Git",
     "apiTokens": "API & Tokens",
@@ -883,5 +884,22 @@
     "teamManagementDescription": "Multiple users, role-based access, and shared projects for your team.",
     "licensed": "Licensed under AGPL-3.0",
     "proCta": "Available with CloudCLI Pro"
+  },
+  "messagesSettings": {
+    "sectionTitle": "Appended text",
+    "appendModeLabel": "Append to",
+    "appendModes": {
+      "off": "No messages",
+      "first": "First message of a chat",
+      "every": "Every message"
+    },
+    "appendTextLabel": "Text",
+    "resetText": "Reset to default",
+    "saving": "Saving...",
+    "toolsTitle": "Agent tools",
+    "renameToolLabel": "set_chat_name",
+    "renameToolDescription": "MCP server cloudcli-chat, registered with every agent",
+    "loadFailed": "Could not load the message settings.",
+    "saveFailed": "Could not save the message settings."
   }
 }
