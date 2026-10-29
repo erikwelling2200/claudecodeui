@@ -10,7 +10,7 @@ import type {
   RefObject,
   TouchEvent,
 } from 'react';
-import { PaperclipIcon, SlashIcon, XIcon, Loader2, ArrowUpIcon, PencilIcon } from 'lucide-react';
+import { PaperclipIcon, SlashIcon, XIcon, Loader2, ArrowUpIcon, PencilIcon, RadioTowerIcon, ExternalLinkIcon } from 'lucide-react';
 
 import { useVoiceInput } from '@/modules/chat/hooks/useVoiceInput';
 import { useVoiceAvailable } from '@/modules/chat/hooks/useVoiceAvailable';
@@ -39,6 +39,7 @@ import { ScheduleMessagePopover } from '@/modules/chat/composer/ScheduleMessageP
 import { ScheduledMessageList } from '@/modules/chat/composer/ScheduledMessageList';
 import ComposerModelMenu from '@/modules/chat/composer/ComposerModelMenu';
 import ComposerPermissionMenu from '@/modules/chat/composer/ComposerPermissionMenu';
+import type { RemoteControlStatus } from '@/modules/chat/utils/remoteControl';
 
 type MentionableFile = {
   name: string;
@@ -71,6 +72,9 @@ type ChatComposerProps = {
   tokenBudget: Record<string, unknown> | null;
   onShowTokenUsage: () => void;
   onToggleCommandMenu: () => void;
+  /** Null when the provider has no Remote Control. */
+  remoteControl: RemoteControlStatus | null;
+  onToggleRemoteControl: () => void;
   hasInput: boolean;
   onClearInput: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement> | MouseEvent<HTMLButtonElement> | TouchEvent<HTMLButtonElement>) => void;
@@ -150,6 +154,8 @@ export default function ChatComposer({
   tokenBudget,
   onShowTokenUsage,
   onToggleCommandMenu,
+  remoteControl,
+  onToggleRemoteControl,
   hasInput,
   onClearInput,
   onSubmit,
@@ -484,6 +490,28 @@ export default function ChatComposer({
             >
               <SlashIcon />
             </PromptInputButton>
+
+            {remoteControl && (
+              <PromptInputButton
+                tooltip={{ content: remoteControl.wanted ? t('input.remoteControlOn') : t('input.remoteControlOff') }}
+                onClick={onToggleRemoteControl}
+                aria-label={t('input.remoteControl')}
+                aria-pressed={remoteControl.wanted}
+                className={remoteControl.wanted ? 'bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary' : undefined}
+              >
+                <RadioTowerIcon />
+              </PromptInputButton>
+            )}
+
+            {remoteControl?.wanted && remoteControl.sessionUrl && (
+              <PromptInputButton
+                tooltip={{ content: t('input.openRemoteControl') }}
+                aria-label={t('input.openRemoteControl')}
+                onClick={() => window.open(remoteControl.sessionUrl!, '_blank', 'noopener,noreferrer')}
+              >
+                <ExternalLinkIcon />
+              </PromptInputButton>
+            )}
 
             {hasInput && (
               <PromptInputButton

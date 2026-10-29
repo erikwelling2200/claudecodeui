@@ -736,7 +736,9 @@ type MessageKind =
   | 'task_notification'
   | 'task_status'
   // A message sent mid-turn that the CLI has not taken into the turn yet.
-  | 'steer_pending';
+  | 'steer_pending'
+  // Remote Control started or stopped in the session's process, or failed to start.
+  | 'remote_control';
 
 // ---------------------------
 

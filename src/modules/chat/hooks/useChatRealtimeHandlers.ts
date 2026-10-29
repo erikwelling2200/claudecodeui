@@ -8,6 +8,7 @@ import type { SessionStore } from '@/modules/chat/hooks/useSessionStore';
 import { normalizedToChatMessages } from '@/modules/chat/hooks/useChatMessages';
 import { collectRunningBackgroundTasks, listRunningBackgroundLaunches, readBackgroundTaskId, readBackgroundTaskStatus } from '@/modules/chat/utils/backgroundTasks';
 import { addPendingSteer, clearPendingSteers, declinePendingSteer, takePendingSteer } from '@/modules/chat/utils/pendingSteers';
+import { applyRemoteControlEvent } from '@/modules/chat/utils/remoteControl';
 
 const isActionablePermissionRequest = (request: { toolName?: unknown } | null | undefined): boolean => {
   return request?.toolName !== 'ExitPlanMode' && request?.toolName !== 'exit_plan_mode';
@@ -244,6 +245,22 @@ export function useChatRealtimeHandlers({
               content: typeof msg.content === 'string' ? msg.content : '',
               attachmentCount: 0,
             });
+          }
+          return;
+
+        case 'remote_control':
+          if (sid) {
+            applyRemoteControlEvent(sid, { enabled: msg.enabled, sessionUrl: msg.sessionUrl, error: msg.error });
+            if (msg.error) {
+              sessionStore.appendRealtime(sid, {
+                id: `remote_control_error_${Date.now()}`,
+                sessionId: sid,
+                timestamp: new Date().toISOString(),
+                provider,
+                kind: 'error',
+                content: `Remote Control: ${String(msg.error)}`,
+              } as NormalizedMessage);
+            }
           }
           return;
 

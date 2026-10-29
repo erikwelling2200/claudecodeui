@@ -122,6 +122,11 @@ export function createProviderRuntimeService(
       return Boolean(await runtime.setPermissionMode?.(sessionId, permissionMode));
     },
 
+    async setRemoteControl(providerName: LLMProvider, sessionId: string, enabled: boolean) {
+      const { runtime } = dependencies.resolveProvider(providerName);
+      return (await runtime.setRemoteControl?.(sessionId, enabled)) ?? null;
+    },
+
     async steerTurn(providerName: LLMProvider, sessionId: string, command: string, options: AnyRecord): Promise<boolean> {
       const { runtime } = dependencies.resolveProvider(providerName);
       return Boolean(await runtime.steerTurn?.(sessionId, command, options));

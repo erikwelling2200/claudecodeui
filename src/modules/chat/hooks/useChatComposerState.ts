@@ -32,6 +32,7 @@ import { addPendingSteer, markPendingSteerInterrupting, onPendingSteerDeclined, 
 import { useFileMentions } from '@/modules/chat/hooks/useFileMentions';
 import { useInputHistory } from '@/modules/chat/hooks/useInputHistory';
 import { useSlashCommands } from '@/modules/chat/hooks/useSlashCommands';
+import { readRemoteControlWanted } from '@/modules/chat/utils/remoteControl';
 
 type UseChatComposerStateArgs = {
   selectedProject: Project | null;
@@ -687,6 +688,8 @@ export function useChatComposerState({
       toolsSettings,
       skipPermissions: toolsSettings?.skipPermissions || false,
       sessionSummary: getNotificationSessionSummary(selectedSession, currentInput),
+      // Started by the server when this turn launches the chat's process.
+      ...(provider === 'claude' && readRemoteControlWanted(selectedSession?.id ?? null) ? { remoteControl: true } : {}),
     };
   }, [
     currentProviderEffort,

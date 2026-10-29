@@ -149,6 +149,10 @@
     },
     "clickToChangeMode": "Click to change permission mode (or press Tab in input)",
     "showAllCommands": "Show all commands",
+    "remoteControl": "Remote Control",
+    "remoteControlOn": "Remote Control on",
+    "remoteControlOff": "Remote Control off",
+    "openRemoteControl": "Open on claude.ai",
     "clearInput": "Clear input",
     "scrollToBottom": "Scroll to bottom",
     "queue": {

@@ -76,6 +76,12 @@ export interface IProviderRuntime {
    */
   setPermissionMode?(sessionId: string, permissionMode: string): Promise<boolean>;
   /**
+   * Starts or stops Remote Control in the session's live process. Resolves null
+   * when the session has no live process; the next turn then starts it when it
+   * is sent with `remoteControl: true`.
+   */
+  setRemoteControl?(sessionId: string, enabled: boolean): Promise<{ enabled: boolean; sessionUrl: string | null } | null>;
+  /**
    * Adds a user message to the session's turn in flight, so it reaches the
    * model at its next step instead of after the turn. `options` carries the
    * client's `steerId` for the message and the `images`, `files` and `cwd` a
