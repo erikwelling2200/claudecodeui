@@ -115,13 +115,24 @@ const reportedClaudeContextWindows = new Map<string, number>();
 const MAX_REPORTED_CLAUDE_CONTEXT_WINDOWS = 1000;
 
 /**
- * Used by the Claude runtime provider to record the window the SDK reported for
- * a session's turn. Non-positive or non-numeric values are ignored so a build
- * that reports no window never overwrites one that did.
+ * The last window reported per requested model id (`opus`, `claude-opus-5-5[1m]`), so a
+ * new session's first turn divides by the real window instead of CONTEXT_WINDOW.
  */
-export function rememberClaudeContextWindow(providerSessionId: string, contextWindow: number): void {
+const reportedClaudeModelContextWindows = new Map<string, number>();
+
+/**
+ * Used by the Claude runtime provider to record the window the SDK reported for
+ * a session's turn, and for the model id that session requested. Non-positive or
+ * non-numeric values are ignored so a build that reports no window never
+ * overwrites one that did.
+ */
+export function rememberClaudeContextWindow(providerSessionId: string, contextWindow: number, requestedModel?: string | null): void {
   if (!providerSessionId || !Number.isFinite(contextWindow) || contextWindow <= 0) {
     return;
+  }
+
+  if (requestedModel) {
+    reportedClaudeModelContextWindows.set(requestedModel, contextWindow);
   }
 
   // Re-insert so the most recently reported sessions are the last evicted.
@@ -142,6 +153,11 @@ export function rememberClaudeContextWindow(providerSessionId: string, contextWi
  */
 export function getReportedClaudeContextWindow(providerSessionId: string | null | undefined): number | undefined {
   return providerSessionId ? reportedClaudeContextWindows.get(providerSessionId) : undefined;
+}
+
+/** Used by the Claude runtime provider to start a session with no report of its own from its model's last window. */
+export function getReportedClaudeModelContextWindow(requestedModel: string | null | undefined): number | undefined {
+  return requestedModel ? reportedClaudeModelContextWindows.get(requestedModel) : undefined;
 }
 
 function readUsageNumber(value: unknown): number {
