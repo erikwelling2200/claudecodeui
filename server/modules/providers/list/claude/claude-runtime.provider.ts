@@ -374,6 +374,13 @@ function globToRegExp(pattern: string): RegExp {
   return compiled;
 }
 
+/**
+ * Shell syntax that runs a second command after, or inside, the first one.
+ * A prefix rule only vouches for the command it names, so `Bash(git status:*)`
+ * must not carry `git status && rm -rf build` along with it.
+ */
+const COMMAND_CHAINING = /(\|\||&&|[;|&`]|\$\(|<\(|>\()/;
+
 /** The command a Bash or PowerShell call runs, however the SDK passed its input. */
 function readToolCommand(input: unknown): string {
   if (typeof input === 'string') {
@@ -419,7 +426,16 @@ function matchesToolPermission(entry: string, toolName: string, input: unknown) 
 
   // A trailing `:*` is a prefix rule: everything after the prefix is free.
   const prefixPattern = commandPattern.endsWith(':*') ? commandPattern.slice(0, -2) : null;
-  return globToRegExp(prefixPattern === null ? commandPattern : `${prefixPattern}*`).test(command);
+  if (prefixPattern === null) {
+    return globToRegExp(commandPattern).test(command);
+  }
+
+  // A chained command is several commands, and the rule speaks for one of
+  // them. Let it through to the classifier or the user instead.
+  if (COMMAND_CHAINING.test(command)) {
+    return false;
+  }
+  return globToRegExp(`${prefixPattern}*`).test(command);
 }
 
 /**
