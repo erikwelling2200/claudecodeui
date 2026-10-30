@@ -222,9 +222,10 @@ function preToolUseDecision(
 
 /**
  * Identifies one tool call by what it does rather than by its `tool_use_id`,
- * which `PermissionRequest` is not given and a retried call is not guaranteed
- * to keep. Two identical calls therefore share a signature, so each occurrence
- * clears the previous one's bookkeeping in PreToolUse before it is judged.
+ * which a retried call is not guaranteed to keep — and the one-shot grant has
+ * to match the retry. Two identical calls therefore share a signature, so each
+ * occurrence clears the previous one's bookkeeping in PreToolUse before it is
+ * judged.
  */
 function toolCallSignature(toolName: string, input: unknown): string {
   try {
@@ -1418,8 +1419,8 @@ async function queryClaudeSDK(
     // Tool calls this run denied from its own lists, so the PermissionDenied
     // hook can tell its own verdict from the classifier's; one-shot grants from
     // an allow-once, which leaves no rule behind for the retry to match; and
-    // the calls already re-prompted once, so a retry the classifier denies
-    // again stops instead of looping.
+    // the calls that have already had a dialog, so the fallback hook does not
+    // open a second one for the same call.
     const selfDeniedToolUses = new Set<string>();
     const oneShotGrants = new Map<string, number>();
     const answeredCalls = new Set<string>();
@@ -1435,15 +1436,20 @@ async function queryClaudeSDK(
     };
 
     /**
-     * Raises one dialog for a tool call and waits for the answer, writing the
-     * rule back to this run's lists when the user chose "always allow". Called
-     * only through `askUserAboutTool`, which makes sure one call gets one dialog.
+     * Asks the user about one tool call and waits for the answer, writing the
+     * rule back to this run's lists when they chose "always allow". Shared by
+     * the `canUseTool` callback and the PermissionDenied hook, so a prompt
+     * behaves the same whichever of them raised it.
+     *
+     * How long it waits belongs to the call: an interactive tool waits for as
+     * long as the user takes, anything else for the usual approval window.
      */
-    const raiseToolPrompt = async (
+    const askUserAboutTool = async (
       toolName: string,
       input: unknown,
-      waitOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
+      signal?: AbortSignal,
     ): Promise<ToolApprovalDecision> => {
+      const waitOptions = { signal, timeoutMs: TOOLS_REQUIRING_INTERACTION.has(toolName) ? 0 : undefined };
       // The prompt and its answer stay with the turn that asked, even if a
       // later turn takes the process over while it waits.
       const writer = turnWriter;
@@ -1489,7 +1495,7 @@ async function queryClaudeSDK(
       });
 
       // The call has had its dialog, whether it was answered, timed out or
-      // was cancelled. The fallback hook checks this so one call cannot
+      // was cancelled. The PermissionDenied hook checks this so one call cannot
       // produce two prompts; PreToolUse clears it for a later occurrence.
       answeredCalls.add(toolCallSignature(toolName, input));
 
@@ -1516,34 +1522,8 @@ async function queryClaudeSDK(
       return decision;
     };
 
-    const promptsInFlight = new Map<string, Promise<ToolApprovalDecision>>();
-
-    /**
-     * Asks the user about one tool call, with one dialog per call however many
-     * callers ask. When a call needs a decision the CLI invokes `canUseTool`
-     * and the PermissionRequest hook together and takes whichever answers
-     * first, so both ask here: the second joins the dialog the first raised,
-     * and both resolve with the same answer the moment the user gives it.
-     */
-    const askUserAboutTool = (
-      toolName: string,
-      input: unknown,
-      waitOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
-    ): Promise<ToolApprovalDecision> => {
-      const signature = toolCallSignature(toolName, input);
-      const pending = promptsInFlight.get(signature);
-      if (pending) {
-        return pending;
-      }
-
-      const asking = raiseToolPrompt(toolName, input, waitOptions)
-        .finally(() => promptsInFlight.delete(signature));
-      promptsInFlight.set(signature, asking);
-      return asking;
-    };
-
-    // Both approval hooks wait on a person, so their timeout has to outlast the
-    // approval wait itself; the SDK takes hook timeouts in seconds.
+    // The PermissionDenied hook waits on a person, so its timeout has to outlast
+    // the approval wait itself; the SDK takes hook timeouts in seconds.
     const approvalHookTimeoutSeconds = Math.ceil(TOOL_APPROVAL_TIMEOUT_MS / 1000) + HOOK_TIMEOUT_GRACE_SECONDS;
 
     sdkOptions.hooks = {
@@ -1591,65 +1571,17 @@ async function queryClaudeSDK(
           return {};
         }]
       }],
-      // Where the user actually gets their say in auto mode. This hook's
-      // decision is authoritative — measured: an `allow` here runs the call and
-      // aborts a `canUseTool` still waiting — so the prompt shown here answers
-      // the question rather than merely asking the model to try again.
-      PermissionRequest: [{
-        matcher: '',
-        timeout: approvalHookTimeoutSeconds,
-        hooks: [async (input: AnyRecord, _toolUseId: string | undefined, hookOptions?: { signal?: AbortSignal }) => {
-          const toolName = typeof input?.tool_name === 'string' ? input.tool_name : '';
-          const toolInput = input?.tool_input;
-          if (!toolName) {
-            return {};
-          }
-
-          // In every other mode `canUseTool` is the prompt, and answering here
-          // as well would ask the same question twice.
-          if (sdkOptions.permissionMode !== 'auto') {
-            return {};
-          }
-
-          // Measured against CLI 2.1.314: this hook does not fire for a call the
-          // classifier allows, and fires — alongside `canUseTool` — only when a
-          // call genuinely needs a decision, carrying no `classifier_verdict`.
-          // So everything that reaches here is the user's to answer, and the
-          // shared dialog in `askUserAboutTool` keeps the two callers to one.
-          //
-          // The hooks reference describes a newer shape that fires on every
-          // classifier decision with the verdict attached; a call it says was
-          // allowed is left alone, so auto mode is not turned into default mode.
-          if (input?.classifier_verdict === 'allow') {
-            return {};
-          }
-
-          const decision = await askUserAboutTool(toolName, toolInput, { signal: hookOptions?.signal });
-          if (!decision || decision.cancelled) {
-            return {};
-          }
-
-          const denialText = decision.message ?? 'User denied tool use';
-          return {
-            hookSpecificOutput: {
-              hookEventName: 'PermissionRequest',
-              decision: decision.allow
-                ? { behavior: 'allow', ...(decision.updatedInput ? { updatedInput: decision.updatedInput } : {}) }
-                // `message` is the field in the shipped types and `reason` the
-                // one the hooks reference documents; sending both means the
-                // user's wording reaches the model whichever the CLI reads.
-                : { behavior: 'deny', message: denialText, reason: denialText },
-            },
-          };
-        }]
-      }],
-      // Fallback for a denial that never reached PermissionRequest. `retry`
-      // only tells the model it MAY try the call again — it does not run it,
-      // and the CLI ignores it when the classifier produced no verdict — so
-      // this is best effort, and the authoritative path above is the one that
-      // normally answers. Asking again here would mean a second dialog for a
-      // call the user has already judged, so it only acts on calls this run
-      // has not already prompted for.
+      // Where a refused call is put back to the user. Measured against CLI
+      // 2.1.314: when the auto-mode classifier refuses a call, this is the only
+      // hook that fires — neither PermissionRequest nor `canUseTool` sees it.
+      //
+      // `retry` cannot run the call; it tells the model it may try again. What
+      // makes the attempt succeed is the one-shot grant below: the retried call
+      // passes PreToolUse first, and an `allow` there outranks the classifier.
+      // Both halves were observed end to end. It still rests on the model
+      // taking the retry up, which it did, and on it re-sending the same call.
+      //
+      // A call this run has already shown a dialog for is not asked about twice.
       PermissionDenied: [{
         matcher: '',
         timeout: approvalHookTimeoutSeconds,
@@ -1675,7 +1607,7 @@ async function queryClaudeSDK(
             return {};
           }
 
-          const decision = await askUserAboutTool(toolName, toolInput, { signal: hookOptions?.signal });
+          const decision = await askUserAboutTool(toolName, toolInput, hookOptions?.signal);
           if (!decision?.allow) {
             return {};
           }
@@ -1712,7 +1644,7 @@ async function queryClaudeSDK(
     // `bypassPermissions` settles approval without ever reaching this
     // callback, and in auto mode the classifier answers most calls before it.
     // The hooks above cover both: PreToolUse applies the same lists ahead of
-    // the mode and asks for the interactive tools, and PermissionRequest puts
+    // the mode and asks for the interactive tools, and PermissionDenied puts
     // a refused call back to the user.
     sdkOptions.canUseTool = async (toolName: string, input: unknown, context?: { signal?: AbortSignal }) => {
       const requiresInteraction = TOOLS_REQUIRING_INTERACTION.has(toolName);
@@ -1733,10 +1665,7 @@ async function queryClaudeSDK(
         }
       }
 
-      const decision = await askUserAboutTool(toolName, input, {
-        timeoutMs: requiresInteraction ? 0 : undefined,
-        signal: context?.signal,
-      });
+      const decision = await askUserAboutTool(toolName, input, context?.signal);
       if (!decision) {
         return { behavior: 'deny', message: 'Permission request timed out' };
       }

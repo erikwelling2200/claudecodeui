@@ -11,16 +11,15 @@ import type { AnyRecord, ProviderRuntimeContext } from '@/shared/types.js';
 import { waitFor } from '@/shared/tests/wait-for.js';
 
 /**
- * Auto mode decides with a model classifier, so the user's own lists and the
- * permission dialog both have to reach the call from a hook: PreToolUse applies
- * the lists ahead of the classifier, and PermissionRequest puts the decision
- * back in the user's hands with an answer that is authoritative — an `allow`
- * there runs the call.
+ * Auto mode decides with a model classifier, which used to refuse a call with
+ * no way for the user to overrule it. Measured against CLI 2.1.314, a refusal
+ * fires only the PermissionDenied hook — neither PermissionRequest nor
+ * `canUseTool` sees it — so that is where the call is put back to the user.
  *
- * PermissionDenied is only the fallback for a denial that never reached
- * PermissionRequest. Its `retry` tells the model it MAY try again and executes
- * nothing itself, so these tests pin that difference rather than treating the
- * two as equivalent.
+ * `retry` cannot run the call; it tells the model it may try again. What makes
+ * the attempt succeed is a one-shot grant that PreToolUse honours, since an
+ * `allow` there outranks the classifier. Both halves were observed end to end
+ * on the real CLI; these tests pin the server's side of them.
  */
 
 const SESSION_ID = 'app-classifier-session';
@@ -88,16 +87,22 @@ async function withRun(runOptions: AnyRecord, runTest: (script: Scripted) => Pro
   }
 }
 
-const runHook = (options: AnyRecord, event: 'PreToolUse' | 'PermissionRequest' | 'PermissionDenied', input: AnyRecord) =>
-  options.hooks[event][0].hooks[0](input, undefined, { signal: new AbortController().signal }) as Promise<AnyRecord>;
+const noRules = { allowedTools: [], disallowedTools: [], skipPermissions: false };
+
+const runHook = (options: AnyRecord, event: 'PreToolUse' | 'PermissionDenied', input: AnyRecord, signal?: AbortSignal) =>
+  options.hooks[event][0].hooks[0](input, undefined, { signal: signal ?? new AbortController().signal }) as Promise<AnyRecord>;
+
+const askCallback = (options: AnyRecord, toolName: string, input: AnyRecord, signal?: AbortSignal) =>
+  options.canUseTool(toolName, input, { signal: signal ?? new AbortController().signal }) as Promise<AnyRecord>;
 
 const verdict = (output: AnyRecord) => output?.hookSpecificOutput?.permissionDecision;
 
-/** Answers the dialog the hook under test is waiting on. */
-async function answerPrompt(script: Scripted, decision: AnyRecord) {
-  await waitFor(() => script.sent.some((message) => message.kind === 'permission_request'), 'the prompt reached the client');
-  const request = script.sent.find((message) => message.kind === 'permission_request');
-  resolveToolApproval(request!.requestId!, decision as never);
+const prompts = (script: Scripted) => script.sent.filter((message) => message.kind === 'permission_request');
+
+/** Answers the newest dialog once it has reached the client. */
+async function answerPrompt(script: Scripted, decision: AnyRecord, expectedCount = 1) {
+  await waitFor(() => prompts(script).length >= expectedCount, 'the prompt reached the client');
+  resolveToolApproval(prompts(script)[expectedCount - 1].requestId!, decision as never);
 }
 
 const denied = (toolName: string, toolInput: AnyRecord, toolUseId = 'tool-1') => ({
@@ -105,14 +110,7 @@ const denied = (toolName: string, toolInput: AnyRecord, toolUseId = 'tool-1') =>
   tool_name: toolName,
   tool_input: toolInput,
   tool_use_id: toolUseId,
-  reason: 'Blocked by classifier',
-});
-
-const needsDecision = (toolName: string, toolInput: AnyRecord, classifierVerdict: string | null = 'deny') => ({
-  hook_event_name: 'PermissionRequest',
-  tool_name: toolName,
-  tool_input: toolInput,
-  ...(classifierVerdict === null ? {} : { classifier_verdict: classifierVerdict }),
+  reason: '[Git Destructive]',
 });
 
 const preToolUse = (toolName: string, toolInput: AnyRecord, toolUseId = 'tool-1') => ({
@@ -123,23 +121,16 @@ const preToolUse = (toolName: string, toolInput: AnyRecord, toolUseId = 'tool-1'
 });
 
 test('the allow list decides before the classifier does', async () => {
-  const toolsSettings = { allowedTools: ['mcp__unity-vov__gameobject-find'], disallowedTools: [], skipPermissions: false };
+  const toolsSettings = { ...noRules, allowedTools: ['mcp__unity-vov__gameobject-find'] };
   await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    const output = await runHook(script.options(), 'PreToolUse', {
-      hook_event_name: 'PreToolUse',
-      tool_name: 'mcp__unity-vov__gameobject-find',
-      tool_input: {},
-      tool_use_id: 'tool-1',
-    });
-
+    const output = await runHook(script.options(), 'PreToolUse', preToolUse('mcp__unity-vov__gameobject-find', {}));
     assert.equal(verdict(output), 'allow');
   });
 });
 
 test('an entry added mid-run counts against the process already up', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    const call = { hook_event_name: 'PreToolUse', tool_name: 'WebSearch', tool_input: {}, tool_use_id: 'tool-1' };
+  await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
+    const call = preToolUse('WebSearch', {});
     assert.equal(verdict(await runHook(script.options(), 'PreToolUse', call)), undefined, 'unlisted, so the classifier decides');
 
     script.options().allowedTools.push('WebSearch');
@@ -149,215 +140,146 @@ test('an entry added mid-run counts against the process already up', async () =>
 });
 
 test('the deny list still refuses, and its refusal is not re-prompted', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: ['Write'], skipPermissions: false };
+  const toolsSettings = { ...noRules, disallowedTools: ['Write'] };
   await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    const output = await runHook(script.options(), 'PreToolUse', {
-      hook_event_name: 'PreToolUse',
-      tool_name: 'Write',
-      tool_input: {},
-      tool_use_id: 'tool-1',
-    });
-    assert.equal(verdict(output), 'deny');
+    assert.equal(verdict(await runHook(script.options(), 'PreToolUse', preToolUse('Write', {}))), 'deny');
 
     // The same call reaching PermissionDenied is this run's own verdict, so it stands.
     assert.deepEqual(await runHook(script.options(), 'PermissionDenied', denied('Write', {})), {});
-    assert.equal(script.sent.some((message) => message.kind === 'permission_request'), false);
+    assert.equal(prompts(script).length, 0);
   });
 });
 
-test('a call needing a decision is put to the user, and their allow runs it', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    const input = { csharpCode: 'Undo.DestroyObjectImmediate(target);' };
-    const hookDone = runHook(script.options(), 'PermissionRequest', needsDecision('mcp__unity-vov__script-execute', input));
+test('a classifier refusal is put to the user, and their allow-once lets the retry through', async () => {
+  await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
+    const input = { csharpCode: 'Undo.DestroyObjectImmediate(target); SaveScene();' };
+    const hookDone = runHook(script.options(), 'PermissionDenied', denied('mcp__unity-vov__script-execute', input));
     await answerPrompt(script, { allow: true });
 
-    // Authoritative: the call runs, rather than the model being invited to try.
-    assert.deepEqual((await hookDone).hookSpecificOutput, {
-      hookEventName: 'PermissionRequest',
-      decision: { behavior: 'allow' },
-    });
+    // `retry` runs nothing — it tells the model it may try the call again.
+    assert.deepEqual(await hookDone, { hookSpecificOutput: { hookEventName: 'PermissionDenied', retry: true } });
+
+    // When it does, the grant gets the call past PreToolUse, ahead of the classifier.
+    const retried = preToolUse('mcp__unity-vov__script-execute', input, 'tool-2');
+    assert.equal(verdict(await runHook(script.options(), 'PreToolUse', retried)), 'allow');
+    // The grant is spent, so a third occurrence is judged afresh.
+    assert.equal(verdict(await runHook(script.options(), 'PreToolUse', preToolUse('mcp__unity-vov__script-execute', input, 'tool-3'))), undefined);
     assert.deepEqual(script.options().allowedTools, [], 'allow-once leaves the list alone');
   });
 });
 
-test('a refusal the user gives is passed back as the decision', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    const hookDone = runHook(script.options(), 'PermissionRequest', needsDecision('Write', { file_path: 'a.txt' }));
-    await answerPrompt(script, { allow: false, message: 'not that file' });
+test('"always allow" writes the rule instead of a one-shot grant', async () => {
+  await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
+    const input = { command: 'git status' };
+    const hookDone = runHook(script.options(), 'PermissionDenied', denied('Bash', input));
+    await answerPrompt(script, { allow: true, rememberEntry: 'Bash(git status:*)' });
 
-    // Both field names are sent: `message` is what the shipped types carry and
-    // `reason` what the hooks reference documents as reaching the model.
-    assert.deepEqual((await hookDone).hookSpecificOutput, {
-      hookEventName: 'PermissionRequest',
-      decision: { behavior: 'deny', message: 'not that file', reason: 'not that file' },
-    });
+    assert.equal((await hookDone).hookSpecificOutput?.retry, true);
+    assert.deepEqual(script.options().allowedTools, ['Bash(git status:*)']);
+    // The rule, not a grant, is what the retry matches on — and it keeps matching.
+    for (const id of ['tool-2', 'tool-3']) {
+      assert.equal(verdict(await runHook(script.options(), 'PreToolUse', preToolUse('Bash', input, id))), 'allow');
+    }
   });
 });
 
-test('one call never produces two dialogs', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
+test('when the user refuses too, the classifier refusal stands', async () => {
+  await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
+    const input = { command: 'git push --force origin main' };
+    const hookDone = runHook(script.options(), 'PermissionDenied', denied('Bash', input));
+    await answerPrompt(script, { allow: false });
+
+    assert.deepEqual(await hookDone, {});
+    assert.equal(verdict(await runHook(script.options(), 'PreToolUse', preToolUse('Bash', input, 'tool-2'))), undefined, 'no grant');
+  });
+});
+
+test('a call that already had a dialog is not asked about a second time', async () => {
+  await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
     const input = { command: 'git push' };
-    const asked = runHook(script.options(), 'PermissionRequest', needsDecision('Bash', input));
+    const asked = askCallback(script.options(), 'Bash', input);
     await answerPrompt(script, { allow: false });
     await asked;
 
-    // The same call reaching the fallback afterwards must not ask again.
     assert.deepEqual(await runHook(script.options(), 'PermissionDenied', denied('Bash', input)), {});
-    assert.equal(script.sent.filter((message) => message.kind === 'permission_request').length, 1);
+    assert.equal(prompts(script).length, 1);
+  });
+});
+
+test('a dialog that timed out or was cancelled also counts as asked', async () => {
+  await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
+    const input = { command: 'git push' };
+    const controller = new AbortController();
+    const asked = askCallback(script.options(), 'Bash', input, controller.signal);
+    await waitFor(() => prompts(script).length === 1, 'the prompt was raised');
+    controller.abort();
+    await asked;
+
+    // Otherwise the user would sit through a second full-length dialog.
+    assert.deepEqual(await runHook(script.options(), 'PermissionDenied', denied('Bash', input)), {});
+    assert.equal(prompts(script).length, 1);
   });
 });
 
 test('the same call later in the run is asked about again', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
+  await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
     const input = { command: 'git push' };
-    const first = runHook(script.options(), 'PermissionRequest', needsDecision('Bash', input));
+    const first = askCallback(script.options(), 'Bash', input);
     await answerPrompt(script, { allow: false });
     await first;
 
     // A fresh occurrence starts at PreToolUse, which clears the earlier answer.
     await runHook(script.options(), 'PreToolUse', preToolUse('Bash', input, 'tool-2'));
     const second = runHook(script.options(), 'PermissionDenied', denied('Bash', input, 'tool-2'));
-    await waitFor(
-      () => script.sent.filter((message) => message.kind === 'permission_request').length === 2,
-      'the repeated call is asked about again',
-    );
-    const request = script.sent.filter((message) => message.kind === 'permission_request')[1];
-    resolveToolApproval(request.requestId!, { allow: false } as never);
+    await answerPrompt(script, { allow: false }, 2);
     await second;
   });
 });
 
-test('"always allow" writes the rule instead of a one-shot grant', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    const call = { command: 'git status' };
-    const hookDone = runHook(script.options(), 'PermissionDenied', denied('Bash', call));
-    await answerPrompt(script, { allow: true, rememberEntry: 'Bash(git status:*)' });
+test('two identical calls issued in parallel each get a dialog of their own', async () => {
+  await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
+    // One "allow once" must never approve two executions the user saw once.
+    const input = { command: 'npm test' };
+    const first = askCallback(script.options(), 'Bash', input);
+    const second = askCallback(script.options(), 'Bash', input);
 
-    assert.equal((await hookDone).hookSpecificOutput?.retry, true);
-    assert.deepEqual(script.options().allowedTools, ['Bash(git status:*)']);
+    await waitFor(() => prompts(script).length === 2, 'each call raised its own dialog');
+    const [requestA, requestB] = prompts(script);
+    resolveToolApproval(requestA.requestId!, { allow: true } as never);
+    resolveToolApproval(requestB.requestId!, { allow: false } as never);
 
-    // The rule, not a one-shot grant, is what the retry matches on.
-    const retry = await runHook(script.options(), 'PreToolUse', {
-      hook_event_name: 'PreToolUse',
-      tool_name: 'Bash',
-      tool_input: call,
-      tool_use_id: 'tool-2',
-    });
-    assert.equal(verdict(retry), 'allow');
+    assert.equal((await first).behavior, 'allow');
+    assert.equal((await second).behavior, 'deny');
   });
 });
 
-test('the fallback can only invite a retry, and an allow-once backs it with a grant', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    const input = { csharpCode: 'SaveScene();' };
-    const hookDone = runHook(script.options(), 'PermissionDenied', denied('mcp__unity-vov__script-execute', input));
-    await answerPrompt(script, { allow: true });
-
-    // `retry` runs nothing — it tells the model it may try the call again.
-    assert.equal((await hookDone).hookSpecificOutput?.retry, true);
-
-    // Should it try, the grant is what lets the call past PreToolUse.
-    assert.equal(verdict(await runHook(script.options(), 'PreToolUse', preToolUse('mcp__unity-vov__script-execute', input, 'tool-2'))), 'allow');
-    // The grant is spent, so a third occurrence is not waved through.
-    assert.equal(verdict(await runHook(script.options(), 'PreToolUse', preToolUse('mcp__unity-vov__script-execute', input, 'tool-3'))), undefined);
-  });
-});
-
-test('outside auto mode canUseTool is the dialog, so neither hook asks', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'default', toolsSettings }, async (script) => {
-    assert.deepEqual(await runHook(script.options(), 'PermissionRequest', needsDecision('Write', {})), {});
+test('outside auto mode no classifier refused anything, so the hook does not ask', async () => {
+  await withRun({ permissionMode: 'default', toolsSettings: { ...noRules } }, async (script) => {
     assert.deepEqual(await runHook(script.options(), 'PermissionDenied', denied('Write', {})), {});
-    assert.equal(script.sent.some((message) => message.kind === 'permission_request'), false);
+    assert.equal(prompts(script).length, 0);
   });
 });
 
 test('interactive tools are asked for in the mode that skips canUseTool', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'bypassPermissions', toolsSettings }, async (script) => {
-    const output = await runHook(script.options(), 'PreToolUse', preToolUse('AskUserQuestion', {}));
-    assert.equal(verdict(output), 'ask');
+  await withRun({ permissionMode: 'bypassPermissions', toolsSettings: { ...noRules } }, async (script) => {
+    assert.equal(verdict(await runHook(script.options(), 'PreToolUse', preToolUse('AskUserQuestion', {}))), 'ask');
   });
 
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    const output = await runHook(script.options(), 'PreToolUse', preToolUse('AskUserQuestion', {}));
-    assert.equal(verdict(output), undefined, 'auto routes interactive tools to canUseTool itself');
-  });
-});
-
-test('a call the classifier allowed is not put to the user', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    // This hook fires for every decision, so without the verdict check auto
-    // mode would raise a dialog for everything it silently approves today.
-    const output = await runHook(script.options(), 'PermissionRequest', needsDecision('Bash', { command: 'ls' }, 'allow'));
-
-    assert.deepEqual(output, {});
-    assert.equal(script.sent.some((message) => message.kind === 'permission_request'), false);
-  });
-});
-
-test('a call the classifier could not judge is put to the user', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    const hookDone = runHook(script.options(), 'PermissionRequest', needsDecision('Bash', { command: 'ls' }, 'unknown'));
-    await answerPrompt(script, { allow: true });
-
-    assert.equal((await hookDone).hookSpecificOutput?.decision?.behavior, 'allow');
-  });
-});
-
-test('with no verdict attached, a call that needs a decision is put to the user', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    // CLI 2.1.314 sends no `classifier_verdict`, and only fires this hook for a
-    // call that genuinely needs a decision — never for one the classifier allowed.
-    const hookDone = runHook(script.options(), 'PermissionRequest', needsDecision('Bash', { command: 'ls' }, null));
-    await answerPrompt(script, { allow: true });
-
-    assert.equal((await hookDone).hookSpecificOutput?.decision?.behavior, 'allow');
-  });
-});
-
-test('canUseTool and PermissionRequest asking about one call share one dialog', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    // The CLI invokes both for the same decision, a millisecond apart, and
-    // takes whichever answers first.
-    const input = { command: 'git push' };
-    const fromCallback = script.options().canUseTool('Bash', input, { signal: new AbortController().signal }) as Promise<AnyRecord>;
-    const fromHook = runHook(script.options(), 'PermissionRequest', needsDecision('Bash', input, null));
-
-    await answerPrompt(script, { allow: true });
-
-    assert.equal((await fromCallback).behavior, 'allow');
-    assert.equal((await fromHook).hookSpecificOutput?.decision?.behavior, 'allow');
-    assert.equal(script.sent.filter((message) => message.kind === 'permission_request').length, 1, 'one dialog, not two');
-  });
-});
-
-test('a prompt that timed out is not immediately asked a second time', async () => {
-  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
-  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
-    const input = { command: 'git push' };
-    const controller = new AbortController();
-    const asked = (script.options().hooks.PermissionRequest[0].hooks[0])(
-      needsDecision('Bash', input),
+  await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
+    assert.equal(
+      verdict(await runHook(script.options(), 'PreToolUse', preToolUse('AskUserQuestion', {}))),
       undefined,
-      { signal: controller.signal },
-    ) as Promise<AnyRecord>;
-    await waitFor(() => script.sent.some((message) => message.kind === 'permission_request'), 'the prompt was raised');
-    controller.abort();
-    await asked;
+      'auto routes interactive tools to canUseTool itself',
+    );
+  });
+});
 
-    // The fallback must not open a second full-length dialog for the same call.
-    assert.deepEqual(await runHook(script.options(), 'PermissionDenied', denied('Bash', input)), {});
-    assert.equal(script.sent.filter((message) => message.kind === 'permission_request').length, 1);
+test('a question waits for as long as the user takes', async () => {
+  await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
+    // An interactive tool's dialog has no time limit, whoever raises it.
+    const asked = askCallback(script.options(), 'AskUserQuestion', { questions: [] });
+    await waitFor(() => prompts(script).length === 1, 'the question reached the client');
+    await answerPrompt(script, { allow: true });
+    assert.equal((await asked).behavior, 'allow');
   });
 });
