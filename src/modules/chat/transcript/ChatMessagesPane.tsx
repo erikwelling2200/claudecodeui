@@ -325,9 +325,11 @@ function ChatMessagesPane({
                 const groupPrevMessage = prevMessage;
                 prevMessage = item.messages[item.messages.length - 1] || prevMessage;
 
+                const rowKey = `tool-group-${getMessageKey(item.messages[0])}`;
                 return (
                   <LazyMessageRow
-                    key={`tool-group-${getMessageKey(item.messages[0])}`}
+                    key={rowKey}
+                    rowKey={rowKey}
                     lazyRows={lazyRows}
                     timestamp={item.timestamp}
                     initiallyNearViewport={initiallyNearViewport}
@@ -351,10 +353,12 @@ function ChatMessagesPane({
 
               const messagePrevMessage = prevMessage;
               prevMessage = item;
+              const rowKey = getMessageKey(item);
 
               return (
                 <LazyMessageRow
-                  key={getMessageKey(item)}
+                  key={rowKey}
+                  rowKey={rowKey}
                   lazyRows={lazyRows}
                   timestamp={item.timestamp}
                   initiallyNearViewport={initiallyNearViewport}

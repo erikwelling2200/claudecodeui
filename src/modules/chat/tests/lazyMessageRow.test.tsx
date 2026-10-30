@@ -61,6 +61,7 @@ function Harness({
   return (
     <div ref={scrollContainerRef}>
       <LazyMessageRow
+        rowKey="row-1"
         lazyRows={lazyRows}
         timestamp="2026-01-01T00:00:00.000Z"
         initiallyNearViewport={initiallyNearViewport}

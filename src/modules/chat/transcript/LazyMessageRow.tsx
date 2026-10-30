@@ -26,6 +26,8 @@ const ESTIMATED_ROW_HEIGHT_PX = 100;
 
 type LazyMessageRowProps = {
   lazyRows: LazyRowObserver | null;
+  /** The row's React key, exposed as `data-row-key` so a saved reading position can find the row again. */
+  rowKey: string;
   /** Mirrors the row's own `data-message-timestamp`, present even while unmounted. */
   timestamp: ChatMessage['timestamp'] | undefined;
   /**
@@ -39,6 +41,7 @@ type LazyMessageRowProps = {
 
 export default function LazyMessageRow({
   lazyRows,
+  rowKey,
   timestamp,
   initiallyNearViewport,
   children,
@@ -78,6 +81,7 @@ export default function LazyMessageRow({
     <div
       ref={elementRef}
       data-transcript-row
+      data-row-key={rowKey}
       data-message-timestamp={timestamp || undefined}
       style={isMounted ? undefined : { height: measuredHeight ?? ESTIMATED_ROW_HEIGHT_PX }}
     >
