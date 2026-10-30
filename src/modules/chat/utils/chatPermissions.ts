@@ -10,17 +10,24 @@ const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 // of programs to refuse could never be complete — the CLI carries its own
 // per-program checks and keeps adding to them — but a list of programs to
 // trust can be checked by reading it.
+//
+// "Reads" has to hold for every flag the program takes, not just its usual use,
+// and several familiar readers fail that: `rg --pre <script>` runs a program,
+// `file -C` and `tree -o` write files. Those are left out.
 const READ_ONLY_COMMANDS = new Set([
-  'ls', 'cat', 'head', 'tail', 'grep', 'rg', 'wc', 'pwd', 'which', 'file', 'stat', 'du', 'df', 'tree', 'diff', 'jq',
+  'ls', 'cat', 'head', 'tail', 'grep', 'wc', 'pwd', 'which', 'stat', 'du', 'df', 'diff', 'jq',
   'get-childitem', 'get-content', 'select-string', 'test-path', 'get-command', 'get-location', 'measure-object',
   'get-item', 'resolve-path', 'get-date',
 ]);
 
-// Git subcommands that only read. `git config` is not among them: it can set
-// `core.fsmonitor`, which every later `git status` then runs.
+// Git subcommands that only read, under any flag. Left out on purpose, each
+// shown running a command or writing a file through the real CLI or by its
+// documented flags: `config` (sets `core.fsmonitor`, which every later
+// `git status` runs), `grep` (`--open-files-in-pager=<command>`), `diff`, `log`,
+// `show`, `whatchanged` (`--output=<file>`), `reflog` (`expire`, `delete`) and
+// `fetch`/`ls-remote` (`--upload-pack=<command>`).
 const READ_ONLY_GIT_SUBCOMMANDS = new Set([
-  'status', 'log', 'diff', 'show', 'blame', 'grep', 'ls-files', 'rev-parse', 'describe', 'shortlog', 'reflog',
-  'merge-base', 'rev-list', 'cherry', 'whatchanged',
+  'status', 'ls-files', 'rev-parse', 'merge-base', 'describe', 'cherry', 'blame',
 ]);
 
 // Anything that makes one command line several commands, sends output to a
@@ -72,8 +79,9 @@ export function buildClaudeToolPermissionEntry(toolName?: string, toolInput?: un
   if (READ_ONLY_COMMANDS.has(program)) {
     return `${toolName}(${first}:*)`;
   }
-  // An exact rule ending in `:*` would be read as a prefix rule instead.
-  return command.endsWith(':*') ? null : `${toolName}(${command})`;
+  // The CLI reads `*` in a rule as "anything", across spaces too: an exact rule
+  // for `rm -rf build/*.tmp` would also cover `rm -rf build/ ~ .tmp`.
+  return command.includes('*') ? null : `${toolName}(${command})`;
 }
 
 export function formatToolInputForDisplay(input: unknown) {

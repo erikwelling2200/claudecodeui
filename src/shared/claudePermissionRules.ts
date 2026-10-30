@@ -46,11 +46,12 @@ const writeCache = (rules: ClaudeRules): void => {
  * Before the rules moved to the file, each machine kept its own list in its
  * own server's database, built up by "Allow & remember" in the UI alone. The
  * file is obeyed far more widely — by the terminal, and by every machine it
- * is synced to — so that list's allow rules are never promoted into it on the
- * user's behalf. On each machine's first read, the allow rules the file lacks
- * are set aside in `claudeRulesNotCarried` for the user to review, while its
- * deny rules are carried into the file, since a deny can only refuse more.
- * Nothing is lost and nothing is granted.
+ * is synced to — so nothing in that list is promoted into it on the user's
+ * behalf. That holds for deny rules too: one meant for this UI alone would
+ * otherwise start blocking terminal work on every machine, or bring back a rule
+ * deliberately deleted from the file elsewhere. On each machine's first read,
+ * the rules the file lacks are set aside in `claudeRulesNotCarried` for the
+ * user to review, and the file is taken as it stands. Nothing is lost.
  *
  * Nothing is written at all unless the preferences really came from the
  * server: after a failed fetch the cache is empty or stale, and writing from it
@@ -84,26 +85,15 @@ export async function loadClaudeRules(): Promise<ClaudeRules | null> {
   }
 
   const cached = readCache();
-  const allowNotCarried = (cached.allowedTools ?? []).filter((rule) => !fileRules.allow.includes(rule));
-  const denyToCarry = (cached.disallowedTools ?? []).filter((rule) => !fileRules.deny.includes(rule));
-  if (allowNotCarried.length > 0) {
-    writeUserPreference('claudeRulesNotCarried', { allow: allowNotCarried, deny: [] });
+  const notCarried: ClaudeRules = {
+    allow: (cached.allowedTools ?? []).filter((rule) => !fileRules.allow.includes(rule)),
+    deny: (cached.disallowedTools ?? []).filter((rule) => !fileRules.deny.includes(rule)),
+  };
+  if (notCarried.allow.length > 0 || notCarried.deny.length > 0) {
+    writeUserPreference('claudeRulesNotCarried', notCarried);
   }
-
-  // The cache becomes the file first, so the save below sends only the deny
-  // rules being carried — a deny can only refuse more, so it goes in unasked.
-  writeCache(fileRules);
-  if (denyToCarry.length > 0) {
-    const carried: ClaudeRules = { allow: fileRules.allow, deny: [...fileRules.deny, ...denyToCarry] };
-    if (!(await saveClaudeRules(carried))) {
-      // Not marked done, so the next read tries again.
-      return fileRules;
-    }
-    writeUserPreference('claudeRulesMigrated', true);
-    return readCachedClaudeRules();
-  }
-
   writeUserPreference('claudeRulesMigrated', true);
+  writeCache(fileRules);
   return fileRules;
 }
 

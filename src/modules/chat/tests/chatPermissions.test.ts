@@ -19,9 +19,20 @@ test('buildClaudeToolPermissionEntry derives a scoped git command from JSON inpu
 });
 
 test('buildClaudeToolPermissionEntry widens only known read-only commands into a prefix rule', () => {
-  assert.equal(ruleFor('git log --oneline -5'), 'Bash(git log:*)');
+  assert.equal(ruleFor('git status --short'), 'Bash(git status:*)');
   assert.equal(ruleFor('grep -rn foo src'), 'Bash(grep:*)');
   assert.equal(ruleFor('Get-ChildItem -Recurse', 'PowerShell'), 'PowerShell(Get-ChildItem:*)');
+});
+
+test('buildClaudeToolPermissionEntry keeps readers off the prefix list when a flag runs or writes something', () => {
+  // Each proven on the real CLI or documented: these get exact rules instead,
+  // so the flag in question is never covered.
+  for (const command of [
+    'rg --pre ./x.sh hello', "git grep --open-files-in-pager='touch x' hello", 'git diff --output=out.txt',
+    'git log --output=out.txt', 'git show --output=out.txt', 'git fetch --upload-pack=x .', 'file -C -m magic', 'tree -o out',
+  ]) {
+    assert.equal(ruleFor(command), `Bash(${command})`, command);
+  }
 });
 
 test('buildClaudeToolPermissionEntry gives anything else a rule for exactly that command', () => {
@@ -49,14 +60,17 @@ test('buildClaudeToolPermissionEntry offers no rule for a line that is several c
 });
 
 test('buildClaudeToolPermissionEntry names the command after a leading cd', () => {
-  assert.equal(ruleFor('cd "C:/Unity/Operatie-OV" && git grep -n x'), 'Bash(git grep:*)');
-  assert.equal(ruleFor('cd /c/repo; git log'), 'Bash(git log:*)');
+  assert.equal(ruleFor('cd "C:/Unity/Operatie-OV" && git status --short'), 'Bash(git status:*)');
+  assert.equal(ruleFor('cd /c/repo; grep -rn x .'), 'Bash(grep:*)');
   // What follows the cd is judged like any other command.
   assert.equal(ruleFor('cd x; rm -rf y'), 'Bash(rm -rf y)');
   assert.equal(ruleFor('cd x && git status && rm -rf y'), null);
 });
 
-test('buildClaudeToolPermissionEntry never turns an exact rule into a prefix rule', () => {
+test('buildClaudeToolPermissionEntry offers no exact rule containing a wildcard', () => {
+  // The CLI reads `*` as "anything", across spaces: `Bash(rm -rf build/*.tmp)`
+  // would also cover `rm -rf build/ ~ .tmp`. It would also make `foo :*` a prefix rule.
+  assert.equal(ruleFor('rm -rf build/*.tmp'), null);
   assert.equal(ruleFor('foo :*'), null);
 });
 

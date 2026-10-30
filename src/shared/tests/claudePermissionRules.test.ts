@@ -102,28 +102,16 @@ describe('loadClaudeRules', () => {
     expect(preferences.claudeRulesMigrated).toBe(true);
   });
 
-  it('carries old deny rules into the file, since a deny can only refuse more', async () => {
-    preferences.claudePermissions = { allowedTools: ['Edit'], disallowedTools: ['Bash(rm:*)'] };
+  it('sets old deny rules aside too, rather than spreading them to the terminal', async () => {
+    // A deny meant for this UI alone would otherwise block terminal work on
+    // every synced machine, or bring back one deleted from the file elsewhere.
+    preferences.claudePermissions = { allowedTools: ['Edit'], disallowedTools: ['Bash(git push:*)'] };
     respondWith([source({ allow: ['Read'] })]);
-
-    expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: ['Bash(rm:*)'] });
-
-    // Only the deny rule travels; the old allow rule stays set aside.
-    expect(saveClaudeSettingsPermissions).toHaveBeenCalledWith({
-      allow: { add: [], remove: [] },
-      deny: { add: ['Bash(rm:*)'], remove: [] },
-    });
-    expect(readRulesNotCarried()).toEqual({ allow: ['Edit'], deny: [] });
-    expect(preferences.claudeRulesMigrated).toBe(true);
-  });
-
-  it('tries again next time when the deny rules could not be carried', async () => {
-    preferences.claudePermissions = { allowedTools: [], disallowedTools: ['Bash(rm:*)'] };
-    respondWith([source({ allow: ['Read'] })]);
-    saveClaudeSettingsPermissions.mockRejectedValue(new Error('file locked'));
 
     expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
-    expect(preferences.claudeRulesMigrated).toBeUndefined();
+
+    expect(saveClaudeSettingsPermissions).not.toHaveBeenCalled();
+    expect(readRulesNotCarried()).toEqual({ allow: ['Edit'], deny: ['Bash(git push:*)'] });
   });
 
   it('writes nothing at all when the preferences did not load from the server', async () => {
