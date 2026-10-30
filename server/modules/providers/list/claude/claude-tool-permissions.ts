@@ -19,9 +19,12 @@
  * PowerShell entries are written and matched like Bash ones, except that its
  * backtick escapes and backslash path separators are not bash metacharacters.
  *
- * A command is checked per subcommand, the way the CLI does it: a deny list
- * rejects `a && b | c` when any part matches. Without that,
- * `Bash(git checkout:*)` would not see the `rm` in `git status; rm -rf ~`.
+ * A command is checked per subcommand: a deny list rejects `a && b | c` when
+ * any part matches, so `Bash(rm:*)` sees the `rm` in `git status; rm -rf ~`.
+ * The split is simpler than the CLI's own parser — it does not look inside a
+ * subshell, `$( )`, a wrapper such as `bash -c` or `xargs`, or a leading
+ * variable assignment — so this is a second line of defence: the CLI enforces
+ * the same deny rules itself, before any hook runs.
  */
 
 type BashSplit = {

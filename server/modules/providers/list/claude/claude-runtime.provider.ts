@@ -1148,9 +1148,10 @@ function readLiveTurnTerms(options: AnyRecord): LiveTurnTerms {
  * - effort, which the CLI takes as a flag,
  * - bypass, which the CLI only enters when launched into it,
  * - plan, which adds its tools to the launch's allowed list,
- * - the tool lists, which the CLI enforces from its flags before our
- *   `canUseTool` sees a call. Allowing more is fine (the callback allows the
- *   additions); allowing less, or changing what is denied, is not.
+ * - the tool lists, which the CLI enforces from its flags. Allowing more is
+ *   fine: an added rule also lives in Claude's settings file, which the
+ *   running CLI reloads, and until it does the call is merely asked about
+ *   again. Allowing less, or changing what is denied, is not.
  *
  * The composer applies the same rule to the terms the server reports, so it
  * knows before sending whether a new process (and the existing dialog) is
