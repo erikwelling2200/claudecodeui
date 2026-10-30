@@ -5,8 +5,9 @@ import type { ClaudeSettingsPermissionSource } from '@/shared/types';
 // Claude's rules live in its own settings file so that this UI and the user's
 // terminal sessions obey one list, on every machine their settings directory
 // is synced to. The preference is only a cache of that file, which these tests
-// pin: the file wins on load, a write reaches the file before the cache, and a
-// file that cannot be read never reads as "no rules".
+// pin: the file wins on load, a write reaches the file before the cache, a file
+// that cannot be read never reads as "no rules" — and a machine's old UI-only
+// list is set aside for review, never promoted into the file on its own.
 
 const claudeSettingsPermissions = vi.fn<() => Promise<Response>>();
 type Delta = { allow: { add: string[]; remove: string[] }; deny: { add: string[]; remove: string[] } };
@@ -25,13 +26,15 @@ vi.mock('@/shared/api', async (importOriginal) => ({
 }));
 
 let preferences: Record<string, unknown> = {};
+let loadedFromServer = true;
 
 vi.mock('@/shared/userSettings', () => ({
   readUserPreference: (key: string, fallback: unknown) => preferences[key] ?? fallback,
   writeUserPreference: (key: string, value: unknown) => { preferences[key] = value; },
+  userPreferencesLoadedFromServer: () => loadedFromServer,
 }));
 
-const { loadClaudeRules, readCachedClaudeRules, saveClaudeRules } = await import('@/shared/claudePermissionRules');
+const { loadClaudeRules, readCachedClaudeRules, readRulesNotCarried, saveClaudeRules } = await import('@/shared/claudePermissionRules');
 
 const source = (overrides: Partial<ClaudeSettingsPermissionSource> = {}): ClaudeSettingsPermissionSource => ({
   scope: 'user',
@@ -53,6 +56,7 @@ const cached = () => preferences.claudePermissions as Record<string, unknown> | 
 
 beforeEach(() => {
   preferences = {};
+  loadedFromServer = true;
   claudeSettingsPermissions.mockReset();
   saveClaudeSettingsPermissions.mockReset();
   saveClaudeSettingsPermissions.mockImplementation((delta) => {
@@ -77,29 +81,37 @@ describe('loadClaudeRules', () => {
     expect(cached()).toMatchObject({ allowedTools: ['Read'], disallowedTools: ['Bash(rm:*)'] });
   });
 
-  it('carries a list built before the file was used across into it', async () => {
-    preferences.claudePermissions = { allowedTools: ['WebSearch'], disallowedTools: [], skipPermissions: true };
-    // This machine has not carried its own list across yet.
+  it('sets a list built before the move aside for review, and never writes it to the file', async () => {
+    // Built up by "Allow & remember" in this UI alone. The file is obeyed by the
+    // terminal and every synced machine too, so promoting `Edit` into it would
+    // approve every file edit everywhere.
+    preferences.claudePermissions = {
+      allowedTools: ['Read', 'Edit', 'mcp__unity-vov__scene-save'],
+      disallowedTools: ['Bash(rm:*)'],
+      skipPermissions: true,
+    };
     respondWith([source({ allow: ['Read'] })]);
-    // The server applies a delta to what the FILE holds, not to this client's cache.
-    saveClaudeSettingsPermissions.mockImplementation((delta) => {
-      const allow = [...['Read'].filter((rule) => !delta.allow.remove.includes(rule)), ...delta.allow.add];
-      return Promise.resolve(new Response(
-        JSON.stringify({ success: true, data: { source: source({ allow }) } }), { status: 200 },
-      ));
-    });
 
-    const rules = await loadClaudeRules();
+    expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
 
-    // The delta is measured from the file, so it carries the rule being moved.
-    expect(saveClaudeSettingsPermissions).toHaveBeenCalledWith({
-      allow: { add: ['WebSearch'], remove: [] },
-      deny: { add: [], remove: [] },
-    });
-    expect(rules).toEqual({ allow: ['Read', 'WebSearch'], deny: [] });
-    expect(readCachedClaudeRules().allow).toEqual(['Read', 'WebSearch']);
-    // The session toggle is not a rule, so it survives the migration untouched.
+    expect(saveClaudeSettingsPermissions).not.toHaveBeenCalled();
+    expect(readRulesNotCarried()).toEqual({ allow: ['Edit', 'mcp__unity-vov__scene-save'], deny: ['Bash(rm:*)'] });
+    expect(readCachedClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
+    // The session toggle is not a rule, so it is untouched.
     expect(cached()).toMatchObject({ skipPermissions: true });
+    expect(preferences.claudeRulesMigrated).toBe(true);
+  });
+
+  it('writes nothing at all when the preferences did not load from the server', async () => {
+    // After a failed fetch the cache is empty or stale; writing from it would
+    // overwrite the very list that is meant to be kept.
+    loadedFromServer = false;
+    preferences.claudePermissions = { allowedTools: [], disallowedTools: [] };
+    respondWith([source({ allow: ['Read'] })]);
+
+    expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
+    expect(preferences.claudeRulesMigrated).toBeUndefined();
+    expect(readCachedClaudeRules()).toEqual({ allow: [], deny: [] });
   });
 
   it('leaves the cache alone when the file cannot be read', async () => {
@@ -119,53 +131,14 @@ describe('loadClaudeRules', () => {
     expect(readCachedClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
   });
 
-  it('a rule removed from the file stays removed, however often the panel saves', async () => {
-    preferences.claudePermissions = { allowedTools: ['Read', 'WebSearch'], disallowedTools: [] };
-    respondWith([source({ allow: ['Read', 'WebSearch'] })]);
-    await loadClaudeRules();
-
-    // A save writes the preference wholesale, which must not re-arm the carry-over.
-    preferences.claudePermissions = { allowedTools: ['Read', 'WebSearch'], disallowedTools: [], skipPermissions: false };
-
-    respondWith([source({ allow: ['Read'] })]);
-    expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
-    expect(readCachedClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
-    expect(saveClaudeSettingsPermissions).not.toHaveBeenCalled();
-  });
-});
-
-describe('loadClaudeRules on more than one machine', () => {
-  it('a second machine carries its own list across, though the file is already in use', async () => {
-    // The file holds the first machine's rules; this machine kept its own list
-    // in its own database, and has not carried it across yet.
-    preferences.claudePermissions = { allowedTools: ['WebFetch'], disallowedTools: ['Bash(rm:*)'] };
-    respondWith([source({ allow: ['Read'], deny: [] })]);
-    saveClaudeSettingsPermissions.mockImplementation((delta) => {
-      const allow = [...['Read'].filter((rule) => !delta.allow.remove.includes(rule)), ...delta.allow.add];
-      const deny = [...delta.deny.add];
-      return Promise.resolve(new Response(JSON.stringify({ success: true, data: { source: source({ allow, deny }) } }), { status: 200 }));
-    });
-
-    expect(await loadClaudeRules()).toEqual({ allow: ['Read', 'WebFetch'], deny: ['Bash(rm:*)'] });
-    expect(preferences.claudeRulesMigrated).toBe(true);
-  });
-
-  it('once carried across, the file is taken as it stands', async () => {
+  it('once reconciled, the file is taken as it stands and nothing more is set aside', async () => {
     preferences.claudeRulesMigrated = true;
     preferences.claudePermissions = { allowedTools: ['Read', 'Stale'], disallowedTools: [] };
     respondWith([source({ allow: ['Read'] })]);
 
     expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
+    expect(preferences.claudeRulesNotCarried).toBeUndefined();
     expect(saveClaudeSettingsPermissions).not.toHaveBeenCalled();
-  });
-
-  it('a carry-over that fails to save is tried again next time', async () => {
-    preferences.claudePermissions = { allowedTools: ['WebFetch'], disallowedTools: [] };
-    respondWith([source({ allow: ['Read'] })]);
-    saveClaudeSettingsPermissions.mockRejectedValue(new Error('file locked'));
-
-    expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
-    expect(preferences.claudeRulesMigrated).toBeUndefined();
   });
 });
 

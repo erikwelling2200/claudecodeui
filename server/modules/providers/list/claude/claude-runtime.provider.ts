@@ -222,18 +222,22 @@ function preToolUseDecision(
 
 /**
  * What a one-shot grant matches the model's retry on. A retried call gets a new
- * `tool_use_id`, so the grant keys on what the call does: for a shell tool the
- * command alone, since the model's free-text `description` beside it is the
- * part most likely to be reworded on a retry; for anything else the input
- * without that field.
+ * `tool_use_id`, so the grant keys on what the call does: its whole input,
+ * less the model's free-text `description`, which is the part most likely to be
+ * reworded on a retry and the only part that changes nothing. Every other field
+ * counts — a retry that adds `dangerouslyDisableSandbox` or moves to the
+ * background is not the call the user approved.
  */
 function grantKey(toolName: string, input: unknown): string {
-  const fields = input && typeof input === 'object' ? { ...(input as AnyRecord) } : input;
-  if (fields && typeof fields === 'object') {
-    if ((toolName === 'Bash' || toolName === 'PowerShell') && typeof (fields as AnyRecord).command === 'string') {
-      return `${toolName}:${((fields as AnyRecord).command as string).trim()}`;
-    }
-    delete (fields as AnyRecord).description;
+  let fields = input;
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    // Sorted, since a retry need not list its fields in the same order.
+    fields = Object.fromEntries(
+      Object.entries(input as AnyRecord)
+        .filter(([key]) => key !== 'description')
+        .map(([key, value]) => [key, key === 'command' && typeof value === 'string' ? value.trim() : value])
+        .sort(([a], [b]) => a.localeCompare(b)),
+    );
   }
   try {
     return `${toolName}:${JSON.stringify(fields) ?? ''}`;

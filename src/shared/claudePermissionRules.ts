@@ -1,6 +1,6 @@
 import { api, readApiJson } from '@/shared/api';
 import type { ClaudeSettingsPermissionSource } from '@/shared/types';
-import { readUserPreference, writeUserPreference } from '@/shared/userSettings';
+import { readUserPreference, userPreferencesLoadedFromServer, writeUserPreference } from '@/shared/userSettings';
 
 /**
  * Claude's allow and deny rules live in the CLI's own `~/.claude/settings.json`,
@@ -40,19 +40,20 @@ const writeCache = (rules: ClaudeRules): void => {
   });
 };
 
-const mergeRules = (first: string[], second: string[]): string[] => [...new Set([...first, ...second])];
-
 /**
  * Reads the rules from the settings file and refreshes the cache from them.
  *
- * The first read on each machine also writes up any rule this machine's own
- * stored list holds and the file does not, carrying across a list built before
- * this UI used the file. Each machine does that once: its old list lives in its
- * own server's database, so the synced file cannot say whether it is done, and
- * the marker is a preference of its own because every writer of the rules
- * preference replaces it wholesale. Every later read takes the file as it
- * stands, so a rule deleted there — in the panel, by hand, or by a sync from
- * another machine — stays deleted instead of coming back from a stale cache.
+ * Before the rules moved to the file, each machine kept its own list in its
+ * own server's database, built up by "Allow & remember" in the UI alone. The
+ * file is obeyed far more widely — by the terminal, and by every machine it
+ * is synced to — so that list is never promoted into it on the user's behalf.
+ * On each machine's first read, the entries the file lacks are set aside in
+ * `claudeRulesNotCarried` for the user to review, and the file is taken as it
+ * stands. Nothing is lost and nothing is granted.
+ *
+ * Nothing is written at all unless the preferences really came from the
+ * server: after a failed fetch the cache is empty or stale, and writing from it
+ * would overwrite the list this is meant to keep.
  */
 export async function loadClaudeRules(): Promise<ClaudeRules | null> {
   let source: ClaudeSettingsPermissionSource | undefined;
@@ -71,34 +72,31 @@ export async function loadClaudeRules(): Promise<ClaudeRules | null> {
     return null;
   }
 
-  const cached = readCache();
   const fileRules: ClaudeRules = { allow: source.allow, deny: source.deny };
-  if (readUserPreference<boolean>('claudeRulesMigrated', false)) {
-    writeCache(fileRules);
+  if (!userPreferencesLoadedFromServer()) {
     return fileRules;
   }
 
-  const merged: ClaudeRules = {
-    allow: mergeRules(fileRules.allow, cached.allowedTools ?? []),
-    deny: mergeRules(fileRules.deny, cached.disallowedTools ?? []),
-  };
-
-  const carriesOver = merged.allow.length !== fileRules.allow.length
-    || merged.deny.length !== fileRules.deny.length;
-  if (carriesOver) {
-    // Measured against the file: the cache is one side of this merge, so a
-    // difference taken from it would leave out the very rules being moved.
-    if (!(await saveClaudeRules(merged, fileRules))) {
-      // Not marked done, so the next read tries again.
-      return fileRules;
+  if (!readUserPreference<boolean>('claudeRulesMigrated', false)) {
+    const cached = readCache();
+    const notCarried: ClaudeRules = {
+      allow: (cached.allowedTools ?? []).filter((rule) => !fileRules.allow.includes(rule)),
+      deny: (cached.disallowedTools ?? []).filter((rule) => !fileRules.deny.includes(rule)),
+    };
+    if (notCarried.allow.length > 0 || notCarried.deny.length > 0) {
+      writeUserPreference('claudeRulesNotCarried', notCarried);
     }
     writeUserPreference('claudeRulesMigrated', true);
-    return merged;
   }
 
-  writeUserPreference('claudeRulesMigrated', true);
   writeCache(fileRules);
   return fileRules;
+}
+
+/** The rules this machine held before the move that the file does not carry, for review. */
+export function readRulesNotCarried(): ClaudeRules {
+  const stored = readUserPreference<Partial<ClaudeRules>>('claudeRulesNotCarried', {});
+  return { allow: stored.allow ?? [], deny: stored.deny ?? [] };
 }
 
 const ruleDelta = (before: string[], after: string[]) => ({
@@ -113,12 +111,9 @@ const ruleDelta = (before: string[], after: string[]) => ({
  * the list itself, so a rule added on another machine between that read and
  * this save is not wiped by a stale snapshot. The file's own answer is what
  * gets cached, so the cache never claims a rule the file rejected.
- *
- * `against` overrides what that difference is measured from, for the one
- * caller whose starting point is the file rather than the cache.
  */
-export async function saveClaudeRules(rules: ClaudeRules, against?: ClaudeRules): Promise<boolean> {
-  const before = against ?? readCachedClaudeRules();
+export async function saveClaudeRules(rules: ClaudeRules): Promise<boolean> {
+  const before = readCachedClaudeRules();
   try {
     const response = await api.providers.saveClaudeSettingsPermissions({
       allow: ruleDelta(before.allow, rules.allow),

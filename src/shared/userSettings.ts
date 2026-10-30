@@ -25,11 +25,17 @@ export type UserPreferences = {
   hiddenProjectIds: string[];
   claudePermissions: unknown;
   /**
-   * Whether this server's own stored Claude rules have been carried into
+   * Whether this server's own stored Claude rules have been reconciled with
    * `~/.claude/settings.json`. Per server, not per file: each machine keeps its
    * old list in its own database, and the synced file cannot tell them apart.
    */
   claudeRulesMigrated: boolean;
+  /**
+   * Rules this server held before Claude's rules moved to the settings file,
+   * that the file does not carry. Kept for the user to review, never written
+   * to the file on their behalf.
+   */
+  claudeRulesNotCarried: unknown;
   cursorPermissions: unknown;
   codexPermissions: unknown;
   opencodePermissions: unknown;
@@ -69,8 +75,9 @@ const LEGACY_STORAGE_KEYS: Record<UserPreferenceKey, string> = {
   // Unused: hiding projects postdates the move to the server.
   hiddenProjectIds: '',
   claudePermissions: 'claude-settings',
-  // Unused: the carry-over postdates the move to the server.
+  // Unused: both postdate the move to the server.
   claudeRulesMigrated: '',
+  claudeRulesNotCarried: '',
   cursorPermissions: 'cursor-tools-settings',
   codexPermissions: 'codex-settings',
   opencodePermissions: 'opencode-settings',
@@ -91,6 +98,9 @@ let preferences: PreferenceRecord = {};
 let pendingServerWrites: PreferenceRecord = {};
 let serverWriteTimer: ReturnType<typeof setTimeout> | null = null;
 let hasHydrated = false;
+// Whether the last hydrate got a real answer from the server, as opposed to
+// carrying on from the mirror after a failed or refused fetch.
+let loadedFromServer = false;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => (
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -298,6 +308,7 @@ export async function hydrateUserPreferences(): Promise<void> {
       const payload = (await response.json()) as { preferences?: unknown };
       if (isRecord(payload.preferences)) {
         serverPreferences = payload.preferences as PreferenceRecord;
+        loadedFromServer = true;
       }
     }
   } catch (error) {
@@ -342,6 +353,15 @@ export async function hydrateUserPreferences(): Promise<void> {
 }
 
 /** True once the server's copy has been read at least one time this session. */
+/**
+ * Whether the preferences in hand are the server's, rather than a mirror kept
+ * after a failed fetch. Anything that rewrites a stored value from what it
+ * reads here must check this, or a bad load writes an empty value over a real one.
+ */
+export function userPreferencesLoadedFromServer(): boolean {
+  return loadedFromServer;
+}
+
 export function hasHydratedUserPreferences(): boolean {
   return hasHydrated;
 }
@@ -354,6 +374,7 @@ export function resetUserPreferences(): void {
   preferences = {};
   pendingServerWrites = {};
   hasHydrated = false;
+  loadedFromServer = false;
   if (serverWriteTimer !== null) {
     clearTimeout(serverWriteTimer);
     serverWriteTimer = null;

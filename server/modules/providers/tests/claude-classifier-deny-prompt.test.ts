@@ -323,3 +323,18 @@ test('a pending call is described, but a question or plan approval is not', asyn
     assert.deepEqual(explained, ['Bash']);
   });
 });
+
+test('a grant does not cover a retry that changes anything but its description', async () => {
+  await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
+    const approved = { command: 'git push --dry-run origin main', description: 'Push' };
+    const hookDone = runHook(script.options(), 'PermissionDenied', denied('Bash', approved));
+    await answerPrompt(script, { allow: true });
+    await hookDone;
+
+    const unsandboxed = { ...approved, dangerouslyDisableSandbox: true };
+    assert.equal(verdict(await runHook(script.options(), 'PreToolUse', preToolUse('Bash', unsandboxed, 'tool-2'))), undefined);
+    // The same call with its fields listed in another order still matches.
+    const reordered = { description: 'Retry the push', command: approved.command };
+    assert.equal(verdict(await runHook(script.options(), 'PreToolUse', preToolUse('Bash', reordered, 'tool-3'))), 'allow');
+  });
+});

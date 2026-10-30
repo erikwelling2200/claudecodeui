@@ -4,25 +4,44 @@ import { saveClaudeRules } from '@/shared/claudePermissionRules';
 
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 
-// A prefix rule for one of these would allow any program it is handed:
-// `Bash(python:*)` covers `python -c "<anything>"`. Such a call can still be
-// allowed once; no rule is offered for it.
+// A prefix rule for any of these would allow whatever program or script it is
+// handed — `Bash(python:*)` covers `python -c "<anything>"`, `Bash(timeout:*)`
+// covers `timeout 9 <anything>`. Such a call can still be allowed once; no rule
+// is offered for it.
 const PROGRAM_RUNNERS = new Set([
-  'python', 'python3', 'py', 'node', 'deno', 'bun', 'ruby', 'perl', 'php',
-  'bash', 'sh', 'zsh', 'pwsh', 'powershell', 'cmd', 'eval', 'exec', 'sudo', 'xargs', 'env',
-  'invoke-expression', 'iex', 'start-process', 'invoke-command',
+  // interpreters and shells
+  'python', 'python3', 'py', 'node', 'deno', 'bun', 'ruby', 'perl', 'php', 'java', 'dotnet', 'lua',
+  'bash', 'sh', 'zsh', 'fish', 'pwsh', 'powershell', 'cmd', 'wsl',
+  // package runners, which fetch and execute code
+  'npx', 'bunx', 'pnpx', 'uvx', 'pipx',
+  // commands that run another command
+  'eval', 'exec', 'sudo', 'su', 'doas', 'xargs', 'env', 'timeout', 'nohup', 'time', 'nice', 'stdbuf',
+  'watch', 'start', 'call', 'invoke-expression', 'iex', 'start-process', 'invoke-command', 'invoke-item', '&',
 ]);
+
+// Package-manager subcommands that install, fetch or execute arbitrary code.
+const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn']);
+const PACKAGE_RUNNING_SUBCOMMANDS = new Set(['exec', 'x', 'dlx', 'install', 'i', 'add', 'ci', 'create', 'init', 'run-script']);
+
+// Tools whose every call can do anything, so remembering the bare tool would be
+// remembering everything: the CLI itself treats `Agent` and `Task` as dangerous.
+const UNREMEMBERABLE_TOOL = /^(Agent|Task)$|(^|__)(script-execute|execute[_-](?:blender[_-])?code)/i;
+
+/** The program a command starts, without a directory or a Windows extension. */
+const programName = (token: string) => token.replace(/^.*[\\/]/, '').replace(/\.(exe|cmd|bat|ps1|com)$/i, '').toLowerCase();
 
 /**
  * The rule "Allow & remember" saves for a call, or null when none is safe to
  * offer. The rule lands in Claude's settings file, which the user's terminal
  * sessions and every machine it syncs to obey as well, so it is kept to the
  * command that was actually seen rather than the whole tool: a bare `Bash` or
- * `PowerShell` would allow every command there is.
+ * `PowerShell` would allow every command there is, and a rule that names a
+ * flag rather than a subcommand — `Bash(git -C:*)` — allows `git -C . -c
+ * core.fsmonitor=<anything> status` along with it.
  */
 export function buildClaudeToolPermissionEntry(toolName?: string, toolInput?: unknown) {
   if (!toolName) return null;
-  if (!SHELL_TOOLS.has(toolName)) return toolName;
+  if (!SHELL_TOOLS.has(toolName)) return UNREMEMBERABLE_TOOL.test(toolName) ? null : toolName;
 
   let parsed: unknown = toolInput;
   if (typeof toolInput === 'string') {
@@ -33,18 +52,35 @@ export function buildClaudeToolPermissionEntry(toolName?: string, toolInput?: un
     }
   }
 
-  const command = parsed && typeof parsed === 'object' && 'command' in parsed && typeof parsed.command === 'string'
+  const fullCommand = parsed && typeof parsed === 'object' && 'command' in parsed && typeof parsed.command === 'string'
     ? parsed.command.trim()
     : '';
+  // `cd <repo> && git grep …` is about the git grep; a rule for `cd` would
+  // approve nothing the user was actually looking at.
+  const command = fullCommand.replace(/^cd\s+("[^"]*"|'[^']*'|\S+)\s*(&&|;)\s*/, '');
   if (!command) return null;
 
   const tokens = command.split(/\s+/);
-  if (PROGRAM_RUNNERS.has(tokens[0].toLowerCase())) return null;
+  const [first, second, third] = tokens;
+  // `FOO=1 python …` runs whatever follows the assignment.
+  if (first.includes('=')) return null;
+  const program = programName(first);
+  if (PROGRAM_RUNNERS.has(program)) return null;
 
-  if (tokens[0] === 'git' && tokens[1]) {
-    return `${toolName}(${tokens[0]} ${tokens[1]}:*)`;
+  // A subcommand is part of the rule; a flag in its place is not a subcommand.
+  if (program === 'git') {
+    if (!second || second.startsWith('-')) return null;
+    return `${toolName}(${first} ${second}:*)`;
   }
-  return `${toolName}(${tokens[0]}:*)`;
+
+  if (PACKAGE_MANAGERS.has(program)) {
+    if (!second || second.startsWith('-') || PACKAGE_RUNNING_SUBCOMMANDS.has(second)) return null;
+    // `npm run:*` would cover every script in every package; name the script.
+    if (second === 'run') return third && !third.startsWith('-') ? `${toolName}(${first} run ${third}:*)` : null;
+    return `${toolName}(${first} ${second}:*)`;
+  }
+
+  return `${toolName}(${first}:*)`;
 }
 
 export function formatToolInputForDisplay(input: unknown) {
