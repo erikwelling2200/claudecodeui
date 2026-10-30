@@ -11,6 +11,7 @@ import {
   readUserPreference,
   writeUserPreferences,
 } from '@/shared/userSettings';
+import { loadClaudeRules, saveClaudeRules } from '@/shared/claudePermissionRules';
 import { useProviderAuthStatus } from '@/modules/provider-auth';
 import type { AgentProvider, ClaudePermissionsState, CodeEditorSettingsState, CodexPermissionMode, CursorPermissionsState, NotificationPreferencesState, ProjectSortOrder, SettingsMainTab } from '@/shared/types';
 
@@ -157,6 +158,13 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
         disallowedTools: savedClaudeSettings.disallowedTools || [],
         skipPermissions: Boolean(savedClaudeSettings.skipPermissions),
       });
+      // Claude's rules themselves live in its settings file; the cache above
+      // only fills the panel until the file answers.
+      void loadClaudeRules().then((rules) => {
+        if (rules) {
+          setClaudePermissions((current) => ({ ...current, allowedTools: rules.allow, disallowedTools: rules.deny }));
+        }
+      });
       setProjectSortOrder(readUserPreference<ProjectSortOrder>('projectSortOrder', 'name') === 'date' ? 'date' : 'name');
 
       const savedCursorSettings = readUserPreference<CursorSettingsStorage>('cursorPermissions', {});
@@ -222,6 +230,16 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     try {
       // One call so the whole dialog's state reaches the server as a single
       // merge-patch rather than four racing requests.
+      // Claude's rules go to its settings file, so the terminal CLI honours the
+      // same lists; the preference below keeps the copy the composer reads.
+      const rulesSaved = await saveClaudeRules({
+        allow: claudePermissions.allowedTools,
+        deny: claudePermissions.disallowedTools,
+      });
+      if (!rulesSaved) {
+        throw new Error('Failed to save Claude permission rules');
+      }
+
       writeUserPreferences({
         claudePermissions: {
           allowedTools: claudePermissions.allowedTools,

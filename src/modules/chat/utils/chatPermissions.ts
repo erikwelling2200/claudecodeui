@@ -1,5 +1,6 @@
 import type { ChatMessage, ClaudePermissionSuggestion, PermissionGrantResult } from '@/shared/types';
 import { getClaudeSettings, saveClaudePermissions } from '@/modules/chat/utils/chatStorage';
+import { saveClaudeRules } from '@/shared/claudePermissionRules';
 
 export function buildClaudeToolPermissionEntry(toolName?: string, toolInput?: unknown) {
   if (!toolName) return null;
@@ -72,5 +73,9 @@ export function grantClaudeToolPermission(entry: string | null): PermissionGrant
     disallowedTools: nextDisallowed,
     skipPermissions: settings.skipPermissions,
   });
+  // The rule belongs in Claude's settings file, where the CLI reads it too.
+  // The cache is written above so the grant applies to the turn in flight
+  // without waiting for the round trip.
+  void saveClaudeRules({ allow: nextAllowed, deny: nextDisallowed });
   return { success: true, alreadyAllowed, updatedSettings };
 }
