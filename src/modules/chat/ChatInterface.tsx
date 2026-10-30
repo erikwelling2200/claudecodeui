@@ -231,7 +231,6 @@ function ChatInterface({
     handleTextareaClick,
     handleTextareaInput,
     syncInputOverlayScroll,
-    handleClearInput,
     handleAbortSession,
     handlePermissionDecision,
     handleGrantToolPermission,
@@ -587,8 +586,6 @@ function ChatInterface({
           onToggleCommandMenu={handleToggleCommandMenu}
           remoteControl={provider === 'claude' ? remoteControl : null}
           onToggleRemoteControl={handleToggleRemoteControl}
-          hasInput={Boolean(input.trim())}
-          onClearInput={handleClearInput}
           onSubmit={handleSubmit}
           isDragActive={isDragActive}
           queuedDraft={queuedDraft}

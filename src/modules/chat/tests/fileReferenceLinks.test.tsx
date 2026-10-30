@@ -47,3 +47,26 @@ test('a plain file reference opens with no line', () => {
   clickReference('See [src/foo.ts](src/foo.ts).', 'src/foo.ts');
   assert.deepEqual(openFileInEditor.mock.calls[0], ['src/foo.ts', null]);
 });
+
+test('a file name in inline code opens it', () => {
+  clickReference('Location: `NPCGenerateConditionDate.cs`', 'NPCGenerateConditionDate.cs');
+  assert.deepEqual(openFileInEditor.mock.calls[0], ['NPCGenerateConditionDate.cs', null]);
+});
+
+test('a path with a line suffix in inline code opens at that line', () => {
+  clickReference('See `src/foo.ts:42`.', 'src/foo.ts:42');
+  assert.deepEqual(openFileInEditor.mock.calls[0], ['src/foo.ts', 42]);
+});
+
+test('identifiers in inline code stay plain code', () => {
+  for (const identifier of ['NPCGenerateConditionDate.Eval', 'Date.KingsDay', 'obj.length', 'KingsDay', '*.cs', '.cs']) {
+    const { container, unmount } = render(<Markdown>{`the \`${identifier}\` case`}</Markdown>);
+    assert.equal(container.querySelector('a'), null, identifier);
+    unmount();
+  }
+});
+
+test('inline code inside a link does not nest a second link', () => {
+  const { container } = render(<Markdown>{'See [`src/foo.ts`](src/foo.ts).'}</Markdown>);
+  assert.equal(container.querySelectorAll('a').length, 1);
+});

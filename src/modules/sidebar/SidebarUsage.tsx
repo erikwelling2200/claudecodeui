@@ -99,7 +99,7 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
   let status = usage.fetchedAt ? t('usage.asOf', { age: formatAge(now - usage.fetchedAt) }) : t('usage.noReading');
   if (stale && usage.fetchedAt) status += `, ${t('usage.clickToRefresh')}`;
   if (refreshing) status = t('usage.refreshing');
-  const tooltip = usage.limits.map((limit) => `${limit.label}: ${limit.percent}% used${limit.resetsAt ? `, resets in ${formatUntil(limit.resetsAt - now)}` : ''}`).join('\n');
+  const tooltip = usage.limits.map((limit) => `${limit.label}: ${limit.percent}% used${limit.resetsAt ? `, ${windowElapsed(limit, now)}% elapsed, resets in ${formatUntil(limit.resetsAt - now)}` : ''}`).join('\n');
 
   return (
     <button

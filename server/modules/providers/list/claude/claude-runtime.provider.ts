@@ -31,6 +31,7 @@ import {
   CLAUDE_PREDEFINED_MODELS,
   CLAUDE_ULTRACODE_EFFORT
 } from '@/modules/providers/list/claude/claude-models.provider.js';
+import { isToolCallAllowed, isToolCallDenied } from '@/modules/providers/list/claude/claude-tool-permissions.js';
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import {
   createNotificationEvent,
@@ -347,95 +348,6 @@ function resolveToolApproval(requestId: string, decision: ToolApprovalDecision) 
   if (resolver) {
     resolver(decision);
   }
-}
-
-// Tools whose permission entries carry a command, as `Tool(command pattern)`.
-const COMMAND_TOOLS = new Set(['Bash', 'PowerShell']);
-
-const GLOB_CACHE = new Map<string, RegExp>();
-
-/**
- * Compiles one permission pattern to a regular expression, where `*` stands
- * for any run of characters and everything else is literal. Patterns are few
- * and reused on every tool call, so the compiled form is kept.
- */
-function globToRegExp(pattern: string): RegExp {
-  const cached = GLOB_CACHE.get(pattern);
-  if (cached) {
-    return cached;
-  }
-
-  const source = pattern
-    .split('*')
-    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('[\\s\\S]*');
-  const compiled = new RegExp(`^${source}$`);
-  GLOB_CACHE.set(pattern, compiled);
-  return compiled;
-}
-
-/**
- * Shell syntax that runs a second command after, or inside, the first one.
- * A prefix rule only vouches for the command it names, so `Bash(git status:*)`
- * must not carry `git status && rm -rf build` along with it.
- */
-const COMMAND_CHAINING = /(\|\||&&|[;|&`]|\$\(|<\(|>\()/;
-
-/** The command a Bash or PowerShell call runs, however the SDK passed its input. */
-function readToolCommand(input: unknown): string {
-  if (typeof input === 'string') {
-    return input.trim();
-  }
-  if (input && typeof input === 'object' && typeof (input as AnyRecord).command === 'string') {
-    return ((input as AnyRecord).command as string).trim();
-  }
-  return '';
-}
-
-/**
- * Matches a stored permission entry against a tool call, in the rule format
- * the Claude CLI reads from its own settings file — so a rule behaves the same
- * whether the user wrote it here or in `~/.claude/settings.json`:
- *
- * - `Read`, or a glob over tool names such as `mcp__unity-vov__gameobject-*`;
- * - `Bash(git status:*)`, whose trailing `:*` matches any command starting
- *   with that prefix, and whose `*` elsewhere (`git -C * commit:*`) stands for
- *   any run of characters;
- * - `Bash(npm run lint)` with no trailing `:*`, which matches that command and
- *   nothing more.
- */
-function matchesToolPermission(entry: string, toolName: string, input: unknown) {
-  if (!entry || !toolName) {
-    return false;
-  }
-
-  const commandMatch = entry.match(/^([^()]+)\((.*)\)$/);
-  if (!commandMatch) {
-    return entry === toolName || (entry.includes('*') && globToRegExp(entry).test(toolName));
-  }
-
-  const [, entryTool, commandPattern] = commandMatch;
-  if (entryTool !== toolName || !COMMAND_TOOLS.has(toolName)) {
-    return false;
-  }
-
-  const command = readToolCommand(input);
-  if (!command) {
-    return false;
-  }
-
-  // A trailing `:*` is a prefix rule: everything after the prefix is free.
-  const prefixPattern = commandPattern.endsWith(':*') ? commandPattern.slice(0, -2) : null;
-  if (prefixPattern === null) {
-    return globToRegExp(commandPattern).test(command);
-  }
-
-  // A chained command is several commands, and the rule speaks for one of
-  // them. Let it through to the classifier or the user instead.
-  if (COMMAND_CHAINING.test(command)) {
-    return false;
-  }
-  return globToRegExp(`${prefixPattern}*`).test(command);
 }
 
 /**
@@ -1609,14 +1521,14 @@ async function queryClaudeSDK(
             return preToolUseDecision('allow');
           }
 
-          if ((sdkOptions.disallowedTools || []).some((entry: string) => matchesToolPermission(entry, toolName, toolInput))) {
+          if (isToolCallDenied(sdkOptions.disallowedTools || [], toolName, toolInput)) {
             if (toolUseId) {
               selfDeniedToolUses.add(toolUseId);
             }
             return preToolUseDecision('deny', 'Tool disallowed by settings');
           }
 
-          if ((sdkOptions.allowedTools || []).some((entry: string) => matchesToolPermission(entry, toolName, toolInput))) {
+          if (isToolCallAllowed(sdkOptions.allowedTools || [], toolName, toolInput)) {
             return preToolUseDecision('allow');
           }
 
@@ -1699,16 +1611,12 @@ async function queryClaudeSDK(
           return { behavior: 'allow', updatedInput: input };
         }
 
-        const isDisallowed = (sdkOptions.disallowedTools || []).some((entry: string) =>
-          matchesToolPermission(entry, toolName, input)
-        );
+        const isDisallowed = isToolCallDenied(sdkOptions.disallowedTools || [], toolName, input);
         if (isDisallowed) {
           return { behavior: 'deny', message: 'Tool disallowed by settings' };
         }
 
-        const isAllowed = (sdkOptions.allowedTools || []).some((entry: string) =>
-          matchesToolPermission(entry, toolName, input)
-        );
+        const isAllowed = isToolCallAllowed(sdkOptions.allowedTools || [], toolName, input);
         if (isAllowed) {
           return { behavior: 'allow', updatedInput: input };
         }

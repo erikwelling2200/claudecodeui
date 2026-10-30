@@ -10,7 +10,7 @@ import type {
   RefObject,
   TouchEvent,
 } from 'react';
-import { PaperclipIcon, SlashIcon, XIcon, Loader2, ArrowUpIcon, PencilIcon, RadioTowerIcon, ExternalLinkIcon } from 'lucide-react';
+import { PaperclipIcon, SlashIcon,Loader2, ArrowUpIcon, PencilIcon, RadioTowerIcon, ExternalLinkIcon } from 'lucide-react';
 
 import { useVoiceInput } from '@/modules/chat/hooks/useVoiceInput';
 import { useVoiceAvailable } from '@/modules/chat/hooks/useVoiceAvailable';
@@ -75,8 +75,6 @@ type ChatComposerProps = {
   /** Null when the provider has no Remote Control. */
   remoteControl: RemoteControlStatus | null;
   onToggleRemoteControl: () => void;
-  hasInput: boolean;
-  onClearInput: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement> | MouseEvent<HTMLButtonElement> | TouchEvent<HTMLButtonElement>) => void;
   isDragActive: boolean;
   queuedDraft: QueuedDraft | null;
@@ -156,8 +154,6 @@ export default function ChatComposer({
   onToggleCommandMenu,
   remoteControl,
   onToggleRemoteControl,
-  hasInput,
-  onClearInput,
   onSubmit,
   isDragActive,
   queuedDraft,
@@ -510,16 +506,6 @@ export default function ChatComposer({
                 onClick={() => window.open(remoteControl.sessionUrl!, '_blank', 'noopener,noreferrer')}
               >
                 <ExternalLinkIcon />
-              </PromptInputButton>
-            )}
-
-            {hasInput && (
-              <PromptInputButton
-                tooltip={{ content: t('input.clearInput', { defaultValue: 'Clear input' }) }}
-                onClick={onClearInput}
-                className="hidden sm:flex"
-              >
-                <XIcon />
               </PromptInputButton>
             )}
 
