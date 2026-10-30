@@ -29,6 +29,7 @@ import {
   CLAUDE_PREDEFINED_MODELS,
   CLAUDE_ULTRACODE_EFFORT
 } from '@/modules/providers/list/claude/claude-models.provider.js';
+import { isToolCallAllowed, isToolCallDenied } from '@/modules/providers/list/claude/claude-tool-permissions.js';
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import {
   createNotificationEvent,
@@ -308,40 +309,6 @@ function resolveToolApproval(requestId: string, decision: ToolApprovalDecision) 
   if (resolver) {
     resolver(decision);
   }
-}
-
-// Match stored permission entries against a tool + input combo.
-// This only supports exact tool names and the Bash(command:*) shorthand
-// used by the UI; it intentionally does not implement full glob semantics,
-// introduced to stay consistent with the UI's "Allow rule" format.
-function matchesToolPermission(entry: string, toolName: string, input: unknown) {
-  if (!entry || !toolName) {
-    return false;
-  }
-
-  if (entry === toolName) {
-    return true;
-  }
-
-  const bashMatch = entry.match(/^Bash\((.+):\*\)$/);
-  if (toolName === 'Bash' && bashMatch) {
-    const allowedPrefix = bashMatch[1];
-    let command = '';
-
-    if (typeof input === 'string') {
-      command = input.trim();
-    } else if (input && typeof input === 'object' && typeof (input as AnyRecord).command === 'string') {
-      command = (input as AnyRecord).command.trim();
-    }
-
-    if (!command) {
-      return false;
-    }
-
-    return command.startsWith(allowedPrefix);
-  }
-
-  return false;
 }
 
 /**
@@ -1440,16 +1407,12 @@ async function queryClaudeSDK(
           return { behavior: 'allow', updatedInput: input };
         }
 
-        const isDisallowed = (sdkOptions.disallowedTools || []).some((entry: string) =>
-          matchesToolPermission(entry, toolName, input)
-        );
+        const isDisallowed = isToolCallDenied(sdkOptions.disallowedTools || [], toolName, input);
         if (isDisallowed) {
           return { behavior: 'deny', message: 'Tool disallowed by settings' };
         }
 
-        const isAllowed = (sdkOptions.allowedTools || []).some((entry: string) =>
-          matchesToolPermission(entry, toolName, input)
-        );
+        const isAllowed = isToolCallAllowed(sdkOptions.allowedTools || [], toolName, input);
         if (isAllowed) {
           return { behavior: 'allow', updatedInput: input };
         }
