@@ -79,7 +79,6 @@ test('lists the allow, deny and ask rules of ~/.claude/settings.json and the man
       allow: ['Bash(npm run test:*)', 'Read'],
       deny: ['Bash(rm:*)'],
       ask: ['WebFetch'],
-      configured: true,
     });
     assert.deepEqual(bySource(sources, 'managed'), {
       scope: 'managed',
@@ -88,7 +87,6 @@ test('lists the allow, deny and ask rules of ~/.claude/settings.json and the man
       allow: [],
       deny: ['WebSearch'],
       ask: [],
-      configured: true,
     });
     // Nothing but the rule lists leaves the server (the env block holds secrets).
     assert.doesNotMatch(JSON.stringify(sources), /sk-secret|acceptEdits/);

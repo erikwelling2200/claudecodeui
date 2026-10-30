@@ -10,12 +10,19 @@
  *   `mcp__*` and a bare `*` allow nothing, rather than granting more here than
  *   in the user's terminal. A deny rule takes the wider shapes the CLI also
  *   denies on, `*` and `mcp__*` included;
- * - `Bash(git status:*)`, matching that command and anything after it, and
- *   `Bash(git -C * commit:*)`, where `*` stands for any run of characters;
+ * - `Bash(git status:*)`, matching that command and anything after it;
  * - `Bash(npm run lint)` with no trailing `:*`, matching that command alone.
  *
+ * An allow match is never wider than the CLI's own: a command pattern is
+ * literal apart from its trailing `:*`, and a command that writes to a file
+ * or runs a subexpression is allowed by no rule. The CLI holds the same rules
+ * and judges a call before the app ever sees it, so the only thing an app-side
+ * allow can add is a call the CLI chose not to wave through. A deny rule may
+ * also use `*` inside a command pattern, since matching more only refuses more.
+ *
  * PowerShell entries are written and matched like Bash ones, except that its
- * backtick escapes and backslash path separators are not bash metacharacters.
+ * backtick escapes and backslash path separators are not bash metacharacters,
+ * and its parentheses run a subexpression.
  *
  * A command is checked per subcommand, the way the CLI does it: an allow list
  * approves the call only when every part of `a && b | c` is covered, and a deny
@@ -25,12 +32,23 @@
 
 type BashSplit = {
   segments: string[];
-  // Command or process substitution, whose inner commands cannot be vouched for.
+  // Command or process substitution — or, in PowerShell, a `( )` or `@( )`
+  // subexpression — whose inner commands cannot be vouched for.
   opaque: boolean;
+  // Output sent to a file. A rule for a command says nothing about which files
+  // it may overwrite: `Bash(echo:*)` does not cover `echo pwned >> ~/.bashrc`,
+  // and the CLI refuses that call too.
+  redirects: boolean;
   // A quote that never closed, so the split below cannot be trusted to have
   // found every separator.
   unbalanced: boolean;
 };
+
+/** Whether the redirection target starting at `from` discards the output. */
+function writesNowhere(command: string, from: number) {
+  const target = command.slice(from).replace(/^>?\s*/, '');
+  return /^(\/dev\/null|\$null|NUL)(?=$|[\s;|&)])/i.test(target);
+}
 
 /**
  * `escapes` is false for PowerShell, where a backtick is the escape character
@@ -39,6 +57,7 @@ type BashSplit = {
 function splitBashCommand(command: string, escapes = true): BashSplit {
   const segments: string[] = [];
   let opaque = false;
+  let redirects = false;
   let current = '';
   let quote: '"' | "'" | null = null;
 
@@ -79,6 +98,11 @@ function splitBashCommand(command: string, escapes = true): BashSplit {
     }
 
     if ((char === '<' || char === '>') && next === '(') opaque = true;
+    // `(Get-Date).Year` and `@(Remove-Item x)` both run whatever is inside.
+    if (!escapes && char === '(') opaque = true;
+    // Output sent to a file. Duplicating a descriptor (`2>&1`, `>&2`) and
+    // discarding output (`2>/dev/null`, `> $null`) write nothing anywhere.
+    if (char === '>' && next !== '&' && next !== '(' && !writesNowhere(command, i + 1)) redirects = true;
 
     // `2>&1`, `&>file` and `>&2` are redirections, not the background operator.
     const isRedirectAmpersand = char === '&' && (command[i - 1] === '>' || command[i - 1] === '<' || next === '>');
@@ -93,7 +117,7 @@ function splitBashCommand(command: string, escapes = true): BashSplit {
   }
 
   flush();
-  return { segments, opaque, unbalanced: quote !== null };
+  return { segments, opaque, redirects, unbalanced: quote !== null };
 }
 
 /**
@@ -127,8 +151,8 @@ const GLOB_CACHE = new Map<string, RegExp>();
 /**
  * Compiles a pattern in which `*` stands for any run of characters and
  * everything else is literal, so `mcp__unity-vov__gameobject-*` covers that
- * server's object tools and `git -C * commit` covers any repository path.
- * Patterns are few and reused on every call, so the compiled form is kept.
+ * server's object tools. Patterns are few and reused on every call, so the
+ * compiled form is kept.
  */
 function globToRegExp(pattern: string): RegExp {
   const cached = GLOB_CACHE.get(pattern);
@@ -172,11 +196,20 @@ function deniesToolName(entry: string, toolName: string) {
   return globToRegExp(entry).test(toolName);
 }
 
-function matchesCommandSegment(entry: string, toolName: string, segment: string) {
+/**
+ * Whether one command segment falls under a `Tool(...)` entry.
+ *
+ * For an allow list the pattern is literal apart from a trailing `:*`, which is
+ * all the CLI honours: it does not read `*` inside a command, so
+ * `Bash(git -C * status:*)` grants nothing there, and granting on it here would
+ * let `*` swallow flags such as `-c core.fsmonitor=<command>`. A deny list may
+ * use `*` anywhere, since matching more only refuses more.
+ */
+function matchesCommandSegment(entry: string, toolName: string, segment: string, globs: boolean) {
   const prefixMatch = entry.match(new RegExp(`^${toolName}\\((.+):\\*\\)$`));
   if (prefixMatch) {
     const prefix = prefixMatch[1];
-    if (!prefix.includes('*')) {
+    if (!globs || !prefix.includes('*')) {
       return segment === prefix || (segment.startsWith(prefix) && /\s/.test(segment[prefix.length]));
     }
     // A wildcard prefix still has to end on a word boundary, so `git -C * commit`
@@ -187,7 +220,7 @@ function matchesCommandSegment(entry: string, toolName: string, segment: string)
   const exactMatch = entry.match(new RegExp(`^${toolName}\\((.+)\\)$`));
   if (!exactMatch) return false;
   const pattern = exactMatch[1];
-  return pattern.includes('*') ? globToRegExp(pattern).test(segment) : segment === pattern;
+  return globs && pattern.includes('*') ? globToRegExp(pattern).test(segment) : segment === pattern;
 }
 
 /** The command tool this call is for, when any entry could speak about its command. */
@@ -204,9 +237,9 @@ export function isToolCallAllowed(entries: string[], toolName: string, input: un
   const commandTool = commandToolFor(entries, toolName);
   if (!commandTool) return false;
 
-  const { segments, opaque, unbalanced } = splitBashCommand(getBashCommand(input), commandTool === 'Bash');
-  if (opaque || unbalanced || segments.length === 0) return false;
-  return segments.every((segment) => entries.some((entry) => matchesCommandSegment(entry, commandTool, segment)));
+  const { segments, opaque, redirects, unbalanced } = splitBashCommand(getBashCommand(input), commandTool === 'Bash');
+  if (opaque || redirects || unbalanced || segments.length === 0) return false;
+  return segments.every((segment) => entries.some((entry) => matchesCommandSegment(entry, commandTool, segment, false)));
 }
 
 export function isToolCallDenied(entries: string[], toolName: string, input: unknown) {
@@ -217,5 +250,5 @@ export function isToolCallDenied(entries: string[], toolName: string, input: unk
   if (!commandTool) return false;
 
   const segments = denySegments(getBashCommand(input), commandTool === 'Bash');
-  return segments.some((segment) => entries.some((entry) => matchesCommandSegment(entry, commandTool, segment)));
+  return segments.some((segment) => entries.some((entry) => matchesCommandSegment(entry, commandTool, segment, true)));
 }

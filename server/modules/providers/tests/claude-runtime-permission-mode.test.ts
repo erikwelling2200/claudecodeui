@@ -64,6 +64,8 @@ async function withRun(
     getProviderModels: async () => CLAUDE_PREDEFINED_MODELS as never,
     normalizeMessage: (raw, sessionId) => sessions.normalizeMessage(raw, sessionId),
     isProviderInstalled: async () => true,
+    // A raised prompt must never start a real, billed explainer run.
+    explainToolCall: async () => null,
     createQuery,
   };
 

@@ -24,6 +24,12 @@ export type UserPreferences = {
   /** Projects the sidebar leaves out of the Projects list unless hidden projects are shown. */
   hiddenProjectIds: string[];
   claudePermissions: unknown;
+  /**
+   * Whether this server's own stored Claude rules have been carried into
+   * `~/.claude/settings.json`. Per server, not per file: each machine keeps its
+   * old list in its own database, and the synced file cannot tell them apart.
+   */
+  claudeRulesMigrated: boolean;
   cursorPermissions: unknown;
   codexPermissions: unknown;
   opencodePermissions: unknown;
@@ -63,6 +69,8 @@ const LEGACY_STORAGE_KEYS: Record<UserPreferenceKey, string> = {
   // Unused: hiding projects postdates the move to the server.
   hiddenProjectIds: '',
   claudePermissions: 'claude-settings',
+  // Unused: the carry-over postdates the move to the server.
+  claudeRulesMigrated: '',
   cursorPermissions: 'cursor-tools-settings',
   codexPermissions: 'codex-settings',
   opencodePermissions: 'opencode-settings',

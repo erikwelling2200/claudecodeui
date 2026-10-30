@@ -26,7 +26,6 @@ const source = (overrides: Partial<ClaudeSettingsPermissionSource>): ClaudeSetti
   allow: [],
   deny: [],
   ask: [],
-  configured: true,
   ...overrides,
 });
 

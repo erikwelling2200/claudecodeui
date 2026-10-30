@@ -21,11 +21,6 @@ type ClaudeSettingsPermissionSource = {
   allow: string[];
   deny: string[];
   ask: string[];
-  /**
-   * Whether the file carries an `allow` or `deny` key at all, so a caller can
-   * tell "no rules written here yet" from "the rules here are empty".
-   */
-  configured: boolean;
 };
 
 /**
@@ -86,7 +81,7 @@ async function readPermissionSource(
   scope: ClaudeSettingsPermissionSource['scope'],
   filePath: string,
 ): Promise<ClaudeSettingsPermissionSource> {
-  const empty = { scope, path: filePath, allow: [], deny: [], ask: [], configured: false };
+  const empty = { scope, path: filePath, allow: [], deny: [], ask: [] };
 
   let content: string;
   try {
@@ -122,7 +117,6 @@ async function readPermissionSource(
     allow: readRuleList(permissions.allow),
     deny: readRuleList(permissions.deny),
     ask: readRuleList(permissions.ask),
-    configured: permissions.allow !== undefined || permissions.deny !== undefined,
   };
 }
 

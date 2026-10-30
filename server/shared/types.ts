@@ -700,6 +700,13 @@ export type ProviderRuntimeContext = {
     setPermissionMode?(mode: string): Promise<void>;
     close?(): void;
   };
+  /**
+   * Writes the one-sentence description shown under a permission prompt.
+   * Production leaves this unset and the runtime uses the explainer service,
+   * which spawns a model query of its own; tests replace it so raising a
+   * prompt never starts a real, billed CLI run.
+   */
+  explainToolCall?: (call: { toolName: string; input: unknown }) => Promise<string | null>;
 };
 
 export type ProviderRunFunction = (

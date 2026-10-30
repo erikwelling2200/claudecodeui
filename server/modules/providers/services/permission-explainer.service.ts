@@ -30,7 +30,9 @@ const EXPLAINER_TIMEOUT_MS = 45_000;
 
 const MAX_SENTENCE_LENGTH = 300;
 
-// The call is pasted in whole, so a long one is truncated rather than sent.
+// A long call is cut down before it is sent. Its start AND its end are kept:
+// a harmless-looking head followed by a destructive tail is exactly what a
+// reader who does not read shell most needs described.
 const MAX_INPUT_LENGTH = 4_000;
 
 const SYSTEM_PROMPT = [
@@ -97,8 +99,9 @@ const toOneSentence = (text: string): string => {
 
 const buildPrompt = ({ toolName, input }: ExplainRequest): string => {
   const serialized = serializeInput(input);
+  const half = MAX_INPUT_LENGTH / 2;
   const body = serialized.length > MAX_INPUT_LENGTH
-    ? `${serialized.slice(0, MAX_INPUT_LENGTH)}\n… (truncated)`
+    ? `${serialized.slice(0, half)}\n… (${serialized.length - MAX_INPUT_LENGTH} characters omitted from the middle) …\n${serialized.slice(-half)}`
     : serialized;
   return [
     `Tool: ${toolName}`,
@@ -165,6 +168,10 @@ export const permissionExplainerService = {
         // No CLAUDE.md, no project or user settings: the describer must not
         // inherit instructions meant for the agent.
         settingSources: [],
+        // Each description is a throwaway one-turn query. Persisted, every
+        // permission prompt would leave a session transcript in the server's
+        // project folder, crowding the user's real sessions out of its list.
+        persistSession: false,
         abortController: controller,
       };
 

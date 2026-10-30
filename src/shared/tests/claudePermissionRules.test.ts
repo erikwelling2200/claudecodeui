@@ -40,7 +40,6 @@ const source = (overrides: Partial<ClaudeSettingsPermissionSource> = {}): Claude
   allow: [],
   deny: [],
   ask: [],
-  configured: true,
   ...overrides,
 });
 
@@ -80,8 +79,8 @@ describe('loadClaudeRules', () => {
 
   it('carries a list built before the file was used across into it', async () => {
     preferences.claudePermissions = { allowedTools: ['WebSearch'], disallowedTools: [], skipPermissions: true };
-    // No allow or deny key in the file: this app has never written its rules there.
-    respondWith([source({ allow: ['Read'], configured: false })]);
+    // This machine has not carried its own list across yet.
+    respondWith([source({ allow: ['Read'] })]);
     // The server applies a delta to what the FILE holds, not to this client's cache.
     saveClaudeSettingsPermissions.mockImplementation((delta) => {
       const allow = [...['Read'].filter((rule) => !delta.allow.remove.includes(rule)), ...delta.allow.add];
@@ -132,6 +131,41 @@ describe('loadClaudeRules', () => {
     expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
     expect(readCachedClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
     expect(saveClaudeSettingsPermissions).not.toHaveBeenCalled();
+  });
+});
+
+describe('loadClaudeRules on more than one machine', () => {
+  it('a second machine carries its own list across, though the file is already in use', async () => {
+    // The file holds the first machine's rules; this machine kept its own list
+    // in its own database, and has not carried it across yet.
+    preferences.claudePermissions = { allowedTools: ['WebFetch'], disallowedTools: ['Bash(rm:*)'] };
+    respondWith([source({ allow: ['Read'], deny: [] })]);
+    saveClaudeSettingsPermissions.mockImplementation((delta) => {
+      const allow = [...['Read'].filter((rule) => !delta.allow.remove.includes(rule)), ...delta.allow.add];
+      const deny = [...delta.deny.add];
+      return Promise.resolve(new Response(JSON.stringify({ success: true, data: { source: source({ allow, deny }) } }), { status: 200 }));
+    });
+
+    expect(await loadClaudeRules()).toEqual({ allow: ['Read', 'WebFetch'], deny: ['Bash(rm:*)'] });
+    expect(preferences.claudeRulesMigrated).toBe(true);
+  });
+
+  it('once carried across, the file is taken as it stands', async () => {
+    preferences.claudeRulesMigrated = true;
+    preferences.claudePermissions = { allowedTools: ['Read', 'Stale'], disallowedTools: [] };
+    respondWith([source({ allow: ['Read'] })]);
+
+    expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
+    expect(saveClaudeSettingsPermissions).not.toHaveBeenCalled();
+  });
+
+  it('a carry-over that fails to save is tried again next time', async () => {
+    preferences.claudePermissions = { allowedTools: ['WebFetch'], disallowedTools: [] };
+    respondWith([source({ allow: ['Read'] })]);
+    saveClaudeSettingsPermissions.mockRejectedValue(new Error('file locked'));
+
+    expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
+    expect(preferences.claudeRulesMigrated).toBeUndefined();
   });
 });
 

@@ -2,31 +2,49 @@ import type { ChatMessage, ClaudePermissionSuggestion, PermissionGrantResult } f
 import { getClaudeSettings, saveClaudePermissions } from '@/modules/chat/utils/chatStorage';
 import { saveClaudeRules } from '@/shared/claudePermissionRules';
 
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
+
+// A prefix rule for one of these would allow any program it is handed:
+// `Bash(python:*)` covers `python -c "<anything>"`. Such a call can still be
+// allowed once; no rule is offered for it.
+const PROGRAM_RUNNERS = new Set([
+  'python', 'python3', 'py', 'node', 'deno', 'bun', 'ruby', 'perl', 'php',
+  'bash', 'sh', 'zsh', 'pwsh', 'powershell', 'cmd', 'eval', 'exec', 'sudo', 'xargs', 'env',
+  'invoke-expression', 'iex', 'start-process', 'invoke-command',
+]);
+
+/**
+ * The rule "Allow & remember" saves for a call, or null when none is safe to
+ * offer. The rule lands in Claude's settings file, which the user's terminal
+ * sessions and every machine it syncs to obey as well, so it is kept to the
+ * command that was actually seen rather than the whole tool: a bare `Bash` or
+ * `PowerShell` would allow every command there is.
+ */
 export function buildClaudeToolPermissionEntry(toolName?: string, toolInput?: unknown) {
   if (!toolName) return null;
-  if (toolName !== 'Bash') return toolName;
+  if (!SHELL_TOOLS.has(toolName)) return toolName;
 
   let parsed: unknown = toolInput;
   if (typeof toolInput === 'string') {
     try {
       parsed = JSON.parse(toolInput) as unknown;
     } catch {
-      return toolName;
+      return null;
     }
   }
 
   const command = parsed && typeof parsed === 'object' && 'command' in parsed && typeof parsed.command === 'string'
     ? parsed.command.trim()
     : '';
-  if (!command) return toolName;
+  if (!command) return null;
 
   const tokens = command.split(/\s+/);
-  if (tokens.length === 0) return toolName;
+  if (PROGRAM_RUNNERS.has(tokens[0].toLowerCase())) return null;
 
   if (tokens[0] === 'git' && tokens[1]) {
-    return `Bash(${tokens[0]} ${tokens[1]}:*)`;
+    return `${toolName}(${tokens[0]} ${tokens[1]}:*)`;
   }
-  return `Bash(${tokens[0]}:*)`;
+  return `${toolName}(${tokens[0]}:*)`;
 }
 
 export function formatToolInputForDisplay(input: unknown) {

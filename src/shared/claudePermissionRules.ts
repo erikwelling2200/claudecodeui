@@ -45,15 +45,14 @@ const mergeRules = (first: string[], second: string[]): string[] => [...new Set(
 /**
  * Reads the rules from the settings file and refreshes the cache from them.
  *
- * A file that carries no `allow` or `deny` key has never held this app's rules,
- * and only then is the stored list written up to it, carrying across a list
- * built before this UI used the file. Every later read takes the file as it
+ * The first read on each machine also writes up any rule this machine's own
+ * stored list holds and the file does not, carrying across a list built before
+ * this UI used the file. Each machine does that once: its old list lives in its
+ * own server's database, so the synced file cannot say whether it is done, and
+ * the marker is a preference of its own because every writer of the rules
+ * preference replaces it wholesale. Every later read takes the file as it
  * stands, so a rule deleted there — in the panel, by hand, or by a sync from
  * another machine — stays deleted instead of coming back from a stale cache.
- *
- * The condition lives in the file rather than in a flag beside the cache
- * because every writer of that preference replaces it wholesale, and a flag
- * cleared by one of them would make the carry-over run forever.
  */
 export async function loadClaudeRules(): Promise<ClaudeRules | null> {
   let source: ClaudeSettingsPermissionSource | undefined;
@@ -74,7 +73,7 @@ export async function loadClaudeRules(): Promise<ClaudeRules | null> {
 
   const cached = readCache();
   const fileRules: ClaudeRules = { allow: source.allow, deny: source.deny };
-  if (source.configured) {
+  if (readUserPreference<boolean>('claudeRulesMigrated', false)) {
     writeCache(fileRules);
     return fileRules;
   }
@@ -89,9 +88,15 @@ export async function loadClaudeRules(): Promise<ClaudeRules | null> {
   if (carriesOver) {
     // Measured against the file: the cache is one side of this merge, so a
     // difference taken from it would leave out the very rules being moved.
-    return (await saveClaudeRules(merged, fileRules)) ? merged : fileRules;
+    if (!(await saveClaudeRules(merged, fileRules))) {
+      // Not marked done, so the next read tries again.
+      return fileRules;
+    }
+    writeUserPreference('claudeRulesMigrated', true);
+    return merged;
   }
 
+  writeUserPreference('claudeRulesMigrated', true);
   writeCache(fileRules);
   return fileRules;
 }

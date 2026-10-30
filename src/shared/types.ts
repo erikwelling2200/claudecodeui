@@ -1515,12 +1515,6 @@ export type ClaudeSettingsPermissionSource = {
   allow: string[];
   deny: string[];
   ask: string[];
-  /**
-   * Whether the file carries an `allow` or `deny` key at all. A file that
-   * carries neither has never held this app's rules, which is what a one-time
-   * carry-over of an older stored list keys off.
-   */
-  configured: boolean;
 };
 
 /** The user's notification settings, grouped into delivery channels (in-app, web push, desktop, sound) and the events that trigger them; mirrors the payload of the notification preferences API. */
