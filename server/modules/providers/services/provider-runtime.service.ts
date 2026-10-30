@@ -4,6 +4,7 @@ import { sessionsService } from '@/modules/providers/services/sessions.service.j
 import type { IProvider } from '@/shared/interfaces.js';
 import type {
   AnyRecord,
+  LiveMcpServerStatus,
   LLMProvider,
   ProviderPermissionDecision,
   ProviderRunFunction,
@@ -125,6 +126,17 @@ export function createProviderRuntimeService(
     async setRemoteControl(providerName: LLMProvider, sessionId: string, enabled: boolean) {
       const { runtime } = dependencies.resolveProvider(providerName);
       return (await runtime.setRemoteControl?.(sessionId, enabled)) ?? null;
+    },
+
+    /** Null when the runtime has no live process for the session, or cannot report MCP servers at all. */
+    async listMcpServers(providerName: LLMProvider, sessionId: string): Promise<LiveMcpServerStatus[] | null> {
+      const { runtime } = dependencies.resolveProvider(providerName);
+      return (await runtime.listMcpServers?.(sessionId)) ?? null;
+    },
+
+    async reconnectMcpServer(providerName: LLMProvider, sessionId: string, serverName: string): Promise<boolean> {
+      const { runtime } = dependencies.resolveProvider(providerName);
+      return Boolean(await runtime.reconnectMcpServer?.(sessionId, serverName));
     },
 
     async steerTurn(providerName: LLMProvider, sessionId: string, command: string, options: AnyRecord): Promise<boolean> {

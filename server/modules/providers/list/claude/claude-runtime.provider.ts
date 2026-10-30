@@ -50,6 +50,7 @@ import { appendPromptText, buildAgentSessionEnv, createCompleteMessage, createNo
 import type {
   AnyRecord,
   BackgroundTaskSummary,
+  LiveMcpServerStatus,
   LiveTurnTerms,
   ProviderModelsDefinition,
   ProviderRuntimeContext,
@@ -2428,6 +2429,55 @@ async function setClaudeSDKRemoteControl(sessionId: string, enabled: boolean): P
   return { enabled, sessionUrl: remoteControlUrls.get(sessionId) ?? null };
 }
 
+/** Reduces the SDK's per-server status to what the `/mcp` view shows; env vars and headers stay on the server. */
+function toLiveMcpServerStatus(server: AnyRecord): LiveMcpServerStatus {
+  const config = (server.config ?? {}) as AnyRecord;
+  const commandLine = typeof config.command === 'string'
+    ? [config.command, ...(Array.isArray(config.args) ? config.args : [])].join(' ')
+    : undefined;
+  const target = typeof config.url === 'string' ? config.url : commandLine;
+  const transport = typeof config.type === 'string' ? config.type : (commandLine ? 'stdio' : undefined);
+  return {
+    name: String(server.name),
+    status: server.status,
+    ...(server.error ? { error: String(server.error) } : {}),
+    ...(server.scope ? { scope: String(server.scope) } : {}),
+    ...(transport ? { transport } : {}),
+    ...(target ? { target } : {}),
+    ...(server.serverInfo?.version ? { serverVersion: String(server.serverInfo.version) } : {}),
+    toolCount: Array.isArray(server.tools) ? server.tools.length : 0,
+  };
+}
+
+/**
+ * Lists the MCP servers of a session's live process with their connection state.
+ * @param {string} sessionId - Session identifier
+ * @returns {Promise<LiveMcpServerStatus[]|null>} Null when no live process holds the session
+ */
+async function listClaudeSDKMcpServers(sessionId: string): Promise<LiveMcpServerStatus[] | null> {
+  const session = getSession(sessionId);
+  if (!session || session.status !== 'active') {
+    return null;
+  }
+  const servers = await session.instance.mcpServerStatus!();
+  return servers.map(toLiveMcpServerStatus).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Reconnects one MCP server in a session's live process. Throws the SDK's error when the reconnect fails.
+ * @param {string} sessionId - Session identifier
+ * @param {string} serverName - The server's configured name
+ * @returns {Promise<boolean>} False when no live process holds the session
+ */
+async function reconnectClaudeSDKMcpServer(sessionId: string, serverName: string): Promise<boolean> {
+  const session = getSession(sessionId);
+  if (!session || session.status !== 'active') {
+    return false;
+  }
+  await session.instance.reconnectMcpServer!(serverName);
+  return true;
+}
+
 /**
  * Checks if an SDK session is currently active
  * @param {string} sessionId - Session identifier
@@ -2510,6 +2560,8 @@ export const claudeRuntime = {
   acceptsLiveTurn: acceptsClaudeSDKLiveTurn,
   setPermissionMode: setClaudeSDKPermissionMode,
   setRemoteControl: setClaudeSDKRemoteControl,
+  listMcpServers: listClaudeSDKMcpServers,
+  reconnectMcpServer: reconnectClaudeSDKMcpServer,
   steerTurn: steerClaudeSDKTurn,
   interruptForSteer: interruptClaudeSDKTurnForSteer,
   releaseIdleProcess: releaseClaudeSDKIdleProcess,

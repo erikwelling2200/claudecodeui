@@ -6,6 +6,7 @@ import { providerCapabilitiesService } from '@/modules/providers/services/provid
 import { providerCliService } from '@/modules/providers/services/provider-cli.service.js';
 import { providerMcpService } from '@/modules/providers/services/mcp.service.js';
 import { providerModelsService } from '@/modules/providers/services/provider-models.service.js';
+import { providerRuntimeService } from '@/modules/providers/services/provider-runtime.service.js';
 import { providerTokenUsageService } from '@/modules/providers/services/provider-token-usage.service.js';
 import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
@@ -749,6 +750,40 @@ router.post(
     res.json(createApiSuccessResponse(
       stored ?? { provider, sessionId, effort, source: 'session' as const },
     ));
+  }),
+);
+
+/** The MCP servers of the session's live process; `live: false` when no process holds the session. */
+router.get(
+  '/:provider/sessions/:sessionId/mcp',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const sessionId = parseSessionId(req.params.sessionId);
+    const servers = await providerRuntimeService.listMcpServers(provider, sessionId);
+    res.json(createApiSuccessResponse({ live: servers !== null, servers: servers ?? [] }));
+  }),
+);
+
+router.post(
+  '/:provider/sessions/:sessionId/mcp/:serverName/reconnect',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const sessionId = parseSessionId(req.params.sessionId);
+    const serverName = readPathParam(req.params.serverName, 'serverName');
+    let reconnected: boolean;
+    try {
+      reconnected = await providerRuntimeService.reconnectMcpServer(provider, sessionId, serverName);
+    } catch (error) {
+      throw new AppError((error as Error)?.message || String(error), { code: 'MCP_RECONNECT_FAILED', statusCode: 502 });
+    }
+    if (!reconnected) {
+      throw new AppError('This chat has no running process. MCP servers connect with the next message.', {
+        code: 'NO_LIVE_PROCESS',
+        statusCode: 409,
+      });
+    }
+    const servers = await providerRuntimeService.listMcpServers(provider, sessionId);
+    res.json(createApiSuccessResponse({ live: servers !== null, servers: servers ?? [] }));
   }),
 );
 

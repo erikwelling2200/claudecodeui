@@ -497,6 +497,11 @@ export const api = {
         effort,
       }),
 
+    sessionMcpStatus: (provider: string, sessionId: string) =>
+      get(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/mcp`),
+    reconnectSessionMcpServer: (provider: string, sessionId: string, serverName: string) =>
+      post(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/mcp/${encodeURIComponent(serverName)}/reconnect`, {}),
+
     mcpServers: (
       provider: string,
       { scope, workspacePath }: { scope: string; workspacePath?: string },

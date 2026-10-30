@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Activity,
@@ -8,7 +8,10 @@ import {
   Cpu,
   Gauge,
   Package,
+  Plug,
   Plus,
+  RefreshCw,
+  RotateCw,
   Search,
   Server,
   Sparkles,
@@ -23,8 +26,9 @@ import type {
   LLMProvider,
   ProviderModelActions,
   ProviderModelOption,
-  ProviderModelsDefinition,CommandModalPayload,CostCommandData,HelpCommandData,ModelCommandData,StatusCommandData
+  ProviderModelsDefinition,CommandModalPayload,CostCommandData,HelpCommandData,McpCommandData,ModelCommandData,StatusCommandData
 } from '@/shared/types';
+import { api, readApiJson } from '@/shared/api';
 import ModelLibraryPanel from '@/modules/chat/modals/ModelLibraryPanel';
 
 type CommandResultModalProps = {
@@ -63,6 +67,7 @@ const FALLBACK_COMMANDS: CommandEntry[] = [
   { name: '/models', descriptionKey: 'chat:misc.fallbackCommands.models' },
   { name: '/cost', descriptionKey: 'chat:misc.fallbackCommands.cost' },
   { name: '/status', descriptionKey: 'chat:misc.fallbackCommands.status' },
+  { name: '/mcp', descriptionKey: 'chat:misc.fallbackCommands.mcp' },
   { name: '/memory', descriptionKey: 'chat:misc.fallbackCommands.memory' },
   { name: '/config', descriptionKey: 'chat:misc.fallbackCommands.config' },
   { name: '/help', descriptionKey: 'chat:misc.fallbackCommands.help' },
@@ -535,9 +540,193 @@ function StatusContent({ data }: { data: StatusCommandData }) {
   );
 }
 
+/** One MCP server as the chat's live process reports it. Mirrors the server's LiveMcpServerStatus. */
+type LiveMcpServerStatus = {
+  name: string;
+  status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled';
+  error?: string;
+  scope?: string;
+  transport?: string;
+  target?: string;
+  serverVersion?: string;
+  toolCount: number;
+};
+
+type SessionMcpStatusResponse = { data: { live: boolean; servers: LiveMcpServerStatus[] } };
+
+const MCP_STATUS_CLASSES: Record<LiveMcpServerStatus['status'], string> = {
+  connected: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300',
+  failed: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-300',
+  'needs-auth': 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300',
+  pending: 'border-border/70 bg-muted text-muted-foreground',
+  disabled: 'border-border/70 bg-muted text-muted-foreground',
+};
+
+// A server that is still connecting settles on its own; re-read until it has.
+const MCP_PENDING_POLL_MS = 2000;
+
+function McpContent({ data }: { data: McpCommandData }) {
+  const { t } = useTranslation();
+  const provider = data.provider || 'claude';
+  const sessionId = data.sessionId || null;
+  // The live process's server list; null until the first read lands.
+  const [servers, setServers] = useState<LiveMcpServerStatus[] | null>(null);
+  // False when no process holds the chat, so there is nothing to reconnect.
+  const [live, setLive] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Servers with a reconnect in flight, so their buttons spin and stay disabled.
+  const [reconnecting, setReconnecting] = useState<Set<string>>(() => new Set());
+  // The last reconnect failure per server; the SDK's own status error is often empty after one.
+  const [reconnectErrors, setReconnectErrors] = useState<Record<string, string>>({});
+
+  const applyStatus = useCallback((body: SessionMcpStatusResponse) => {
+    setLive(body.data.live);
+    setServers(body.data.servers);
+    setLoadError(null);
+  }, []);
+
+  const load = useCallback(async () => {
+    if (!sessionId) {
+      return;
+    }
+    try {
+      applyStatus(await readApiJson<SessionMcpStatusResponse>(await api.providers.sessionMcpStatus(provider, sessionId)));
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
+    }
+  }, [applyStatus, provider, sessionId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const hasPending = Boolean(servers?.some((server) => server.status === 'pending'));
+  useEffect(() => {
+    if (!hasPending) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => void load(), MCP_PENDING_POLL_MS);
+    return () => window.clearTimeout(timer);
+  }, [hasPending, load, servers]);
+
+  const reconnect = useCallback(async (serverName: string) => {
+    if (!sessionId) {
+      return;
+    }
+    setReconnecting((current) => new Set(current).add(serverName));
+    setReconnectErrors(({ [serverName]: _cleared, ...rest }) => rest);
+    try {
+      applyStatus(await readApiJson<SessionMcpStatusResponse>(
+        await api.providers.reconnectSessionMcpServer(provider, sessionId, serverName),
+      ));
+    } catch (error) {
+      setReconnectErrors((current) => ({ ...current, [serverName]: error instanceof Error ? error.message : String(error) }));
+      await load();
+    } finally {
+      setReconnecting((current) => {
+        const next = new Set(current);
+        next.delete(serverName);
+        return next;
+      });
+    }
+  }, [applyStatus, load, provider, sessionId]);
+
+  const failedNames = (servers ?? []).filter((server) => server.status === 'failed').map((server) => server.name);
+  const connectedCount = (servers ?? []).filter((server) => server.status === 'connected').length;
+
+  if (!sessionId) {
+    return <p className="text-sm text-muted-foreground">{t('chat:misc.mcp.noSession')}</p>;
+  }
+  if (loadError) {
+    return <p className="text-sm text-red-600 dark:text-red-300">{t('chat:misc.mcp.loadFailed', { message: loadError })}</p>;
+  }
+  if (!servers) {
+    return <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />;
+  }
+  if (!live) {
+    return <p className="text-sm text-muted-foreground">{t('chat:misc.mcp.notLive')}</p>;
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          {t('chat:misc.mcp.summary', { connected: connectedCount, total: servers.length })}
+        </p>
+        <div className="flex gap-2">
+          {failedNames.length > 1 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-xl"
+              onClick={() => failedNames.forEach((name) => void reconnect(name))}
+            >
+              <RotateCw className="mr-1.5 h-3.5 w-3.5" />
+              {t('chat:misc.mcp.reconnectAll')}
+            </Button>
+          )}
+          <Button type="button" variant="ghost" size="sm" className="rounded-xl" onClick={() => void load()}>
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+            {t('chat:misc.mcp.refresh')}
+          </Button>
+        </div>
+      </div>
+
+      {servers.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t('chat:misc.mcp.noServers')}</p>
+      ) : (
+        <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pr-1">
+          <div className="overflow-hidden rounded-2xl border border-border/70 bg-background/75">
+            {servers.map((server) => {
+              const isReconnecting = reconnecting.has(server.name);
+              const error = reconnectErrors[server.name] || (server.status === 'failed' ? server.error : undefined);
+              return (
+                <div key={server.name} className="flex items-start justify-between gap-3 border-b border-border/60 px-4 py-3 last:border-b-0">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="break-all text-sm font-semibold text-foreground">{server.name}</span>
+                      <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${MCP_STATUS_CLASSES[server.status] ?? MCP_STATUS_CLASSES.pending}`}>
+                        {server.status === 'pending' && <Loader2 className="h-3 w-3 animate-spin" />}
+                        {t(`chat:misc.mcp.status.${server.status}`, { defaultValue: server.status })}
+                      </span>
+                      {server.status === 'connected' && (
+                        <span className="text-xs text-muted-foreground">{t('chat:misc.mcp.tools', { count: server.toolCount })}</span>
+                      )}
+                    </div>
+                    <p className="mt-1 break-all text-xs text-muted-foreground">
+                      {[server.scope, server.transport, server.target].filter(Boolean).join(' · ')}
+                    </p>
+                    {error && <p className="mt-1 break-words text-xs text-red-600 dark:text-red-300">{error}</p>}
+                  </div>
+                  {server.status !== 'disabled' && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 rounded-xl"
+                      disabled={isReconnecting}
+                      onClick={() => void reconnect(server.name)}
+                    >
+                      {isReconnecting
+                        ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        : <RotateCw className="mr-1.5 h-3.5 w-3.5" />}
+                      {t('chat:misc.mcp.reconnect')}
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Rendered by chat's ChatInterface to present the result of a slash command
- * (help, model picker, cost or status) in a modal over the transcript.
+ * (help, model picker, cost, status or MCP servers) in a modal over the transcript.
  */
 function CommandResultModal({
   payload,
@@ -579,6 +768,12 @@ function CommandResultModal({
       subtitle: t('chat:misc.modalMeta.statusSubtitle'),
       icon: Activity,
     },
+    mcp: {
+      eyebrow: t('chat:misc.modalMeta.mcpEyebrow'),
+      title: t('chat:misc.modalMeta.mcpTitle'),
+      subtitle: '',
+      icon: Plug,
+    },
   } as const;
 
   const activeMeta = kind ? modalMeta[kind] : null;
@@ -609,9 +804,11 @@ function CommandResultModal({
               <p className="mt-0.5 text-lg font-semibold tracking-tight text-foreground sm:text-xl">
                 {activeMeta?.title}
               </p>
-              <p className="mt-0.5 max-w-2xl text-sm leading-5 text-muted-foreground">
-                {activeMeta?.subtitle}
-              </p>
+              {activeMeta?.subtitle && (
+                <p className="mt-0.5 max-w-2xl text-sm leading-5 text-muted-foreground">
+                  {activeMeta.subtitle}
+                </p>
+              )}
             </div>
           </div>
 
@@ -642,6 +839,7 @@ function CommandResultModal({
           )}
           {payload?.kind === 'cost' && <CostContent data={payload.data as CostCommandData} />}
           {payload?.kind === 'status' && <StatusContent data={payload.data as StatusCommandData} />}
+          {payload?.kind === 'mcp' && <McpContent data={payload.data as McpCommandData} />}
         </div>
 
         <div className="flex shrink-0 flex-col gap-3 border-t border-border/70 bg-muted/20 px-4 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:px-6">

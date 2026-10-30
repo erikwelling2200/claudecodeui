@@ -383,7 +383,27 @@
       "status": "Inspect runtime, version, provider, and environment status.",
       "memory": "Open the project CLAUDE.md memory file.",
       "config": "Open settings and configuration.",
+      "mcp": "Show MCP server connections and reconnect them.",
       "help": "Show command documentation and syntax."
+    },
+    "mcp": {
+      "noSession": "Send a message first. MCP servers connect when the chat starts.",
+      "notLive": "This chat has no running process. MCP servers connect with the next message.",
+      "noServers": "No MCP servers configured.",
+      "loadFailed": "Could not load MCP servers: {{message}}",
+      "reconnect": "Reconnect",
+      "reconnectAll": "Reconnect failed",
+      "refresh": "Refresh",
+      "tools_one": "{{count}} tool",
+      "tools_other": "{{count}} tools",
+      "summary": "{{connected}} of {{total}} connected",
+      "status": {
+        "connected": "Connected",
+        "failed": "Failed",
+        "needs-auth": "Needs auth",
+        "pending": "Connecting",
+        "disabled": "Disabled"
+      }
     },
     "modalMeta": {
       "helpEyebrow": "Command center",
@@ -398,6 +418,8 @@
       "statusEyebrow": "Runtime health",
       "statusTitle": "System Status",
       "statusSubtitle": "Version, provider, runtime, and environment details in one place.",
+      "mcpEyebrow": "Connections",
+      "mcpTitle": "MCP Servers",
       "commandResult": "Command Result"
     },
     "choiceSavedSession": "Your choice is saved for this session and becomes the default for new chats.",
