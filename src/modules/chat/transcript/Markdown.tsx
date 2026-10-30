@@ -52,6 +52,37 @@ const looksLikeFilePath = (value?: string): value is string => {
   return /[\\/]/.test(cleaned) || /\.[a-z0-9]+$/i.test(cleaned);
 };
 
+// Inline code is mostly identifiers, so `Date.KingsDay` or `obj.length` must not
+// read as a file: only a known source/asset extension on a non-empty name counts.
+const FILE_EXTENSIONS =
+  'cs|ts|tsx|js|jsx|mjs|cjs|json|jsonc|md|mdx|txt|log|csv|yml|yaml|toml|ini|cfg|conf|env|xml|html|htm|css|scss|less|' +
+  'py|go|rs|java|kt|kts|c|h|cc|cpp|hpp|m|mm|swift|dart|rb|php|lua|sql|sh|bash|zsh|ps1|psm1|bat|cmd|' +
+  'vue|svelte|gradle|csproj|sln|props|targets|asmdef|asmref|unity|prefab|asset|mat|anim|controller|meta|shader|' +
+  'hlsl|cginc|compute|uss|uxml|inputactions|blend|fbx|png|jpg|jpeg|gif|svg|webp|pdf|lock';
+const FILE_NAME_PATTERN = new RegExp(`(^|[\\\\/])[^\\\\/]+\\.(${FILE_EXTENSIONS})$`, 'i');
+
+const looksLikeInlineCodeFile = (value: string): boolean => {
+  const cleaned = stripLineSuffix(value.trim());
+  if (!cleaned || /[\s*?<>|"(){}]/.test(cleaned) || cleaned.includes('://')) {
+    return false;
+  }
+  return FILE_NAME_PATTERN.test(cleaned);
+};
+
+type FileOps = Pick<ReturnType<typeof usePaletteOps>, 'openFileInEditor' | 'openDirectory'>;
+
+const openFileReference = (rawReference: string, { openFileInEditor, openDirectory }: FileOps) => {
+  const reference = rawReference.trim();
+  if (reference.endsWith('/')) {
+    openDirectory(reference);
+    return;
+  }
+  openFileInEditor(stripLineSuffix(reference), lineFromRef(reference));
+};
+
+// Set inside a rendered link, so inline code there does not nest a second link.
+const InsideLinkContext = React.createContext(false);
+
 // Extract plain text from link children so a reference rendered only as link
 // text (e.g. `[src/foo.ts]()` with an empty href) can still be opened.
 const childrenToText = (children: React.ReactNode): string => {
@@ -86,12 +117,35 @@ type CodeBlockProps = {
 const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: CodeBlockProps) => {
   const { t } = useTranslation('chat');
   const [copied, setCopied] = useState(false);
+  const insideLink = React.useContext(InsideLinkContext);
+  const fileOps = usePaletteOps();
   // Fenced blocks carry a trailing newline in the tree; trim it so the
   // highlighter doesn't render an empty final line.
   const raw = (Array.isArray(children) ? children.join('') : String(children ?? '')).replace(/\n$/, '');
   // react-markdown v9+ dropped the `inline` prop: block code is whatever the
   // `pre` renderer hands us (forceBlock). Multiline is kept as a safety net.
   const shouldInline = !forceBlock && !/[\r\n]/.test(raw);
+
+  if (shouldInline && !insideLink && looksLikeInlineCodeFile(raw)) {
+    return (
+      <a
+        href={raw.trim()}
+        className="cursor-pointer no-underline hover:underline"
+        onClick={(event) => {
+          event.preventDefault();
+          openFileReference(raw, fileOps);
+        }}
+      >
+        <code
+          className={`whitespace-pre-wrap break-words rounded-md border border-border/70 bg-muted px-1.5 py-0.5 font-mono text-[0.875em] text-blue-600 dark:text-blue-400 ${className || ''
+            }`}
+          {...props}
+        >
+          {children}
+        </code>
+      </a>
+    );
+  }
 
   if (shouldInline) {
     return (
@@ -301,19 +355,12 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
               className="cursor-pointer text-blue-600 hover:underline dark:text-blue-400"
               onClick={(event) => {
                 event.preventDefault();
-                // Normalized once for every branch below: the href arrives
-                // trimmed from the parser, but the link-text fallback keeps a
-                // trailing space (``[`src/foo.ts:12` ]()``), and that space
-                // defeats the `$`-anchored suffix strip.
-                const reference = fileRef.trim();
-                if (reference.endsWith('/')) {
-                  openDirectory(reference);
-                  return;
-                }
-                openFileInEditor(stripLineSuffix(reference), lineFromRef(reference));
+                // The link-text fallback keeps a trailing space (``[`src/foo.ts:12` ]()``),
+                // which openFileReference trims before the `$`-anchored suffix strip.
+                openFileReference(fileRef, { openFileInEditor, openDirectory });
               }}
             >
-              {linkChildren}
+              <InsideLinkContext.Provider value>{linkChildren}</InsideLinkContext.Provider>
             </a>
           );
         }
@@ -325,7 +372,7 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
             target="_blank"
             rel="noopener noreferrer"
           >
-            {linkChildren}
+            <InsideLinkContext.Provider value>{linkChildren}</InsideLinkContext.Provider>
           </a>
         );
       },
