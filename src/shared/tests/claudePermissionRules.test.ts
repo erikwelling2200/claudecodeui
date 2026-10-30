@@ -81,13 +81,13 @@ describe('loadClaudeRules', () => {
     expect(cached()).toMatchObject({ allowedTools: ['Read'], disallowedTools: ['Bash(rm:*)'] });
   });
 
-  it('sets a list built before the move aside for review, and never writes it to the file', async () => {
+  it('sets old allow rules aside for review, and never writes them to the file', async () => {
     // Built up by "Allow & remember" in this UI alone. The file is obeyed by the
     // terminal and every synced machine too, so promoting `Edit` into it would
     // approve every file edit everywhere.
     preferences.claudePermissions = {
       allowedTools: ['Read', 'Edit', 'mcp__unity-vov__scene-save'],
-      disallowedTools: ['Bash(rm:*)'],
+      disallowedTools: [],
       skipPermissions: true,
     };
     respondWith([source({ allow: ['Read'] })]);
@@ -95,11 +95,35 @@ describe('loadClaudeRules', () => {
     expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
 
     expect(saveClaudeSettingsPermissions).not.toHaveBeenCalled();
-    expect(readRulesNotCarried()).toEqual({ allow: ['Edit', 'mcp__unity-vov__scene-save'], deny: ['Bash(rm:*)'] });
+    expect(readRulesNotCarried()).toEqual({ allow: ['Edit', 'mcp__unity-vov__scene-save'], deny: [] });
     expect(readCachedClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
     // The session toggle is not a rule, so it is untouched.
     expect(cached()).toMatchObject({ skipPermissions: true });
     expect(preferences.claudeRulesMigrated).toBe(true);
+  });
+
+  it('carries old deny rules into the file, since a deny can only refuse more', async () => {
+    preferences.claudePermissions = { allowedTools: ['Edit'], disallowedTools: ['Bash(rm:*)'] };
+    respondWith([source({ allow: ['Read'] })]);
+
+    expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: ['Bash(rm:*)'] });
+
+    // Only the deny rule travels; the old allow rule stays set aside.
+    expect(saveClaudeSettingsPermissions).toHaveBeenCalledWith({
+      allow: { add: [], remove: [] },
+      deny: { add: ['Bash(rm:*)'], remove: [] },
+    });
+    expect(readRulesNotCarried()).toEqual({ allow: ['Edit'], deny: [] });
+    expect(preferences.claudeRulesMigrated).toBe(true);
+  });
+
+  it('tries again next time when the deny rules could not be carried', async () => {
+    preferences.claudePermissions = { allowedTools: [], disallowedTools: ['Bash(rm:*)'] };
+    respondWith([source({ allow: ['Read'] })]);
+    saveClaudeSettingsPermissions.mockRejectedValue(new Error('file locked'));
+
+    expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
+    expect(preferences.claudeRulesMigrated).toBeUndefined();
   });
 
   it('writes nothing at all when the preferences did not load from the server', async () => {

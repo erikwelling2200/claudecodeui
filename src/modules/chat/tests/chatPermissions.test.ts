@@ -4,6 +4,13 @@ import { test } from 'vitest';
 
 import { buildClaudeToolPermissionEntry } from '@/modules/chat/utils/chatPermissions';
 
+// The rule "Allow & remember" saves lands in Claude's settings file, which the
+// terminal and every synced machine obey too. It never reaches further than the
+// call on screen: a known read-only command becomes a prefix rule, any other
+// single command a rule for exactly that command, and anything else no rule.
+
+const ruleFor = (command: string, toolName = 'Bash') => buildClaudeToolPermissionEntry(toolName, { command });
+
 test('buildClaudeToolPermissionEntry derives a scoped git command from JSON input', () => {
   assert.equal(
     buildClaudeToolPermissionEntry('Bash', JSON.stringify({ command: 'git status' })),
@@ -11,64 +18,52 @@ test('buildClaudeToolPermissionEntry derives a scoped git command from JSON inpu
   );
 });
 
-// The rule is saved to Claude's settings file, which the terminal and every
-// synced machine obey too, so a bare `Bash` — allowing every command — is never
-// offered: with no command to scope it to, the call can be allowed once only.
-test('buildClaudeToolPermissionEntry offers no rule for malformed JSON', () => {
-  assert.equal(buildClaudeToolPermissionEntry('Bash', '{"command":'), null);
+test('buildClaudeToolPermissionEntry widens only known read-only commands into a prefix rule', () => {
+  assert.equal(ruleFor('git log --oneline -5'), 'Bash(git log:*)');
+  assert.equal(ruleFor('grep -rn foo src'), 'Bash(grep:*)');
+  assert.equal(ruleFor('Get-ChildItem -Recurse', 'PowerShell'), 'PowerShell(Get-ChildItem:*)');
 });
 
-test('buildClaudeToolPermissionEntry accepts an already parsed tool input', () => {
-  // `Bash(npm:*)` would cover `npm install <anything>`, so the subcommand is kept.
-  assert.equal(buildClaudeToolPermissionEntry('Bash', { command: 'npm test' }), 'Bash(npm test:*)');
-});
-
-test('buildClaudeToolPermissionEntry offers no rule for JSON with no string command', () => {
-  assert.equal(buildClaudeToolPermissionEntry('Bash', JSON.stringify({ command: false })), null);
-});
-
-test('buildClaudeToolPermissionEntry scopes a PowerShell rule like a Bash one', () => {
-  assert.equal(buildClaudeToolPermissionEntry('PowerShell', { command: 'Get-ChildItem -Recurse' }), 'PowerShell(Get-ChildItem:*)');
-  assert.equal(buildClaudeToolPermissionEntry('PowerShell', { command: 'git status' }), 'PowerShell(git status:*)');
-});
-
-test('buildClaudeToolPermissionEntry offers no rule for a program that runs other programs', () => {
-  // `Bash(python:*)` would cover `python -c "<anything>"`.
-  for (const command of ['python -c "print(1)"', 'node script.js', 'bash -c "ls"', 'sudo ls', 'xargs rm']) {
-    assert.equal(buildClaudeToolPermissionEntry('Bash', { command }), null, command);
-  }
-  assert.equal(buildClaudeToolPermissionEntry('PowerShell', { command: 'Invoke-Expression $x' }), null);
-});
-
-test('buildClaudeToolPermissionEntry never names a flag where a subcommand belongs', () => {
-  // `Bash(git -C:*)` let `git -C . -c core.fsmonitor=<anything> status` run on the real CLI.
-  for (const command of ['git -C /c/repo status', 'git -c core.fsmonitor=x status', 'git --git-dir=x log']) {
-    assert.equal(buildClaudeToolPermissionEntry('Bash', { command }), null, command);
-  }
-});
-
-test('buildClaudeToolPermissionEntry catches a program runner however it is spelled', () => {
+test('buildClaudeToolPermissionEntry gives anything else a rule for exactly that command', () => {
+  // A list of programs to refuse could never keep up with the CLI's own
+  // checks, so nothing outside the read-only list is ever widened.
   for (const command of [
-    '/usr/bin/python3 x.py', 'python.exe x.py', 'C:\\Tools\\pwsh.exe -c x', 'FOO=1 python x.py',
-    'npx some-package', 'timeout 9 rm -rf x', 'nohup ./run.sh', 'wsl rm -rf ~',
+    'npm test', 'npm install left-pad', 'python3.12 x.py', 'source x.sh', '. ./x.sh',
+    'git config user.name x', 'git push --force', 'git -C /c/repo status', 'uv run x', 'cargo run',
   ]) {
-    assert.equal(buildClaudeToolPermissionEntry('Bash', { command }), null, command);
+    assert.equal(ruleFor(command), `Bash(${command})`, command);
+  }
+  for (const command of ['Add-Type -TypeDefinition $x', 'saps calc', '. .\\x.ps1']) {
+    assert.equal(ruleFor(command, 'PowerShell'), `PowerShell(${command})`, command);
   }
 });
 
-test('buildClaudeToolPermissionEntry keeps a package-manager rule to one script', () => {
-  assert.equal(buildClaudeToolPermissionEntry('Bash', { command: 'npm run lint -- --fix' }), 'Bash(npm run lint:*)');
-  for (const command of ['npm install left-pad', 'npm exec x', 'pnpm dlx x', 'yarn add x', 'npm run']) {
-    assert.equal(buildClaudeToolPermissionEntry('Bash', { command }), null, command);
+test('buildClaudeToolPermissionEntry offers no rule for a line that is several commands or nests one', () => {
+  for (const command of [
+    'git status && rm -rf build', 'git log | head', 'git log > out.txt', 'echo $(whoami)', 'echo `whoami`',
+    'ls; rm x', 'git log 2>&1',
+  ]) {
+    assert.equal(ruleFor(command), null, command);
   }
+  assert.equal(ruleFor('Get-Date (New-Item pwned)', 'PowerShell'), null);
 });
 
 test('buildClaudeToolPermissionEntry names the command after a leading cd', () => {
-  assert.equal(
-    buildClaudeToolPermissionEntry('Bash', { command: 'cd "C:/Unity/Operatie-OV" && git grep -n x' }),
-    'Bash(git grep:*)',
-  );
-  assert.equal(buildClaudeToolPermissionEntry('Bash', { command: 'cd /c/repo; git log' }), 'Bash(git log:*)');
+  assert.equal(ruleFor('cd "C:/Unity/Operatie-OV" && git grep -n x'), 'Bash(git grep:*)');
+  assert.equal(ruleFor('cd /c/repo; git log'), 'Bash(git log:*)');
+  // What follows the cd is judged like any other command.
+  assert.equal(ruleFor('cd x; rm -rf y'), 'Bash(rm -rf y)');
+  assert.equal(ruleFor('cd x && git status && rm -rf y'), null);
+});
+
+test('buildClaudeToolPermissionEntry never turns an exact rule into a prefix rule', () => {
+  assert.equal(ruleFor('foo :*'), null);
+});
+
+test('buildClaudeToolPermissionEntry offers no rule without a command to scope it to', () => {
+  // A bare `Bash` would allow every command there is.
+  assert.equal(buildClaudeToolPermissionEntry('Bash', '{"command":'), null);
+  assert.equal(buildClaudeToolPermissionEntry('Bash', JSON.stringify({ command: false })), null);
 });
 
 test('buildClaudeToolPermissionEntry offers no rule for a tool that can do anything', () => {

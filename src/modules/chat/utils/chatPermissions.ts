@@ -4,40 +4,44 @@ import { saveClaudeRules } from '@/shared/claudePermissionRules';
 
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 
-// A prefix rule for any of these would allow whatever program or script it is
-// handed — `Bash(python:*)` covers `python -c "<anything>"`, `Bash(timeout:*)`
-// covers `timeout 9 <anything>`. Such a call can still be allowed once; no rule
-// is offered for it.
-const PROGRAM_RUNNERS = new Set([
-  // interpreters and shells
-  'python', 'python3', 'py', 'node', 'deno', 'bun', 'ruby', 'perl', 'php', 'java', 'dotnet', 'lua',
-  'bash', 'sh', 'zsh', 'fish', 'pwsh', 'powershell', 'cmd', 'wsl',
-  // package runners, which fetch and execute code
-  'npx', 'bunx', 'pnpx', 'uvx', 'pipx',
-  // commands that run another command
-  'eval', 'exec', 'sudo', 'su', 'doas', 'xargs', 'env', 'timeout', 'nohup', 'time', 'nice', 'stdbuf',
-  'watch', 'start', 'call', 'invoke-expression', 'iex', 'start-process', 'invoke-command', 'invoke-item', '&',
+// The only commands "Allow & remember" will widen into a prefix rule: each
+// reads and reports, and none runs another program, a script, or a value it was
+// handed. Anything not listed gets a rule for the exact command instead. A list
+// of programs to refuse could never be complete — the CLI carries its own
+// per-program checks and keeps adding to them — but a list of programs to
+// trust can be checked by reading it.
+const READ_ONLY_COMMANDS = new Set([
+  'ls', 'cat', 'head', 'tail', 'grep', 'rg', 'wc', 'pwd', 'which', 'file', 'stat', 'du', 'df', 'tree', 'diff', 'jq',
+  'get-childitem', 'get-content', 'select-string', 'test-path', 'get-command', 'get-location', 'measure-object',
+  'get-item', 'resolve-path', 'get-date',
 ]);
 
-// Package-manager subcommands that install, fetch or execute arbitrary code.
-const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn']);
-const PACKAGE_RUNNING_SUBCOMMANDS = new Set(['exec', 'x', 'dlx', 'install', 'i', 'add', 'ci', 'create', 'init', 'run-script']);
+// Git subcommands that only read. `git config` is not among them: it can set
+// `core.fsmonitor`, which every later `git status` then runs.
+const READ_ONLY_GIT_SUBCOMMANDS = new Set([
+  'status', 'log', 'diff', 'show', 'blame', 'grep', 'ls-files', 'rev-parse', 'describe', 'shortlog', 'reflog',
+  'merge-base', 'rev-list', 'cherry', 'whatchanged',
+]);
+
+// Anything that makes one command line several commands, sends output to a
+// file, or runs something nested. Such a line gets no rule: the CLI checks each
+// part on its own, so a single rule cannot stand for all of them.
+const COMPOUND_OR_NESTED = /[;&|`<>()\n]/;
 
 // Tools whose every call can do anything, so remembering the bare tool would be
 // remembering everything: the CLI itself treats `Agent` and `Task` as dangerous.
 const UNREMEMBERABLE_TOOL = /^(Agent|Task)$|(^|__)(script-execute|execute[_-](?:blender[_-])?code)/i;
 
-/** The program a command starts, without a directory or a Windows extension. */
-const programName = (token: string) => token.replace(/^.*[\\/]/, '').replace(/\.(exe|cmd|bat|ps1|com)$/i, '').toLowerCase();
-
 /**
  * The rule "Allow & remember" saves for a call, or null when none is safe to
  * offer. The rule lands in Claude's settings file, which the user's terminal
- * sessions and every machine it syncs to obey as well, so it is kept to the
- * command that was actually seen rather than the whole tool: a bare `Bash` or
- * `PowerShell` would allow every command there is, and a rule that names a
- * flag rather than a subcommand — `Bash(git -C:*)` — allows `git -C . -c
- * core.fsmonitor=<anything> status` along with it.
+ * sessions and every machine it syncs to obey as well, so it never reaches
+ * further than the call the user is looking at:
+ *
+ * - a known read-only command becomes a prefix rule (`Bash(git log:*)`);
+ * - any other single command becomes a rule for exactly that command;
+ * - a line that is several commands, writes to a file or nests one gets none,
+ *   and can still be allowed once.
  */
 export function buildClaudeToolPermissionEntry(toolName?: string, toolInput?: unknown) {
   if (!toolName) return null;
@@ -57,30 +61,19 @@ export function buildClaudeToolPermissionEntry(toolName?: string, toolInput?: un
     : '';
   // `cd <repo> && git grep …` is about the git grep; a rule for `cd` would
   // approve nothing the user was actually looking at.
-  const command = fullCommand.replace(/^cd\s+("[^"]*"|'[^']*'|\S+)\s*(&&|;)\s*/, '');
-  if (!command) return null;
+  const command = fullCommand.replace(/^cd\s+("[^"]*"|'[^']*'|[^\s;&|]+)\s*(&&|;)\s*/, '');
+  if (!command || COMPOUND_OR_NESTED.test(command)) return null;
 
-  const tokens = command.split(/\s+/);
-  const [first, second, third] = tokens;
-  // `FOO=1 python …` runs whatever follows the assignment.
-  if (first.includes('=')) return null;
-  const program = programName(first);
-  if (PROGRAM_RUNNERS.has(program)) return null;
-
-  // A subcommand is part of the rule; a flag in its place is not a subcommand.
-  if (program === 'git') {
-    if (!second || second.startsWith('-')) return null;
-    return `${toolName}(${first} ${second}:*)`;
+  const [first, second] = command.split(/\s+/);
+  const program = first.toLowerCase();
+  if (program === 'git' && second && READ_ONLY_GIT_SUBCOMMANDS.has(second)) {
+    return `${toolName}(git ${second}:*)`;
   }
-
-  if (PACKAGE_MANAGERS.has(program)) {
-    if (!second || second.startsWith('-') || PACKAGE_RUNNING_SUBCOMMANDS.has(second)) return null;
-    // `npm run:*` would cover every script in every package; name the script.
-    if (second === 'run') return third && !third.startsWith('-') ? `${toolName}(${first} run ${third}:*)` : null;
-    return `${toolName}(${first} ${second}:*)`;
+  if (READ_ONLY_COMMANDS.has(program)) {
+    return `${toolName}(${first}:*)`;
   }
-
-  return `${toolName}(${first}:*)`;
+  // An exact rule ending in `:*` would be read as a prefix rule instead.
+  return command.endsWith(':*') ? null : `${toolName}(${command})`;
 }
 
 export function formatToolInputForDisplay(input: unknown) {
