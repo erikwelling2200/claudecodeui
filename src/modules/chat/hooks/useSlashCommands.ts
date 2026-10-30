@@ -53,9 +53,11 @@ const filterSlashCommands = (
   const commandPrefix = normalizedQuery.startsWith('/')
     ? normalizedQuery
     : `/${normalizedQuery}`;
-  const namePrefixMatches = commands.filter((command) =>
-    command.name.toLowerCase().startsWith(commandPrefix),
-  );
+  // "/audit" also prefix-matches "/plugin:audit-x", so plugin skills sit beside unnamespaced ones.
+  const namePrefixMatches = commands.filter((command) => {
+    const name = command.name.toLowerCase();
+    return name.startsWith(commandPrefix) || `/${name.slice(name.lastIndexOf(':') + 1)}`.startsWith(commandPrefix);
+  });
 
   // Namespaced commands should behave like path completion. Once a provider
   // namespace is typed, only exact command-prefix matches should stay visible.
