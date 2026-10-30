@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { TFunction } from 'i18next';
 
 import { api } from '@/shared/api';
+import type { ClaudeBillingStatus } from '@/shared/types';
 
 type UsageLimit = {
   kind: string;
@@ -15,6 +16,7 @@ type UsageLimit = {
 type UsageSnapshot = {
   limits: UsageLimit[];
   fetchedAt: number;
+  billing?: ClaudeBillingStatus;
 };
 
 const POLL_INTERVAL_MS = 60_000;
@@ -43,6 +45,10 @@ function formatUntil(ms: number): string {
   if (hours < 24) return `${hours}h${minutes % 60 ? ` ${minutes % 60}m` : ''}`;
   const days = Math.floor(hours / 24);
   return `${days}d${hours % 24 ? ` ${hours % 24}h` : ''}`;
+}
+
+function formatUsd(amount: number): string {
+  return `$${amount.toFixed(2)}`;
 }
 
 function formatAge(ms: number): string {
@@ -92,7 +98,8 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
     }
   };
 
-  if (!usage || usage.limits.length === 0) return null;
+  const billing = usage?.billing;
+  if (!usage || (usage.limits.length === 0 && !billing?.keySource)) return null;
 
   const stale = !usage.fetchedAt || now - usage.fetchedAt > STALE_USAGE_MS;
   const resetsAt = pickReset(usage.limits);
@@ -106,8 +113,14 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
       type="button"
       onClick={() => void refresh()}
       title={tooltip}
-      className={`block w-full px-4 py-2 text-left transition-opacity hover:bg-accent/40 ${stale && !refreshing ? 'opacity-60 hover:opacity-100' : ''}`}
+      className={`block w-full px-4 py-2 text-left transition-opacity hover:bg-accent/40 ${stale && !refreshing && billing?.mode !== 'api_key' ? 'opacity-60 hover:opacity-100' : ''}`}
     >
+      {billing?.mode === 'api_key' && (
+        <div data-testid="usage-api-key-active" className="mb-1.5 rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300">
+          <div className="font-bold">{t('usage.apiKeyActive')}</div>
+          {billing.limit && <div>{t('usage.subscriptionBackIn', { time: formatUntil(billing.limit.resetsAt - now) })}</div>}
+        </div>
+      )}
       {usage.limits.map((limit) => (
         <div key={limit.kind} className="mt-1 flex items-center gap-2 first:mt-0">
           <span className={`w-12 flex-none truncate text-[11px] ${limit.active ? 'font-bold text-foreground' : 'text-muted-foreground'}`}>
@@ -126,6 +139,12 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
         <span className="truncate">{status}</span>
         {resetsAt > 0 && <span className="flex-none whitespace-nowrap font-bold">{t('usage.resetsIn', { time: formatUntil(resetsAt - now) })}</span>}
       </div>
+      {billing?.keySource && (
+        <div data-testid="usage-api-spend" className={`mt-0.5 flex items-baseline justify-between gap-2 text-[10px] ${billing.mode === 'api_key' ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}>
+          <span className="truncate">{t('usage.apiSpendToday', { amount: formatUsd(billing.spend.today) })}</span>
+          <span className="flex-none whitespace-nowrap">{t('usage.apiSpendMonth', { amount: formatUsd(billing.spend.month) })}</span>
+        </div>
+      )}
     </button>
   );
 }

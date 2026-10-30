@@ -666,6 +666,9 @@ export const api = {
   usage: {
     get: () => get('/api/usage'),
     refresh: () => post('/api/usage/refresh'),
+    claudeApiKey: () => get('/api/usage/claude-api-key'),
+    saveClaudeApiKey: (key: string) => put('/api/usage/claude-api-key', { key }),
+    removeClaudeApiKey: () => del('/api/usage/claude-api-key'),
   },
 };
 

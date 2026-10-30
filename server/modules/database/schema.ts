@@ -283,6 +283,23 @@ CREATE TABLE IF NOT EXISTS superseded_provider_sessions (
 );
 `;
 
+/**
+ * What Claude runs billed to the fallback API key cost, one row per turn.
+ *
+ * `cost_usd` is the CLI's own estimate (`total_cost_usd` on a `result`),
+ * recorded as the increase since the process's previous `result`, because the
+ * CLI reports a running total per process. Nothing is recorded for turns
+ * served by the subscription.
+ */
+export const CLAUDE_API_SPEND_TABLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS claude_api_spend (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    cost_usd REAL NOT NULL,
+    created_at INTEGER NOT NULL
+);
+`;
+
 export const INIT_SCHEMA_SQL = `
 -- Initialize authentication database
 PRAGMA foreign_keys = ON;
@@ -338,4 +355,7 @@ ${USER_PREFERENCES_TABLE_SCHEMA_SQL}
 ${SESSION_DRAFTS_TABLE_SCHEMA_SQL}
 
 ${SUPERSEDED_PROVIDER_SESSIONS_TABLE_SCHEMA_SQL}
+
+${CLAUDE_API_SPEND_TABLE_SCHEMA_SQL}
+CREATE INDEX IF NOT EXISTS idx_claude_api_spend_created_at ON claude_api_spend(created_at);
 `;
