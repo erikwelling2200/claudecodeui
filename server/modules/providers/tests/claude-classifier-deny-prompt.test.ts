@@ -231,3 +231,52 @@ test('interactive tools are asked for in the modes that skip canUseTool', async 
     assert.equal(verdict(output), undefined, 'canUseTool prompts for it already');
   });
 });
+
+// Rules are written in the format the Claude CLI reads from its own settings
+// file, so the same entry behaves the same whether the user wrote it in the
+// permissions panel or in ~/.claude/settings.json.
+
+const allowsCall = async (rule: string, toolName: string, toolInput: AnyRecord = {}) => {
+  let verdictSeen: string | undefined;
+  await withRun(
+    { permissionMode: 'auto', toolsSettings: { allowedTools: [rule], disallowedTools: [], skipPermissions: false } },
+    async (script) => {
+      const output = await runHook(script.options(), 'PreToolUse', {
+        hook_event_name: 'PreToolUse',
+        tool_name: toolName,
+        tool_input: toolInput,
+        tool_use_id: 'tool-1',
+      });
+      verdictSeen = verdict(output);
+    },
+  );
+  return verdictSeen === 'allow';
+};
+
+test('a wildcard over tool names covers a whole MCP server', async () => {
+  assert.equal(await allowsCall('mcp__unity-vov__gameobject-*', 'mcp__unity-vov__gameobject-find'), true);
+  assert.equal(await allowsCall('mcp__unity-vov__gameobject-*', 'mcp__unity-vov__script-execute'), false);
+  assert.equal(await allowsCall('mcp__unity-*__console-get-logs', 'mcp__unity-comp__console-get-logs'), true);
+});
+
+test('a command prefix rule matches the prefix and anything after it', async () => {
+  assert.equal(await allowsCall('Bash(git status:*)', 'Bash', { command: 'git status --short' }), true);
+  assert.equal(await allowsCall('Bash(git status:*)', 'Bash', { command: 'git status' }), true);
+  assert.equal(await allowsCall('Bash(git status:*)', 'Bash', { command: 'git stash drop' }), false);
+});
+
+test('a wildcard inside a command rule stands for any run of characters', async () => {
+  assert.equal(await allowsCall('Bash(git -C * commit:*)', 'Bash', { command: 'git -C C:/Unity/Operatie-OV commit -m x' }), true);
+  assert.equal(await allowsCall('Bash(git -C * commit:*)', 'Bash', { command: 'git -C C:/Unity/Operatie-OV push' }), false);
+});
+
+test('a command rule without a trailing wildcard matches that command alone', async () => {
+  assert.equal(await allowsCall('Bash(npm run lint)', 'Bash', { command: 'npm run lint' }), true);
+  assert.equal(await allowsCall('Bash(npm run lint)', 'Bash', { command: 'npm run lint -- --fix' }), false);
+});
+
+test('a command rule never matches a different tool, and metacharacters stay literal', async () => {
+  assert.equal(await allowsCall('Bash(git status:*)', 'PowerShell', { command: 'git status' }), false);
+  assert.equal(await allowsCall('PowerShell(git status:*)', 'PowerShell', { command: 'git status' }), true);
+  assert.equal(await allowsCall('Bash(rm file.txt)', 'Bash', { command: 'rm fileXtxt' }), false);
+});

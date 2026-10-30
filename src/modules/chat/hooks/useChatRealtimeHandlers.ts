@@ -323,6 +323,7 @@ export function useChatRealtimeHandlers({
         msg.kind !== 'complete'
         && msg.kind !== 'status'
         && msg.kind !== 'permission_request'
+        && msg.kind !== 'permission_explanation'
         && msg.kind !== 'permission_resolved'
         && msg.kind !== 'permission_cancelled';
 
@@ -418,6 +419,24 @@ export function useChatRealtimeHandlers({
           if (sid) {
             onSessionProcessing?.(sid);
           }
+          break;
+        }
+
+        // The description of a pending call, which follows its prompt rather
+        // than arriving with it. A prompt already answered has nothing to
+        // attach it to, so it is simply dropped.
+        case 'permission_explanation': {
+          if (!msg.requestId || typeof msg.explanation !== 'string') break;
+          if (sid !== activeViewSessionId) break;
+
+          const nextPendingPermissionRequests = pendingPermissionRequestsRef.current.map(
+            (request: PendingPermissionRequest) => request.requestId === msg.requestId
+              ? { ...request, explanation: msg.explanation as string }
+              : request,
+          );
+
+          pendingPermissionRequestsRef.current = nextPendingPermissionRequests;
+          setPendingPermissionRequests(nextPendingPermissionRequests);
           break;
         }
 

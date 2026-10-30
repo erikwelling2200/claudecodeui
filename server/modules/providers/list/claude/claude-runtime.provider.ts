@@ -20,6 +20,8 @@ import path from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
+import { permissionExplainerService } from '@/modules/providers/services/permission-explainer.service.js';
+
 import {
   appendFilesInputTag,
   buildClaudeUserContent,
@@ -347,38 +349,77 @@ function resolveToolApproval(requestId: string, decision: ToolApprovalDecision) 
   }
 }
 
-// Match stored permission entries against a tool + input combo.
-// This only supports exact tool names and the Bash(command:*) shorthand
-// used by the UI; it intentionally does not implement full glob semantics,
-// introduced to stay consistent with the UI's "Allow rule" format.
+// Tools whose permission entries carry a command, as `Tool(command pattern)`.
+const COMMAND_TOOLS = new Set(['Bash', 'PowerShell']);
+
+const GLOB_CACHE = new Map<string, RegExp>();
+
+/**
+ * Compiles one permission pattern to a regular expression, where `*` stands
+ * for any run of characters and everything else is literal. Patterns are few
+ * and reused on every tool call, so the compiled form is kept.
+ */
+function globToRegExp(pattern: string): RegExp {
+  const cached = GLOB_CACHE.get(pattern);
+  if (cached) {
+    return cached;
+  }
+
+  const source = pattern
+    .split('*')
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('[\\s\\S]*');
+  const compiled = new RegExp(`^${source}$`);
+  GLOB_CACHE.set(pattern, compiled);
+  return compiled;
+}
+
+/** The command a Bash or PowerShell call runs, however the SDK passed its input. */
+function readToolCommand(input: unknown): string {
+  if (typeof input === 'string') {
+    return input.trim();
+  }
+  if (input && typeof input === 'object' && typeof (input as AnyRecord).command === 'string') {
+    return ((input as AnyRecord).command as string).trim();
+  }
+  return '';
+}
+
+/**
+ * Matches a stored permission entry against a tool call, in the rule format
+ * the Claude CLI reads from its own settings file — so a rule behaves the same
+ * whether the user wrote it here or in `~/.claude/settings.json`:
+ *
+ * - `Read`, or a glob over tool names such as `mcp__unity-vov__gameobject-*`;
+ * - `Bash(git status:*)`, whose trailing `:*` matches any command starting
+ *   with that prefix, and whose `*` elsewhere (`git -C * commit:*`) stands for
+ *   any run of characters;
+ * - `Bash(npm run lint)` with no trailing `:*`, which matches that command and
+ *   nothing more.
+ */
 function matchesToolPermission(entry: string, toolName: string, input: unknown) {
   if (!entry || !toolName) {
     return false;
   }
 
-  if (entry === toolName) {
-    return true;
+  const commandMatch = entry.match(/^([^()]+)\((.*)\)$/);
+  if (!commandMatch) {
+    return entry === toolName || (entry.includes('*') && globToRegExp(entry).test(toolName));
   }
 
-  const bashMatch = entry.match(/^Bash\((.+):\*\)$/);
-  if (toolName === 'Bash' && bashMatch) {
-    const allowedPrefix = bashMatch[1];
-    let command = '';
-
-    if (typeof input === 'string') {
-      command = input.trim();
-    } else if (input && typeof input === 'object' && typeof (input as AnyRecord).command === 'string') {
-      command = (input as AnyRecord).command.trim();
-    }
-
-    if (!command) {
-      return false;
-    }
-
-    return command.startsWith(allowedPrefix);
+  const [, entryTool, commandPattern] = commandMatch;
+  if (entryTool !== toolName || !COMMAND_TOOLS.has(toolName)) {
+    return false;
   }
 
-  return false;
+  const command = readToolCommand(input);
+  if (!command) {
+    return false;
+  }
+
+  // A trailing `:*` is a prefix rule: everything after the prefix is free.
+  const prefixPattern = commandPattern.endsWith(':*') ? commandPattern.slice(0, -2) : null;
+  return globToRegExp(prefixPattern === null ? commandPattern : `${prefixPattern}*`).test(command);
 }
 
 /**
@@ -1477,6 +1518,15 @@ async function queryClaudeSDK(
         requiresUserAction: true,
         dedupeKey: `claude:permission:${sessionId || capturedSessionId || 'none'}:${requestId}`
       }));
+
+      // Described after the prompt is already on screen, by a query of its own
+      // rather than by this agent, and never waited on: the dialog is usable
+      // whether or not a sentence arrives.
+      void permissionExplainerService.explain({ toolName, input }).then((explanation) => {
+        if (explanation) {
+          writer.send(createNormalizedMessage({ kind: 'permission_explanation', requestId, explanation, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
+        }
+      });
 
       const decision = await waitForToolApproval(requestId, {
         timeoutMs: waitOptions.timeoutMs,
