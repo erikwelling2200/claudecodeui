@@ -222,9 +222,9 @@ function preToolUseDecision(
 
 /**
  * Identifies one tool call by what it does rather than by its `tool_use_id`,
- * which a retried call is not guaranteed to keep. Two identical calls in a run
- * therefore share a signature — deliberately, since that is what stops a
- * re-prompt loop when the classifier denies the retry too.
+ * which `PermissionRequest` is not given and a retried call is not guaranteed
+ * to keep. Two identical calls therefore share a signature, so each occurrence
+ * clears the previous one's bookkeeping in PreToolUse before it is judged.
  */
 function toolCallSignature(toolName: string, input: unknown): string {
   try {
@@ -1435,12 +1435,11 @@ async function queryClaudeSDK(
     };
 
     /**
-     * Asks the user about one tool call and waits for the answer, writing the
-     * rule back to this run's lists when they chose "always allow". Shared by
-     * the `canUseTool` callback and the PermissionDenied hook, so a prompt
-     * behaves the same whichever of them raised it.
+     * Raises one dialog for a tool call and waits for the answer, writing the
+     * rule back to this run's lists when the user chose "always allow". Called
+     * only through `askUserAboutTool`, which makes sure one call gets one dialog.
      */
-    const askUserAboutTool = async (
+    const raiseToolPrompt = async (
       toolName: string,
       input: unknown,
       waitOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
@@ -1489,13 +1488,14 @@ async function queryClaudeSDK(
         }
       });
 
+      // The call has had its dialog, whether it was answered, timed out or
+      // was cancelled. The fallback hook checks this so one call cannot
+      // produce two prompts; PreToolUse clears it for a later occurrence.
+      answeredCalls.add(toolCallSignature(toolName, input));
+
       if (!decision || decision.cancelled) {
         return decision;
       }
-
-      // The call has had its dialog. The fallback hook checks this so one call
-      // cannot produce two prompts; PreToolUse clears it for a later occurrence.
-      answeredCalls.add(toolCallSignature(toolName, input));
 
       // A client answered. Announce it on the run stream so the replay buffer
       // and every other attached tab drop the prompt — resolving happens over
@@ -1514,6 +1514,32 @@ async function queryClaudeSDK(
       }
 
       return decision;
+    };
+
+    const promptsInFlight = new Map<string, Promise<ToolApprovalDecision>>();
+
+    /**
+     * Asks the user about one tool call, with one dialog per call however many
+     * callers ask. When a call needs a decision the CLI invokes `canUseTool`
+     * and the PermissionRequest hook together and takes whichever answers
+     * first, so both ask here: the second joins the dialog the first raised,
+     * and both resolve with the same answer the moment the user gives it.
+     */
+    const askUserAboutTool = (
+      toolName: string,
+      input: unknown,
+      waitOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
+    ): Promise<ToolApprovalDecision> => {
+      const signature = toolCallSignature(toolName, input);
+      const pending = promptsInFlight.get(signature);
+      if (pending) {
+        return pending;
+      }
+
+      const asking = raiseToolPrompt(toolName, input, waitOptions)
+        .finally(() => promptsInFlight.delete(signature));
+      promptsInFlight.set(signature, asking);
+      return asking;
     };
 
     // Both approval hooks wait on a person, so their timeout has to outlast the
@@ -1566,9 +1592,9 @@ async function queryClaudeSDK(
         }]
       }],
       // Where the user actually gets their say in auto mode. This hook's
-      // decision is authoritative — an `allow` runs the call — so the prompt
-      // shown here answers the question rather than merely asking the model to
-      // consider trying again.
+      // decision is authoritative — measured: an `allow` here runs the call and
+      // aborts a `canUseTool` still waiting — so the prompt shown here answers
+      // the question rather than merely asking the model to try again.
       PermissionRequest: [{
         matcher: '',
         timeout: approvalHookTimeoutSeconds,
@@ -1585,17 +1611,34 @@ async function queryClaudeSDK(
             return {};
           }
 
+          // Measured against CLI 2.1.314: this hook does not fire for a call the
+          // classifier allows, and fires — alongside `canUseTool` — only when a
+          // call genuinely needs a decision, carrying no `classifier_verdict`.
+          // So everything that reaches here is the user's to answer, and the
+          // shared dialog in `askUserAboutTool` keeps the two callers to one.
+          //
+          // The hooks reference describes a newer shape that fires on every
+          // classifier decision with the verdict attached; a call it says was
+          // allowed is left alone, so auto mode is not turned into default mode.
+          if (input?.classifier_verdict === 'allow') {
+            return {};
+          }
+
           const decision = await askUserAboutTool(toolName, toolInput, { signal: hookOptions?.signal });
           if (!decision || decision.cancelled) {
             return {};
           }
 
+          const denialText = decision.message ?? 'User denied tool use';
           return {
             hookSpecificOutput: {
               hookEventName: 'PermissionRequest',
               decision: decision.allow
                 ? { behavior: 'allow', ...(decision.updatedInput ? { updatedInput: decision.updatedInput } : {}) }
-                : { behavior: 'deny', message: decision.message ?? 'User denied tool use' },
+                // `message` is the field in the shipped types and `reason` the
+                // one the hooks reference documents; sending both means the
+                // user's wording reaches the model whichever the CLI reads.
+                : { behavior: 'deny', message: denialText, reason: denialText },
             },
           };
         }]
@@ -1666,10 +1709,11 @@ async function queryClaudeSDK(
       }]
     };
 
-    // In 'auto' and 'bypassPermissions' the SDK resolves approval at the
-    // permission-mode step and skips this callback entirely. The PreToolUse
-    // hook above covers those modes: it applies the same lists before the mode
-    // runs, and asks for the interactive tools so they still reach the UI.
+    // `bypassPermissions` settles approval without ever reaching this
+    // callback, and in auto mode the classifier answers most calls before it.
+    // The hooks above cover both: PreToolUse applies the same lists ahead of
+    // the mode and asks for the interactive tools, and PermissionRequest puts
+    // a refused call back to the user.
     sdkOptions.canUseTool = async (toolName: string, input: unknown, context?: { signal?: AbortSignal }) => {
       const requiresInteraction = TOOLS_REQUIRING_INTERACTION.has(toolName);
 

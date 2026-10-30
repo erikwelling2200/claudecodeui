@@ -22,9 +22,11 @@ import type { AnyRecord } from '@/shared/types.js';
 
 const EXPLAINER_MODEL = 'claude-haiku-4-5-20251001';
 
-// Long enough for a sentence from a fast model, short enough that the prompt is
-// never left waiting on it — the dialog is usable without an explanation.
-const EXPLAINER_TIMEOUT_MS = 12_000;
+// Each description spawns its own CLI process, measured at 8-10 s warm and
+// over 12 s for the first one after a server start. The dialog is usable
+// without the sentence and waits minutes for a person, so a late sentence is
+// still worth showing; this only stops a hung query.
+const EXPLAINER_TIMEOUT_MS = 45_000;
 
 const MAX_SENTENCE_LENGTH = 300;
 

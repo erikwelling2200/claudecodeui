@@ -4,10 +4,12 @@
  * the same whether it was written in the permissions panel or in
  * `~/.claude/settings.json`:
  *
- * - `Read`, or a tool-name glob after a literal `mcp__<server>__` prefix, such
- *   as `mcp__unity-vov__gameobject-*`. The CLI honours no other glob shape, so
- *   neither does this: `mcp__unity-*__…`, `mcp__*` and a bare `*` match
- *   nothing, rather than granting more here than in the user's terminal;
+ * - `Read`, or in an allow rule a tool-name glob after a literal
+ *   `mcp__<server>__` prefix, such as `mcp__unity-vov__gameobject-*`. The CLI
+ *   allows on no other glob shape, so neither does this: `mcp__unity-*__…`,
+ *   `mcp__*` and a bare `*` allow nothing, rather than granting more here than
+ *   in the user's terminal. A deny rule takes the wider shapes the CLI also
+ *   denies on, `*` and `mcp__*` included;
  * - `Bash(git status:*)`, matching that command and anything after it, and
  *   `Bash(git -C * commit:*)`, where `*` stands for any run of characters;
  * - `Bash(npm run lint)` with no trailing `:*`, matching that command alone.
@@ -142,21 +144,31 @@ function globToRegExp(pattern: string): RegExp {
 }
 
 /**
- * Whether an entry names this tool.
+ * Whether an entry names this tool, for an allow list.
  *
  * An exact name always counts. A glob counts only in the one shape the CLI
- * also honours: after a literal `mcp__<server>__` prefix, with the server
- * segment glob-free — so `mcp__unity-vov__gameobject-*` works while
- * `mcp__unity-*__gameobject-find`, `mcp__*` and a bare `*` do not. Matching
- * those here but not in the CLI would mean a rule that silently grants more
- * inside this UI than it does in the user's terminal.
+ * also honours in an allow rule: after a literal `mcp__<server>__` prefix,
+ * with the server segment glob-free — so `mcp__unity-vov__gameobject-*` works
+ * while `mcp__unity-*__gameobject-find`, `mcp__*` and a bare `*` do not.
+ * Granting on those here but not in the CLI would mean a rule that quietly
+ * allows more inside this UI than it does in the user's terminal.
  */
-function matchesToolName(entry: string, toolName: string) {
+function allowsToolName(entry: string, toolName: string) {
   if (entry === toolName) return true;
   if (!entry.includes('*') || entry.includes('(')) return false;
 
-  const mcpGlob = entry.match(/^mcp__([^_*][^*]*?)__(.+)$/);
-  if (!mcpGlob) return false;
+  const isServerScopedGlob = /^mcp__[^_*][^*]*__.+$/.test(entry);
+  return isServerScopedGlob && globToRegExp(entry).test(toolName);
+}
+
+/**
+ * The same question for a deny list, where the CLI is deliberately wider: `*`
+ * matches every tool and `mcp__*` every MCP tool on every server. Refusing to
+ * honour those here would fail open on the one side that must not.
+ */
+function deniesToolName(entry: string, toolName: string) {
+  if (entry === toolName) return true;
+  if (!entry.includes('*') || entry.includes('(')) return false;
   return globToRegExp(entry).test(toolName);
 }
 
@@ -187,7 +199,7 @@ function commandToolFor(entries: string[], toolName: string) {
 
 export function isToolCallAllowed(entries: string[], toolName: string, input: unknown) {
   if (!toolName) return false;
-  if (entries.some((entry) => matchesToolName(entry, toolName))) return true;
+  if (entries.some((entry) => allowsToolName(entry, toolName))) return true;
 
   const commandTool = commandToolFor(entries, toolName);
   if (!commandTool) return false;
@@ -199,7 +211,7 @@ export function isToolCallAllowed(entries: string[], toolName: string, input: un
 
 export function isToolCallDenied(entries: string[], toolName: string, input: unknown) {
   if (!toolName) return false;
-  if (entries.some((entry) => matchesToolName(entry, toolName))) return true;
+  if (entries.some((entry) => deniesToolName(entry, toolName))) return true;
 
   const commandTool = commandToolFor(entries, toolName);
   if (!commandTool) return false;

@@ -68,14 +68,16 @@ export function grantClaudeToolPermission(entry: string | null): PermissionGrant
     disallowedTools: nextDisallowed,
   };
 
+  // The rule belongs in Claude's settings file, where the CLI reads it too.
+  // This goes first: it sends the difference against the cached rules, and
+  // writing the cache beforehand would make that difference empty.
+  void saveClaudeRules({ allow: nextAllowed, deny: nextDisallowed });
+  // Cached as well, so the grant applies to the turn in flight rather than
+  // waiting for the round trip.
   saveClaudePermissions({
     allowedTools: nextAllowed,
     disallowedTools: nextDisallowed,
     skipPermissions: settings.skipPermissions,
   });
-  // The rule belongs in Claude's settings file, where the CLI reads it too.
-  // The cache is written above so the grant applies to the turn in flight
-  // without waiting for the round trip.
-  void saveClaudeRules({ allow: nextAllowed, deny: nextDisallowed });
   return { success: true, alreadyAllowed, updatedSettings };
 }

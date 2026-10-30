@@ -132,3 +132,12 @@ test('a backtick is an escape in PowerShell, not a subshell', () => {
 test('a Windows path separator does not escape a separator in PowerShell', () => {
   assert.equal(isToolCallDenied(['PowerShell(Remove-Item:*)'], 'PowerShell', bash('Get-Item C:\\x; Remove-Item C:\\y')), true);
 });
+
+test('a deny list takes the wider glob shapes the CLI also denies on', () => {
+  // Allowing on these would grant more here than in the terminal; denying on
+  // them fails closed, which is the side a deny rule must err towards.
+  assert.equal(isToolCallDenied(['*'], 'Bash', bash('rm -rf /')), true);
+  assert.equal(isToolCallDenied(['mcp__*'], 'mcp__unity-vov__script-execute', {}), true);
+  assert.equal(isToolCallDenied(['mcp__unity-*__script-execute'], 'mcp__unity-comp__script-execute', {}), true);
+  assert.equal(isToolCallDenied(['mcp__*'], 'Bash', bash('ls')), false);
+});

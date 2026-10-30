@@ -82,14 +82,23 @@ describe('loadClaudeRules', () => {
     preferences.claudePermissions = { allowedTools: ['WebSearch'], disallowedTools: [], skipPermissions: true };
     // No allow or deny key in the file: this app has never written its rules there.
     respondWith([source({ allow: ['Read'], configured: false })]);
+    // The server applies a delta to what the FILE holds, not to this client's cache.
+    saveClaudeSettingsPermissions.mockImplementation((delta) => {
+      const allow = [...['Read'].filter((rule) => !delta.allow.remove.includes(rule)), ...delta.allow.add];
+      return Promise.resolve(new Response(
+        JSON.stringify({ success: true, data: { source: source({ allow }) } }), { status: 200 },
+      ));
+    });
 
     const rules = await loadClaudeRules();
 
+    // The delta is measured from the file, so it carries the rule being moved.
     expect(saveClaudeSettingsPermissions).toHaveBeenCalledWith({
-      allow: { add: ['Read'], remove: [] },
+      allow: { add: ['WebSearch'], remove: [] },
       deny: { add: [], remove: [] },
     });
     expect(rules).toEqual({ allow: ['Read', 'WebSearch'], deny: [] });
+    expect(readCachedClaudeRules().allow).toEqual(['Read', 'WebSearch']);
     // The session toggle is not a rule, so it survives the migration untouched.
     expect(cached()).toMatchObject({ skipPermissions: true });
   });

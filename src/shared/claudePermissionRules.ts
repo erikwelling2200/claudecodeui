@@ -87,7 +87,9 @@ export async function loadClaudeRules(): Promise<ClaudeRules | null> {
   const carriesOver = merged.allow.length !== fileRules.allow.length
     || merged.deny.length !== fileRules.deny.length;
   if (carriesOver) {
-    return (await saveClaudeRules(merged)) ? merged : fileRules;
+    // Measured against the file: the cache is one side of this merge, so a
+    // difference taken from it would leave out the very rules being moved.
+    return (await saveClaudeRules(merged, fileRules)) ? merged : fileRules;
   }
 
   writeCache(fileRules);
@@ -106,9 +108,12 @@ const ruleDelta = (before: string[], after: string[]) => ({
  * the list itself, so a rule added on another machine between that read and
  * this save is not wiped by a stale snapshot. The file's own answer is what
  * gets cached, so the cache never claims a rule the file rejected.
+ *
+ * `against` overrides what that difference is measured from, for the one
+ * caller whose starting point is the file rather than the cache.
  */
-export async function saveClaudeRules(rules: ClaudeRules): Promise<boolean> {
-  const before = readCachedClaudeRules();
+export async function saveClaudeRules(rules: ClaudeRules, against?: ClaudeRules): Promise<boolean> {
+  const before = against ?? readCachedClaudeRules();
   try {
     const response = await api.providers.saveClaudeSettingsPermissions({
       allow: ruleDelta(before.allow, rules.allow),

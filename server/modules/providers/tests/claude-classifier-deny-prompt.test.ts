@@ -108,10 +108,11 @@ const denied = (toolName: string, toolInput: AnyRecord, toolUseId = 'tool-1') =>
   reason: 'Blocked by classifier',
 });
 
-const needsDecision = (toolName: string, toolInput: AnyRecord) => ({
+const needsDecision = (toolName: string, toolInput: AnyRecord, classifierVerdict: string | null = 'deny') => ({
   hook_event_name: 'PermissionRequest',
   tool_name: toolName,
   tool_input: toolInput,
+  ...(classifierVerdict === null ? {} : { classifier_verdict: classifierVerdict }),
 });
 
 const preToolUse = (toolName: string, toolInput: AnyRecord, toolUseId = 'tool-1') => ({
@@ -186,9 +187,11 @@ test('a refusal the user gives is passed back as the decision', async () => {
     const hookDone = runHook(script.options(), 'PermissionRequest', needsDecision('Write', { file_path: 'a.txt' }));
     await answerPrompt(script, { allow: false, message: 'not that file' });
 
+    // Both field names are sent: `message` is what the shipped types carry and
+    // `reason` what the hooks reference documents as reaching the model.
     assert.deepEqual((await hookDone).hookSpecificOutput, {
       hookEventName: 'PermissionRequest',
-      decision: { behavior: 'deny', message: 'not that file' },
+      decision: { behavior: 'deny', message: 'not that file', reason: 'not that file' },
     });
   });
 });
@@ -285,5 +288,76 @@ test('interactive tools are asked for in the mode that skips canUseTool', async 
   await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
     const output = await runHook(script.options(), 'PreToolUse', preToolUse('AskUserQuestion', {}));
     assert.equal(verdict(output), undefined, 'auto routes interactive tools to canUseTool itself');
+  });
+});
+
+test('a call the classifier allowed is not put to the user', async () => {
+  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
+  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
+    // This hook fires for every decision, so without the verdict check auto
+    // mode would raise a dialog for everything it silently approves today.
+    const output = await runHook(script.options(), 'PermissionRequest', needsDecision('Bash', { command: 'ls' }, 'allow'));
+
+    assert.deepEqual(output, {});
+    assert.equal(script.sent.some((message) => message.kind === 'permission_request'), false);
+  });
+});
+
+test('a call the classifier could not judge is put to the user', async () => {
+  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
+  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
+    const hookDone = runHook(script.options(), 'PermissionRequest', needsDecision('Bash', { command: 'ls' }, 'unknown'));
+    await answerPrompt(script, { allow: true });
+
+    assert.equal((await hookDone).hookSpecificOutput?.decision?.behavior, 'allow');
+  });
+});
+
+test('with no verdict attached, a call that needs a decision is put to the user', async () => {
+  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
+  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
+    // CLI 2.1.314 sends no `classifier_verdict`, and only fires this hook for a
+    // call that genuinely needs a decision — never for one the classifier allowed.
+    const hookDone = runHook(script.options(), 'PermissionRequest', needsDecision('Bash', { command: 'ls' }, null));
+    await answerPrompt(script, { allow: true });
+
+    assert.equal((await hookDone).hookSpecificOutput?.decision?.behavior, 'allow');
+  });
+});
+
+test('canUseTool and PermissionRequest asking about one call share one dialog', async () => {
+  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
+  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
+    // The CLI invokes both for the same decision, a millisecond apart, and
+    // takes whichever answers first.
+    const input = { command: 'git push' };
+    const fromCallback = script.options().canUseTool('Bash', input, { signal: new AbortController().signal }) as Promise<AnyRecord>;
+    const fromHook = runHook(script.options(), 'PermissionRequest', needsDecision('Bash', input, null));
+
+    await answerPrompt(script, { allow: true });
+
+    assert.equal((await fromCallback).behavior, 'allow');
+    assert.equal((await fromHook).hookSpecificOutput?.decision?.behavior, 'allow');
+    assert.equal(script.sent.filter((message) => message.kind === 'permission_request').length, 1, 'one dialog, not two');
+  });
+});
+
+test('a prompt that timed out is not immediately asked a second time', async () => {
+  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
+  await withRun({ permissionMode: 'auto', toolsSettings }, async (script) => {
+    const input = { command: 'git push' };
+    const controller = new AbortController();
+    const asked = (script.options().hooks.PermissionRequest[0].hooks[0])(
+      needsDecision('Bash', input),
+      undefined,
+      { signal: controller.signal },
+    ) as Promise<AnyRecord>;
+    await waitFor(() => script.sent.some((message) => message.kind === 'permission_request'), 'the prompt was raised');
+    controller.abort();
+    await asked;
+
+    // The fallback must not open a second full-length dialog for the same call.
+    assert.deepEqual(await runHook(script.options(), 'PermissionDenied', denied('Bash', input)), {});
+    assert.equal(script.sent.filter((message) => message.kind === 'permission_request').length, 1);
   });
 });
