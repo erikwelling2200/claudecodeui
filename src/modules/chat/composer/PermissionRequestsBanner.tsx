@@ -92,6 +92,12 @@ export default function PermissionRequestsBanner({
               </ConfirmationRequest>
             </ConfirmationTitle>
 
+            {request.explanation && (
+              <p className="mt-2 text-sm text-foreground">
+                {request.explanation}
+              </p>
+            )}
+
             {rawInput && (
               <details className="mt-2">
                 <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">

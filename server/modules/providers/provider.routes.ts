@@ -866,12 +866,36 @@ router.get(
   }),
 );
 
-// Read-only: the rules Claude's own settings files add on top of the UI's lists.
+// The rules Claude's own settings files carry. For Claude these are the lists
+// the permissions panel edits, so that one set of rules governs this UI and the
+// user's terminal sessions alike; the managed file stays read-only.
 router.get(
   '/claude/settings-permissions',
   asyncHandler(async (_req: Request, res: Response) => {
     const sources = await claudeSettingsPermissionsService.listRuleSources();
     res.json(createApiSuccessResponse({ sources }));
+  }),
+);
+
+const readRulesBody = (value: unknown, name: string): string[] => {
+  if (!Array.isArray(value) || value.some((rule) => typeof rule !== 'string')) {
+    throw new AppError(`${name} must be an array of rule strings.`, {
+      code: 'INVALID_PERMISSION_RULES',
+      statusCode: 400,
+    });
+  }
+  return value as string[];
+};
+
+router.put(
+  '/claude/settings-permissions',
+  asyncHandler(async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const source = await claudeSettingsPermissionsService.updateUserRules({
+      allow: readRulesBody(body.allow, 'allow'),
+      deny: readRulesBody(body.deny, 'deny'),
+    });
+    res.json(createApiSuccessResponse({ source }));
   }),
 );
 

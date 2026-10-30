@@ -224,6 +224,8 @@ export type MessageKind =
   | 'status'
   | 'permission_request'
   | 'permission_resolved'
+  // One sentence on what a pending call would do, from a query of its own.
+  | 'permission_explanation'
   | 'permission_cancelled'
   | 'session_created'
   | 'history_truncated'

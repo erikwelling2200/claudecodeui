@@ -486,6 +486,11 @@ export type PendingPermissionRequest = {
   context?: unknown;
   sessionId?: string | null;
   receivedAt?: Date;
+  /**
+   * One sentence on what the call would do, written by a separate query rather
+   * than by the agent asking. Arrives after the prompt, and may never arrive.
+   */
+  explanation?: string;
 };
 
 /** One question asked by the AskUserQuestion tool, with its answer options and whether more than one option may be selected. */
@@ -735,6 +740,8 @@ type MessageKind =
   | 'status'
   | 'permission_request'
   | 'permission_resolved'
+  // One sentence on what a pending call would do, from a query of its own.
+  | 'permission_explanation'
   | 'permission_cancelled'
   | 'session_created'
   | 'history_truncated'
