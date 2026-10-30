@@ -1428,6 +1428,23 @@ export type WorktreeClaimsServices = {
   release(unitKey: string, suffix: string): Promise<unknown>;
 };
 
+export type SessionTaskStatus = 'pending' | 'in_progress' | 'completed';
+
+/** One task of a chat's task list, as the CLI stores it on disk. */
+export type SessionTask = {
+  id: string;
+  subject: string;
+  description: string;
+  activeForm: string | null;
+  status: SessionTaskStatus;
+  owner: string | null;
+  blockedBy: string[];
+};
+
+export type SessionTasksServices = {
+  listTasks(sessionId: string): Promise<SessionTask[]>;
+};
+
 // ---------------------------
 //----------------- FILE TREE MODULE CONTRACTS ------------
 /**
