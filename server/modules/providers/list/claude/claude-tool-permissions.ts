@@ -4,12 +4,16 @@
  * the same whether it was written in the permissions panel or in
  * `~/.claude/settings.json`:
  *
- * - `Read`, or a glob over tool names such as `mcp__unity-*__console-get-logs`;
+ * - `Read`, or a tool-name glob after a literal `mcp__<server>__` prefix, such
+ *   as `mcp__unity-vov__gameobject-*`. The CLI honours no other glob shape, so
+ *   neither does this: `mcp__unity-*__…`, `mcp__*` and a bare `*` match
+ *   nothing, rather than granting more here than in the user's terminal;
  * - `Bash(git status:*)`, matching that command and anything after it, and
  *   `Bash(git -C * commit:*)`, where `*` stands for any run of characters;
  * - `Bash(npm run lint)` with no trailing `:*`, matching that command alone.
  *
- * PowerShell entries are written and matched exactly like Bash ones.
+ * PowerShell entries are written and matched like Bash ones, except that its
+ * backtick escapes and backslash path separators are not bash metacharacters.
  *
  * A command is checked per subcommand, the way the CLI does it: an allow list
  * approves the call only when every part of `a && b | c` is covered, and a deny
@@ -21,9 +25,16 @@ type BashSplit = {
   segments: string[];
   // Command or process substitution, whose inner commands cannot be vouched for.
   opaque: boolean;
+  // A quote that never closed, so the split below cannot be trusted to have
+  // found every separator.
+  unbalanced: boolean;
 };
 
-function splitBashCommand(command: string): BashSplit {
+/**
+ * `escapes` is false for PowerShell, where a backtick is the escape character
+ * rather than a subshell and a backslash is a path separator.
+ */
+function splitBashCommand(command: string, escapes = true): BashSplit {
   const segments: string[] = [];
   let opaque = false;
   let current = '';
@@ -45,13 +56,13 @@ function splitBashCommand(command: string): BashSplit {
       continue;
     }
 
-    if (char === '\\' && next !== undefined) {
+    if (escapes && char === '\\' && next !== undefined) {
       current += char + next;
       i++;
       continue;
     }
 
-    if (char === '`' || (char === '$' && next === '(')) opaque = true;
+    if ((escapes && char === '`') || (char === '$' && next === '(')) opaque = true;
 
     if (quote === '"') {
       if (char === '"') quote = null;
@@ -80,7 +91,21 @@ function splitBashCommand(command: string): BashSplit {
   }
 
   flush();
-  return { segments, opaque };
+  return { segments, opaque, unbalanced: quote !== null };
+}
+
+/**
+ * Every separated part of a command, including the parts an unterminated quote
+ * would otherwise hide. `echo don't; rm -rf ~` leaves a quote open at the `'`,
+ * so the `;` never splits and the whole line reads as one segment — fine for an
+ * allow list, which then matches nothing, but a deny list has to see the `rm`.
+ */
+function denySegments(command: string, escapes: boolean): string[] {
+  const split = splitBashCommand(command, escapes);
+  if (!split.unbalanced) return split.segments;
+
+  const ignoringQuotes = command.replace(/['"]/g, ' ');
+  return [...split.segments, ...splitBashCommand(ignoringQuotes, escapes).segments];
 }
 
 function getBashCommand(input: unknown) {
@@ -99,9 +124,9 @@ const GLOB_CACHE = new Map<string, RegExp>();
 
 /**
  * Compiles a pattern in which `*` stands for any run of characters and
- * everything else is literal, so `mcp__unity-*__console-get-logs` covers every
- * Unity server and `git -C * commit` covers any repository path. Patterns are
- * few and reused on every tool call, so the compiled form is kept.
+ * everything else is literal, so `mcp__unity-vov__gameobject-*` covers that
+ * server's object tools and `git -C * commit` covers any repository path.
+ * Patterns are few and reused on every call, so the compiled form is kept.
  */
 function globToRegExp(pattern: string): RegExp {
   const cached = GLOB_CACHE.get(pattern);
@@ -116,10 +141,23 @@ function globToRegExp(pattern: string): RegExp {
   return compiled;
 }
 
-/** Whether an entry names this tool: `Read`, or a glob such as `mcp__unity-*__scene-get-data`. */
+/**
+ * Whether an entry names this tool.
+ *
+ * An exact name always counts. A glob counts only in the one shape the CLI
+ * also honours: after a literal `mcp__<server>__` prefix, with the server
+ * segment glob-free — so `mcp__unity-vov__gameobject-*` works while
+ * `mcp__unity-*__gameobject-find`, `mcp__*` and a bare `*` do not. Matching
+ * those here but not in the CLI would mean a rule that silently grants more
+ * inside this UI than it does in the user's terminal.
+ */
 function matchesToolName(entry: string, toolName: string) {
   if (entry === toolName) return true;
-  return entry.includes('*') && !entry.includes('(') && globToRegExp(entry).test(toolName);
+  if (!entry.includes('*') || entry.includes('(')) return false;
+
+  const mcpGlob = entry.match(/^mcp__([^_*][^*]*?)__(.+)$/);
+  if (!mcpGlob) return false;
+  return globToRegExp(entry).test(toolName);
 }
 
 function matchesCommandSegment(entry: string, toolName: string, segment: string) {
@@ -154,8 +192,8 @@ export function isToolCallAllowed(entries: string[], toolName: string, input: un
   const commandTool = commandToolFor(entries, toolName);
   if (!commandTool) return false;
 
-  const { segments, opaque } = splitBashCommand(getBashCommand(input));
-  if (opaque || segments.length === 0) return false;
+  const { segments, opaque, unbalanced } = splitBashCommand(getBashCommand(input), commandTool === 'Bash');
+  if (opaque || unbalanced || segments.length === 0) return false;
   return segments.every((segment) => entries.some((entry) => matchesCommandSegment(entry, commandTool, segment)));
 }
 
@@ -166,6 +204,6 @@ export function isToolCallDenied(entries: string[], toolName: string, input: unk
   const commandTool = commandToolFor(entries, toolName);
   if (!commandTool) return false;
 
-  const { segments } = splitBashCommand(getBashCommand(input));
+  const segments = denySegments(getBashCommand(input), commandTool === 'Bash');
   return segments.some((segment) => entries.some((entry) => matchesCommandSegment(entry, commandTool, segment)));
 }

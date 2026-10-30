@@ -459,8 +459,10 @@ export const api = {
     updateCli: (provider: string) =>
       post(`/api/providers/${encodeURIComponent(provider)}/cli/update`),
     claudeSettingsPermissions: () => get('/api/providers/claude/settings-permissions'),
-    saveClaudeSettingsPermissions: (rules: { allow: string[]; deny: string[] }) =>
-      put('/api/providers/claude/settings-permissions', rules),
+    saveClaudeSettingsPermissions: (delta: {
+      allow: { add: string[]; remove: string[] };
+      deny: { add: string[]; remove: string[] };
+    }) => put('/api/providers/claude/settings-permissions', delta),
 
     models: (provider: string) => get(`/api/providers/${provider}/models`),
     createModel: (provider: string, input: unknown) =>

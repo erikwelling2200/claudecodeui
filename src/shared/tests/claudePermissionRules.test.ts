@@ -9,7 +9,8 @@ import type { ClaudeSettingsPermissionSource } from '@/shared/types';
 // file that cannot be read never reads as "no rules".
 
 const claudeSettingsPermissions = vi.fn<() => Promise<Response>>();
-const saveClaudeSettingsPermissions = vi.fn<(rules: { allow: string[]; deny: string[] }) => Promise<Response>>();
+type Delta = { allow: { add: string[]; remove: string[] }; deny: { add: string[]; remove: string[] } };
+const saveClaudeSettingsPermissions = vi.fn<(delta: Delta) => Promise<Response>>();
 
 // Only the endpoints are stubbed; `readApiJson` stays real so the module parses
 // the same envelope the server sends.
@@ -18,7 +19,7 @@ vi.mock('@/shared/api', async (importOriginal) => ({
   api: {
     providers: {
       claudeSettingsPermissions: () => claudeSettingsPermissions(),
-      saveClaudeSettingsPermissions: (rules: { allow: string[]; deny: string[] }) => saveClaudeSettingsPermissions(rules),
+      saveClaudeSettingsPermissions: (delta: Delta) => saveClaudeSettingsPermissions(delta),
     },
   },
 }));
@@ -39,6 +40,7 @@ const source = (overrides: Partial<ClaudeSettingsPermissionSource> = {}): Claude
   allow: [],
   deny: [],
   ask: [],
+  configured: true,
   ...overrides,
 });
 
@@ -54,9 +56,16 @@ beforeEach(() => {
   preferences = {};
   claudeSettingsPermissions.mockReset();
   saveClaudeSettingsPermissions.mockReset();
-  saveClaudeSettingsPermissions.mockImplementation((rules) => Promise.resolve(
-    new Response(JSON.stringify({ success: true, data: { source: source(rules) } }), { status: 200 }),
-  ));
+  saveClaudeSettingsPermissions.mockImplementation((delta) => {
+    const apply = (before: string[], one: { add: string[]; remove: string[] }) =>
+      [...before.filter((rule) => !one.remove.includes(rule)), ...one.add];
+    const cachedNow = (preferences.claudePermissions ?? {}) as { allowedTools?: string[]; disallowedTools?: string[] };
+    const saved = {
+      allow: apply(cachedNow.allowedTools ?? [], delta.allow),
+      deny: apply(cachedNow.disallowedTools ?? [], delta.deny),
+    };
+    return Promise.resolve(new Response(JSON.stringify({ success: true, data: { source: source(saved) } }), { status: 200 }));
+  });
 });
 
 describe('loadClaudeRules', () => {
@@ -71,11 +80,15 @@ describe('loadClaudeRules', () => {
 
   it('carries a list built before the file was used across into it', async () => {
     preferences.claudePermissions = { allowedTools: ['WebSearch'], disallowedTools: [], skipPermissions: true };
-    respondWith([source({ allow: ['Read'] })]);
+    // No allow or deny key in the file: this app has never written its rules there.
+    respondWith([source({ allow: ['Read'], configured: false })]);
 
     const rules = await loadClaudeRules();
 
-    expect(saveClaudeSettingsPermissions).toHaveBeenCalledWith({ allow: ['Read', 'WebSearch'], deny: [] });
+    expect(saveClaudeSettingsPermissions).toHaveBeenCalledWith({
+      allow: { add: ['Read'], remove: [] },
+      deny: { add: [], remove: [] },
+    });
     expect(rules).toEqual({ allow: ['Read', 'WebSearch'], deny: [] });
     // The session toggle is not a rule, so it survives the migration untouched.
     expect(cached()).toMatchObject({ skipPermissions: true });
@@ -98,23 +111,47 @@ describe('loadClaudeRules', () => {
     expect(readCachedClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
   });
 
-  it('a rule removed from the file stays removed', async () => {
+  it('a rule removed from the file stays removed, however often the panel saves', async () => {
     preferences.claudePermissions = { allowedTools: ['Read', 'WebSearch'], disallowedTools: [] };
     respondWith([source({ allow: ['Read', 'WebSearch'] })]);
     await loadClaudeRules();
 
+    // A save writes the preference wholesale, which must not re-arm the carry-over.
+    preferences.claudePermissions = { allowedTools: ['Read', 'WebSearch'], disallowedTools: [], skipPermissions: false };
+
     respondWith([source({ allow: ['Read'] })]);
     expect(await loadClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
     expect(readCachedClaudeRules()).toEqual({ allow: ['Read'], deny: [] });
+    expect(saveClaudeSettingsPermissions).not.toHaveBeenCalled();
   });
 });
 
 describe('saveClaudeRules', () => {
-  it('writes the file and caches what the file reports back', async () => {
-    expect(await saveClaudeRules({ allow: ['Read'], deny: ['Write'] })).toBe(true);
+  it('sends the change rather than the list, and caches what the file reports back', async () => {
+    preferences.claudePermissions = { allowedTools: ['Read'], disallowedTools: [] };
 
-    expect(saveClaudeSettingsPermissions).toHaveBeenCalledWith({ allow: ['Read'], deny: ['Write'] });
-    expect(readCachedClaudeRules()).toEqual({ allow: ['Read'], deny: ['Write'] });
+    expect(await saveClaudeRules({ allow: ['Read', 'WebSearch'], deny: ['Write'] })).toBe(true);
+
+    expect(saveClaudeSettingsPermissions).toHaveBeenCalledWith({
+      allow: { add: ['WebSearch'], remove: [] },
+      deny: { add: ['Write'], remove: [] },
+    });
+    expect(readCachedClaudeRules()).toEqual({ allow: ['Read', 'WebSearch'], deny: ['Write'] });
+  });
+
+  it('a rule another machine added between the read and the save survives', async () => {
+    preferences.claudePermissions = { allowedTools: ['Read'], disallowedTools: [] };
+    // The file gained `WebFetch` since this client last read it.
+    saveClaudeSettingsPermissions.mockImplementation((delta) => {
+      const after = [...['Read', 'WebFetch'].filter((r) => !delta.allow.remove.includes(r)), ...delta.allow.add];
+      return Promise.resolve(new Response(
+        JSON.stringify({ success: true, data: { source: source({ allow: after }) } }), { status: 200 },
+      ));
+    });
+
+    await saveClaudeRules({ allow: ['Read', 'WebSearch'], deny: [] });
+
+    expect(readCachedClaudeRules().allow).toEqual(['Read', 'WebFetch', 'WebSearch']);
   });
 
   it('reports a failed write instead of caching rules the file never took', async () => {

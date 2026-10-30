@@ -72,12 +72,20 @@ test('plain tool names match exactly', () => {
 // Rules are written in the CLI's own format, which includes globs, so one
 // entry can cover every Unity MCP server or any repository path.
 
-test('a glob over tool names covers a whole MCP server', () => {
-  const entries = ['mcp__unity-*__console-get-logs', 'mcp__unity-vov__gameobject-*'];
-  assert.equal(isToolCallAllowed(entries, 'mcp__unity-comp__console-get-logs', {}), true);
+test('a tool-name glob covers one MCP server, in the only shape the CLI honours', () => {
+  const entries = ['mcp__unity-vov__gameobject-*'];
   assert.equal(isToolCallAllowed(entries, 'mcp__unity-vov__gameobject-find', {}), true);
   assert.equal(isToolCallAllowed(entries, 'mcp__unity-vov__script-execute', {}), false);
-  assert.equal(isToolCallDenied(['mcp__unity-*__script-execute'], 'mcp__unity-vov__script-execute', {}), true);
+  assert.equal(isToolCallAllowed(entries, 'mcp__unity-comp__gameobject-find', {}), false);
+});
+
+test('glob shapes the CLI ignores grant nothing here either', () => {
+  // Honouring these would hand the UI a wider rule than the same entry gives
+  // the user's terminal — `*` would be bypassPermissions by the back door.
+  assert.equal(isToolCallAllowed(['*'], 'Bash', bash('rm -rf /')), false);
+  assert.equal(isToolCallAllowed(['mcp__*'], 'mcp__unity-vov__script-execute', {}), false);
+  assert.equal(isToolCallAllowed(['mcp__unity-*__console-get-logs'], 'mcp__unity-comp__console-get-logs', {}), false);
+  assert.equal(isToolCallAllowed(['mcp__*__console-get-logs'], 'mcp__unity-vov__console-get-logs', {}), false);
 });
 
 test('a wildcard inside a command rule stands for any run of characters', () => {
@@ -105,4 +113,22 @@ test('a command rule is never read as a glob over tool names', () => {
   // tools the entry covers.
   assert.equal(isToolCallAllowed(['Bash(git *:*)'], 'mcp__unity-vov__script-execute', {}), false);
   assert.equal(isToolCallAllowed(['Bash(*)'], 'Bash', bash('rm -rf ~')), true);
+});
+
+test('an unterminated quote cannot hide a command from a deny rule', () => {
+  // The apostrophe opens a quote that never closes, so the `;` does not split.
+  const sneaky = bash("echo don't; rm -rf ~/x");
+  assert.equal(isToolCallDenied(['Bash(rm:*)'], 'Bash', sneaky), true);
+  // The same command fails closed for an allow list rather than being approved.
+  assert.equal(isToolCallAllowed(['Bash(echo:*)', 'Bash(rm:*)'], 'Bash', sneaky), false);
+});
+
+test('a backtick is an escape in PowerShell, not a subshell', () => {
+  assert.equal(isToolCallAllowed(['PowerShell(Get-Content:*)'], 'PowerShell', bash('Get-Content a`nb')), true);
+  // In Bash it still marks the command opaque.
+  assert.equal(isToolCallAllowed(['Bash(echo:*)'], 'Bash', bash('echo `whoami`')), false);
+});
+
+test('a Windows path separator does not escape a separator in PowerShell', () => {
+  assert.equal(isToolCallDenied(['PowerShell(Remove-Item:*)'], 'PowerShell', bash('Get-Item C:\\x; Remove-Item C:\\y')), true);
 });

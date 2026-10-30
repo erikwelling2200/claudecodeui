@@ -26,8 +26,6 @@ type CachedPermissions = {
   allowedTools?: string[];
   disallowedTools?: string[];
   skipPermissions?: boolean;
-  /** Set once the settings file has become the record these rules come from. */
-  migratedToSettingsFile?: boolean;
 };
 
 const readCache = (): CachedPermissions => readUserPreference<CachedPermissions>('claudePermissions', {});
@@ -39,7 +37,6 @@ const writeCache = (rules: ClaudeRules): void => {
     ...cached,
     allowedTools: rules.allow,
     disallowedTools: rules.deny,
-    migratedToSettingsFile: true,
   });
 };
 
@@ -48,11 +45,15 @@ const mergeRules = (first: string[], second: string[]): string[] => [...new Set(
 /**
  * Reads the rules from the settings file and refreshes the cache from them.
  *
- * The very first read also writes up any rule the cache holds and the file does
- * not, which carries across a list built before this UI used the file. That
- * happens once and never again: from then on the file is the record, so a rule
- * deleted there — in the panel, by hand, or by a sync from another machine —
- * stays deleted instead of coming back from a stale cache.
+ * A file that carries no `allow` or `deny` key has never held this app's rules,
+ * and only then is the stored list written up to it, carrying across a list
+ * built before this UI used the file. Every later read takes the file as it
+ * stands, so a rule deleted there — in the panel, by hand, or by a sync from
+ * another machine — stays deleted instead of coming back from a stale cache.
+ *
+ * The condition lives in the file rather than in a flag beside the cache
+ * because every writer of that preference replaces it wholesale, and a flag
+ * cleared by one of them would make the carry-over run forever.
  */
 export async function loadClaudeRules(): Promise<ClaudeRules | null> {
   let source: ClaudeSettingsPermissionSource | undefined;
@@ -73,7 +74,7 @@ export async function loadClaudeRules(): Promise<ClaudeRules | null> {
 
   const cached = readCache();
   const fileRules: ClaudeRules = { allow: source.allow, deny: source.deny };
-  if (cached.migratedToSettingsFile) {
+  if (source.configured) {
     writeCache(fileRules);
     return fileRules;
   }
@@ -93,10 +94,26 @@ export async function loadClaudeRules(): Promise<ClaudeRules | null> {
   return fileRules;
 }
 
-/** Saves the rules to the settings file, and caches them once the file has them. */
+const ruleDelta = (before: string[], after: string[]) => ({
+  add: after.filter((rule) => !before.includes(rule)),
+  remove: before.filter((rule) => !after.includes(rule)),
+});
+
+/**
+ * Saves the rules to the settings file, and caches what the file then holds.
+ *
+ * What travels is the difference against the rules this client last read, not
+ * the list itself, so a rule added on another machine between that read and
+ * this save is not wiped by a stale snapshot. The file's own answer is what
+ * gets cached, so the cache never claims a rule the file rejected.
+ */
 export async function saveClaudeRules(rules: ClaudeRules): Promise<boolean> {
+  const before = readCachedClaudeRules();
   try {
-    const response = await api.providers.saveClaudeSettingsPermissions(rules);
+    const response = await api.providers.saveClaudeSettingsPermissions({
+      allow: ruleDelta(before.allow, rules.allow),
+      deny: ruleDelta(before.deny, rules.deny),
+    });
     const payload = await readApiJson<{ data?: { source?: ClaudeSettingsPermissionSource } }>(response);
     const saved = payload.data?.source;
     writeCache(saved ? { allow: saved.allow, deny: saved.deny } : rules);

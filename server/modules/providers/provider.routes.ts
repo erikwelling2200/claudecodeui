@@ -877,7 +877,10 @@ router.get(
   }),
 );
 
-const readRulesBody = (value: unknown, name: string): string[] => {
+const readRuleList = (value: unknown, name: string): string[] => {
+  if (value === undefined) {
+    return [];
+  }
   if (!Array.isArray(value) || value.some((rule) => typeof rule !== 'string')) {
     throw new AppError(`${name} must be an array of rule strings.`, {
       code: 'INVALID_PERMISSION_RULES',
@@ -887,13 +890,32 @@ const readRulesBody = (value: unknown, name: string): string[] => {
   return value as string[];
 };
 
+/**
+ * One list's change, as additions and removals. A whole replacement list would
+ * carry the client's snapshot of the file with it and undo anything written
+ * since the panel loaded.
+ */
+const readRuleDelta = (value: unknown, name: string) => {
+  const delta = (value ?? {}) as Record<string, unknown>;
+  if (typeof delta !== 'object' || Array.isArray(delta)) {
+    throw new AppError(`${name} must be an object with add and remove lists.`, {
+      code: 'INVALID_PERMISSION_RULES',
+      statusCode: 400,
+    });
+  }
+  return {
+    add: readRuleList(delta.add, `${name}.add`),
+    remove: readRuleList(delta.remove, `${name}.remove`),
+  };
+};
+
 router.put(
   '/claude/settings-permissions',
   asyncHandler(async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const source = await claudeSettingsPermissionsService.updateUserRules({
-      allow: readRulesBody(body.allow, 'allow'),
-      deny: readRulesBody(body.deny, 'deny'),
+      allow: readRuleDelta(body.allow, 'allow'),
+      deny: readRuleDelta(body.deny, 'deny'),
     });
     res.json(createApiSuccessResponse({ source }));
   }),

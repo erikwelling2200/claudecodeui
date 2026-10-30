@@ -151,10 +151,14 @@ export const permissionExplainerService = {
         model: EXPLAINER_MODEL,
         systemPrompt: SYSTEM_PROMPT,
         maxTurns: 1,
-        // Nothing is pre-approved and nothing may be asked for, so every tool
-        // call this query could attempt is refused outright.
-        permissionMode: 'dontAsk',
+        // `tools` is what removes the built-in tool set; `allowedTools` only
+        // pre-approves from it, and on its own would leave this query able to
+        // read files and spawn agents under `dontAsk`. With no tools at all
+        // there is nothing for an injected instruction to reach for.
+        tools: [],
         allowedTools: [],
+        disallowedTools: ['*'],
+        permissionMode: 'dontAsk',
         mcpServers: {},
         // No CLAUDE.md, no project or user settings: the describer must not
         // inherit instructions meant for the agent.

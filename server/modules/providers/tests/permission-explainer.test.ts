@@ -60,7 +60,11 @@ test('the describing query has no tools and inherits no instructions', async () 
   await permissionExplainerService.explain({ toolName: 'Bash', input: { command: 'ls' } }, runQuery);
 
   const options = captured()!.options;
-  assert.deepEqual(options.allowedTools, [], 'no tool is available to it');
+  // `tools` is what removes the built-in set; `allowedTools` alone would leave
+  // the describer able to read files and spawn agents under `dontAsk`.
+  assert.deepEqual(options.tools, [], 'it has no tools at all');
+  assert.deepEqual(options.allowedTools, [], 'and nothing pre-approved from them');
+  assert.deepEqual(options.disallowedTools, ['*']);
   assert.deepEqual(options.mcpServers, {});
   assert.deepEqual(options.settingSources, [], 'no CLAUDE.md or settings file reaches it');
   assert.equal(options.permissionMode, 'dontAsk', 'nothing is pre-approved, so any tool call is refused');

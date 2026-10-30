@@ -79,6 +79,7 @@ test('lists the allow, deny and ask rules of ~/.claude/settings.json and the man
       allow: ['Bash(npm run test:*)', 'Read'],
       deny: ['Bash(rm:*)'],
       ask: ['WebFetch'],
+      configured: true,
     });
     assert.deepEqual(bySource(sources, 'managed'), {
       scope: 'managed',
@@ -87,6 +88,7 @@ test('lists the allow, deny and ask rules of ~/.claude/settings.json and the man
       allow: [],
       deny: ['WebSearch'],
       ask: [],
+      configured: true,
     });
     // Nothing but the rule lists leaves the server (the env block holds secrets).
     assert.doesNotMatch(JSON.stringify(sources), /sk-secret|acceptEdits/);
@@ -284,11 +286,11 @@ test('updateUserRules replaces the rules and leaves the rest of the file alone',
     });
 
     const source = await claudeSettingsPermissionsService.updateUserRules(
-      { allow: ['WebSearch', 'WebSearch', '  ', 'Read'], deny: ['Bash(rm:*)'] },
+      { allow: { add: ['WebSearch', 'WebSearch', '  ', 'Read'], remove: ['Bash'] }, deny: { add: ['Bash(rm:*)'] } },
       userFile,
     );
 
-    assert.deepEqual(source.allow, ['WebSearch', 'Read'], 'blanks and duplicates are dropped');
+    assert.deepEqual(source.allow, ['WebSearch', 'Read'], 'the old entry is removed, blanks and duplicates dropped');
     assert.deepEqual(source.deny, ['Bash(rm:*)']);
 
     const written = JSON.parse(await readFile(userFile, 'utf8')) as Record<string, unknown>;
@@ -304,7 +306,7 @@ test('updateUserRules creates the settings file when there is none', async () =>
     const userFile = path.join(homeDir, '.claude', 'settings.json');
     await mkdir(path.dirname(userFile), { recursive: true });
 
-    const source = await claudeSettingsPermissionsService.updateUserRules({ allow: ['Read'], deny: [] }, userFile);
+    const source = await claudeSettingsPermissionsService.updateUserRules({ allow: { add: ['Read'] }, deny: {} }, userFile);
 
     assert.equal(source.status, 'ok');
     assert.deepEqual(source.allow, ['Read']);
@@ -318,7 +320,7 @@ test('updateUserRules writes a UTF-16 file back as UTF-16', async () => {
     const original = JSON.stringify({ permissions: { allow: ['Read'] } });
     await writeSettings(userFile, Buffer.from(`\uFEFF${original}`, 'utf16le'));
 
-    await claudeSettingsPermissionsService.updateUserRules({ allow: ['WebSearch'], deny: [] }, userFile);
+    await claudeSettingsPermissionsService.updateUserRules({ allow: { add: ['WebSearch'], remove: ['Read'] }, deny: {} }, userFile);
 
     const bytes = await readFile(userFile);
     assert.equal(bytes[0], 0xff, 'the byte order mark survives');
@@ -334,7 +336,7 @@ test('updateUserRules refuses a file it cannot parse rather than overwriting it'
     const original = '{ not json at all';
     await writeSettings(userFile, original);
 
-    await assert.rejects(() => claudeSettingsPermissionsService.updateUserRules({ allow: [], deny: [] }, userFile));
+    await assert.rejects(() => claudeSettingsPermissionsService.updateUserRules({ allow: {}, deny: {} }, userFile));
     assert.equal(await readFile(userFile, 'utf8'), original, 'the file is untouched');
   });
 });
@@ -356,13 +358,13 @@ test('PUT /api/providers/claude/settings-permissions saves the rules and rejects
         body: JSON.stringify(body),
       });
 
-      const saved = await put({ allow: ['Read'], deny: ['Bash(rm:*)'] });
+      const saved = await put({ allow: { add: ['Read'], remove: ['Bash'] }, deny: { add: ['Bash(rm:*)'] } });
       const payload = await saved.json() as { success: boolean; data: { source: Source } };
       assert.equal(saved.status, 200);
       assert.deepEqual(payload.data.source.allow, ['Read']);
       assert.deepEqual(payload.data.source.deny, ['Bash(rm:*)']);
 
-      const refused = await put({ allow: 'Read', deny: [] });
+      const refused = await put({ allow: { add: 'Read' }, deny: {} });
       assert.equal(refused.status, 400);
       const reread = await claudeSettingsPermissionsService.listRuleSources(path.join(homeDir, 'none.json'));
       assert.deepEqual(bySource(reread, 'user').allow, ['Read'], 'the refused write changed nothing');

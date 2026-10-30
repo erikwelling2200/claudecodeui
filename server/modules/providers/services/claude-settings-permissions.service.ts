@@ -1,4 +1,5 @@
-import { readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -20,6 +21,11 @@ type ClaudeSettingsPermissionSource = {
   allow: string[];
   deny: string[];
   ask: string[];
+  /**
+   * Whether the file carries an `allow` or `deny` key at all, so a caller can
+   * tell "no rules written here yet" from "the rules here are empty".
+   */
+  configured: boolean;
 };
 
 /**
@@ -60,6 +66,17 @@ const isUtf16LittleEndian = (bytes: Buffer): boolean =>
 const decodeSettingsFile = (bytes: Buffer): string =>
   bytes.toString(isUtf16LittleEndian(bytes) ? 'utf16le' : 'utf8').replace(/^\uFEFF/, '');
 
+/**
+ * A change to the stored rules, as what to add and what to remove rather than
+ * as a whole replacement list. Sent this way so a rule another machine synced
+ * in, or the user added by hand, between the panel loading and Save being
+ * pressed is left alone instead of being wiped by a stale snapshot.
+ */
+export type RuleDelta = {
+  allow: { add?: string[]; remove?: string[] };
+  deny: { add?: string[]; remove?: string[] };
+};
+
 /** Keeps non-empty string rules only, without duplicates, in file order. */
 const readRuleList = (value: unknown): string[] => [
   ...new Set((readStringArray(value) ?? []).map((rule) => rule.trim()).filter(Boolean)),
@@ -69,7 +86,7 @@ async function readPermissionSource(
   scope: ClaudeSettingsPermissionSource['scope'],
   filePath: string,
 ): Promise<ClaudeSettingsPermissionSource> {
-  const empty = { scope, path: filePath, allow: [], deny: [], ask: [] };
+  const empty = { scope, path: filePath, allow: [], deny: [], ask: [], configured: false };
 
   let content: string;
   try {
@@ -105,6 +122,7 @@ async function readPermissionSource(
     allow: readRuleList(permissions.allow),
     deny: readRuleList(permissions.deny),
     ask: readRuleList(permissions.ask),
+    configured: permissions.allow !== undefined || permissions.deny !== undefined,
   };
 }
 
@@ -143,28 +161,42 @@ async function readUserSettingsForWrite(filePath: string): Promise<{ settings: R
   return { settings, utf16 };
 }
 
+/** Applies one list's additions and removals to what the file currently holds. */
+const applyRuleDelta = (current: string[], delta: { add?: string[]; remove?: string[] }): string[] => {
+  const removed = new Set(delta.remove ?? []);
+  return readRuleList([...current.filter((rule) => !removed.has(rule)), ...(delta.add ?? [])]);
+};
+
 /**
- * Replaces the allow and deny rules in the user's settings file, leaving the
- * rest of it — `ask` rules included — exactly as it was.
+ * Applies a change to the allow and deny rules in the user's settings file,
+ * leaving the rest of it — `ask` rules included — exactly as it was.
  *
- * The file is re-read inside this call rather than patched from a snapshot the
- * caller is holding, so a rule synced in from another machine since the panel
- * was opened is not silently reverted. The write goes through a temporary file
- * in the same directory, so an interrupted write cannot leave the CLI with a
+ * The file is re-read inside this call and the change applied to what it then
+ * holds, so a rule another machine synced in, or the user added by hand, since
+ * the panel was opened survives. The write goes through a temporary file in the
+ * same directory, so an interrupted write cannot leave the CLI with a
  * half-written settings file.
  */
-async function writeUserRules(update: { allow: string[]; deny: string[] }, filePath: string): Promise<void> {
+async function writeUserRules(update: RuleDelta, filePath: string): Promise<void> {
   const { settings, utf16 } = await readUserSettingsForWrite(filePath);
+  const current = readObjectRecord(settings.permissions) ?? {};
   const permissions = {
-    ...(readObjectRecord(settings.permissions) ?? {}),
-    allow: readRuleList(update.allow),
-    deny: readRuleList(update.deny),
+    ...current,
+    allow: applyRuleDelta(readRuleList(current.allow), update.allow),
+    deny: applyRuleDelta(readRuleList(current.deny), update.deny),
   };
 
   const json = `${JSON.stringify({ ...settings, permissions }, null, 2)}\n`;
-  const temporaryPath = `${filePath}.cloudcli-${process.pid}.tmp`;
-  await writeFile(temporaryPath, utf16 ? `﻿${json}` : json, utf16 ? 'utf16le' : 'utf8');
-  await rename(temporaryPath, filePath);
+  // Unique per write, so two saves at once cannot share a temporary file.
+  const temporaryPath = `${filePath}.cloudcli-${process.pid}-${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, utf16 ? `﻿${json}` : json, utf16 ? 'utf16le' : 'utf8');
+    await rename(temporaryPath, filePath);
+  } catch (error) {
+    // Leave no stray .tmp behind: this directory is often a git repository.
+    await rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 /**
@@ -185,9 +217,9 @@ export const claudeSettingsPermissionsService = {
     ]);
   },
 
-  /** Saves the user file's allow and deny lists, and reports the file as it then reads. */
+  /** Applies a change to the user file's rules, and reports the file as it then reads. */
   async updateUserRules(
-    update: { allow: string[]; deny: string[] },
+    update: RuleDelta,
     filePath: string = userSettingsPath(),
   ): Promise<ClaudeSettingsPermissionSource> {
     await writeUserRules(update, filePath);

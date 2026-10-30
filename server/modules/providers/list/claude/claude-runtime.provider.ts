@@ -193,14 +193,18 @@ const BG_WAIT_CEILING_MS = 30 * 60 * 1000;
 
 const TOOLS_REQUIRING_INTERACTION = new Set(['AskUserQuestion', 'ExitPlanMode']);
 
-// Modes in which the SDK settles approval at the permission-mode step and
-// never calls `canUseTool`, so anything that has to reach the UI in them has
-// to be asked for from a PreToolUse hook instead.
-const MODES_SKIPPING_CAN_USE_TOOL = new Set(['auto', 'bypassPermissions']);
+// The mode that settles approval without ever calling `canUseTool`, so
+// anything that has to reach the UI in it must be asked for from a PreToolUse
+// hook instead. Auto mode still routes interactive tools to the callback.
+const MODES_SKIPPING_CAN_USE_TOOL = new Set(['bypassPermissions']);
 
 // Grace on top of the approval wait, so a hook's own timeout cannot fire first
 // and deny a prompt the user is still reading.
 const HOOK_TIMEOUT_GRACE_SECONDS = 30;
+
+// A grant left behind by an approval the model never acted on must not sit
+// there approving a matching call minutes later.
+const ONE_SHOT_GRANT_TTL_MS = 2 * 60 * 1000;
 
 /** A PreToolUse hook's verdict in the shape the SDK reads it from. */
 function preToolUseDecision(
@@ -1417,8 +1421,18 @@ async function queryClaudeSDK(
     // the calls already re-prompted once, so a retry the classifier denies
     // again stops instead of looping.
     const selfDeniedToolUses = new Set<string>();
-    const oneShotGrants = new Set<string>();
-    const rePromptedCalls = new Set<string>();
+    const oneShotGrants = new Map<string, number>();
+    const answeredCalls = new Set<string>();
+
+    /** Drops a grant the model never took up, so it cannot approve a later call silently. */
+    const takeOneShotGrant = (signature: string): boolean => {
+      const grantedAt = oneShotGrants.get(signature);
+      if (grantedAt === undefined) {
+        return false;
+      }
+      oneShotGrants.delete(signature);
+      return Date.now() - grantedAt <= ONE_SHOT_GRANT_TTL_MS;
+    };
 
     /**
      * Asks the user about one tool call and waits for the answer, writing the
@@ -1454,6 +1468,9 @@ async function queryClaudeSDK(
         if (explanation) {
           writer.send(createNormalizedMessage({ kind: 'permission_explanation', requestId, explanation, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
         }
+      }).catch((error: unknown) => {
+        // The writer may already be closed by the time a sentence arrives.
+        console.warn('[Claude] Could not deliver a tool-call description:', (error as Error)?.message || error);
       });
 
       const decision = await waitForToolApproval(requestId, {
@@ -1476,6 +1493,10 @@ async function queryClaudeSDK(
         return decision;
       }
 
+      // The call has had its dialog. The fallback hook checks this so one call
+      // cannot produce two prompts; PreToolUse clears it for a later occurrence.
+      answeredCalls.add(toolCallSignature(toolName, input));
+
       // A client answered. Announce it on the run stream so the replay buffer
       // and every other attached tab drop the prompt — resolving happens over
       // the inbound socket only, so without this a mid-run page refresh
@@ -1494,6 +1515,10 @@ async function queryClaudeSDK(
 
       return decision;
     };
+
+    // Both approval hooks wait on a person, so their timeout has to outlast the
+    // approval wait itself; the SDK takes hook timeouts in seconds.
+    const approvalHookTimeoutSeconds = Math.ceil(TOOL_APPROVAL_TIMEOUT_MS / 1000) + HOOK_TIMEOUT_GRACE_SECONDS;
 
     sdkOptions.hooks = {
       // Runs before the permission-mode step, so the user's own lists outrank
@@ -1517,7 +1542,12 @@ async function queryClaudeSDK(
               : {};
           }
 
-          if (oneShotGrants.delete(toolCallSignature(toolName, toolInput))) {
+          // A fresh occurrence of this call gets its own prompt, so the answer
+          // to the previous one does not silence it.
+          const signature = toolCallSignature(toolName, toolInput);
+          answeredCalls.delete(signature);
+
+          if (takeOneShotGrant(signature)) {
             return preToolUseDecision('allow');
           }
 
@@ -1535,15 +1565,52 @@ async function queryClaudeSDK(
           return {};
         }]
       }],
-      // Auto mode's classifier can only allow or deny, so a tool it refuses
-      // never reaches the user at all. This turns that deny into the prompt the
-      // mode otherwise never shows, and retries the call when they allow it.
+      // Where the user actually gets their say in auto mode. This hook's
+      // decision is authoritative — an `allow` runs the call — so the prompt
+      // shown here answers the question rather than merely asking the model to
+      // consider trying again.
+      PermissionRequest: [{
+        matcher: '',
+        timeout: approvalHookTimeoutSeconds,
+        hooks: [async (input: AnyRecord, _toolUseId: string | undefined, hookOptions?: { signal?: AbortSignal }) => {
+          const toolName = typeof input?.tool_name === 'string' ? input.tool_name : '';
+          const toolInput = input?.tool_input;
+          if (!toolName) {
+            return {};
+          }
+
+          // In every other mode `canUseTool` is the prompt, and answering here
+          // as well would ask the same question twice.
+          if (sdkOptions.permissionMode !== 'auto') {
+            return {};
+          }
+
+          const decision = await askUserAboutTool(toolName, toolInput, { signal: hookOptions?.signal });
+          if (!decision || decision.cancelled) {
+            return {};
+          }
+
+          return {
+            hookSpecificOutput: {
+              hookEventName: 'PermissionRequest',
+              decision: decision.allow
+                ? { behavior: 'allow', ...(decision.updatedInput ? { updatedInput: decision.updatedInput } : {}) }
+                : { behavior: 'deny', message: decision.message ?? 'User denied tool use' },
+            },
+          };
+        }]
+      }],
+      // Fallback for a denial that never reached PermissionRequest. `retry`
+      // only tells the model it MAY try the call again — it does not run it,
+      // and the CLI ignores it when the classifier produced no verdict — so
+      // this is best effort, and the authoritative path above is the one that
+      // normally answers. Asking again here would mean a second dialog for a
+      // call the user has already judged, so it only acts on calls this run
+      // has not already prompted for.
       PermissionDenied: [{
         matcher: '',
-        timeout: Math.ceil(TOOL_APPROVAL_TIMEOUT_MS / 1000) + HOOK_TIMEOUT_GRACE_SECONDS,
-        hooks: [async (input: AnyRecord) => {
-          // Only the classifier denies behind the UI's back. A deny in any
-          // other mode is the user's own answer and has to stand.
+        timeout: approvalHookTimeoutSeconds,
+        hooks: [async (input: AnyRecord, _toolUseId: string | undefined, hookOptions?: { signal?: AbortSignal }) => {
           if (sdkOptions.permissionMode !== 'auto') {
             return {};
           }
@@ -1561,20 +1628,20 @@ async function queryClaudeSDK(
           }
 
           const signature = toolCallSignature(toolName, toolInput);
-          if (rePromptedCalls.has(signature)) {
+          if (answeredCalls.has(signature)) {
             return {};
           }
-          rePromptedCalls.add(signature);
 
-          const decision = await askUserAboutTool(toolName, toolInput);
+          const decision = await askUserAboutTool(toolName, toolInput, { signal: hookOptions?.signal });
           if (!decision?.allow) {
             return {};
           }
 
-          // An allow-once writes no rule, so the retry needs something of its
-          // own to match on its way back through PreToolUse.
+          // An allow-once writes no rule, so should the model take the retry
+          // up, the grant is what lets it past PreToolUse. It is consumed by
+          // that call or dropped when the turn ends.
           if (!decision.rememberEntry) {
-            oneShotGrants.add(signature);
+            oneShotGrants.set(signature, Date.now());
           }
           return { hookSpecificOutput: { hookEventName: 'PermissionDenied', retry: true } };
         }]
