@@ -181,7 +181,9 @@ test('"always allow" also grants the retry, since the rule reaches the CLI only 
     await answerPrompt(script, { allow: true, rememberEntry: 'Bash(cd:*)' });
 
     assert.equal((await hookDone).hookSpecificOutput?.retry, true);
-    assert.deepEqual(script.options().allowedTools, ['Bash(cd:*)']);
+    // The rule itself goes to the settings file, which the CLI reloads; the run
+    // keeps no allow list of its own.
+    assert.deepEqual(script.options().allowedTools, []);
     assert.equal(verdict(await runHook(script.options(), 'PreToolUse', preToolUse('Bash', input, 'tool-2'))), 'allow');
   });
 });
@@ -336,5 +338,27 @@ test('a grant does not cover a retry that changes anything but its description',
     // The same call with its fields listed in another order still matches.
     const reordered = { description: 'Retry the push', command: approved.command };
     assert.equal(verdict(await runHook(script.options(), 'PreToolUse', preToolUse('Bash', reordered, 'tool-3'))), 'allow');
+  });
+});
+
+test('canUseTool never allows a call on the strength of an allow rule', async () => {
+  // The call reached the callback because the CLI judged it against these very
+  // rules and chose to ask — e.g. a `cat` of a network share, which would send
+  // the user's credentials to that host. Re-allowing it here would override that.
+  const toolsSettings = { ...noRules, allowedTools: ['Bash(cat:*)', 'PowerShell(Test-Path:*)'] };
+  await withRun({ permissionMode: 'default', toolsSettings }, async (script) => {
+    const asked = askCallback(script.options(), 'Bash', { command: 'cat //127.0.0.1/share/x.txt' }, 'tool-1');
+    await answerPrompt(script, { allow: false });
+    assert.equal((await asked).behavior, 'deny');
+    assert.equal(prompts(script).length, 1, 'the user was asked rather than the rule answering');
+  });
+});
+
+test('canUseTool allows the tools plan mode added to a running process', async () => {
+  await withRun({ permissionMode: 'plan', toolsSettings: { ...noRules } }, async (script) => {
+    // Plan mode's tools are added when a running process switches into it, so
+    // the process was not launched with them as rules.
+    assert.equal((await askCallback(script.options(), 'WebSearch', { query: 'x' }, 'tool-1')).behavior, 'allow');
+    assert.equal(prompts(script).length, 0);
   });
 });

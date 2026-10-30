@@ -31,7 +31,7 @@ import {
   CLAUDE_PREDEFINED_MODELS,
   CLAUDE_ULTRACODE_EFFORT
 } from '@/modules/providers/list/claude/claude-models.provider.js';
-import { isToolCallAllowed, isToolCallDenied } from '@/modules/providers/list/claude/claude-tool-permissions.js';
+import { isToolCallDenied } from '@/modules/providers/list/claude/claude-tool-permissions.js';
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import {
   createNotificationEvent,
@@ -1447,8 +1447,8 @@ async function queryClaudeSDK(
     };
 
     /**
-     * Asks the user about one tool call and waits for the answer, writing the
-     * rule back to this run's lists when they chose "always allow". Shared by
+     * Asks the user about one tool call and waits for the answer, taking a rule
+     * the user chose to remember off this run's deny list. Shared by
      * the `canUseTool` callback and the PermissionDenied hook, so a prompt
      * behaves the same whichever of them raised it.
      *
@@ -1525,13 +1525,12 @@ async function queryClaudeSDK(
       // already-answered prompt resurrects.
       writer.send(createNormalizedMessage({ kind: 'permission_resolved', requestId, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
 
-      if (decision.allow && decision.rememberEntry && typeof decision.rememberEntry === 'string') {
-        if (!sdkOptions.allowedTools.includes(decision.rememberEntry)) {
-          sdkOptions.allowedTools.push(decision.rememberEntry);
-        }
-        if (Array.isArray(sdkOptions.disallowedTools)) {
-          sdkOptions.disallowedTools = sdkOptions.disallowedTools.filter((entry: string) => entry !== decision.rememberEntry);
-        }
+      // The remembered rule itself is written to Claude's settings file by the
+      // client, and the running CLI picks it up from there. All this run has to
+      // do is stop refusing it.
+      if (decision.allow && decision.rememberEntry && typeof decision.rememberEntry === 'string'
+        && Array.isArray(sdkOptions.disallowedTools)) {
+        sdkOptions.disallowedTools = sdkOptions.disallowedTools.filter((entry: string) => entry !== decision.rememberEntry);
       }
 
       return decision;
@@ -1669,8 +1668,14 @@ async function queryClaudeSDK(
           return { behavior: 'deny', message: 'Tool disallowed by settings' };
         }
 
-        const isAllowed = isToolCallAllowed(sdkOptions.allowedTools || [], toolName, input);
-        if (isAllowed) {
+        // Never allowed here on the strength of an allow rule: a call only
+        // reaches this callback once the CLI has judged it against those same
+        // rules and chosen to ask, and the CLI's own per-command checks refuse
+        // things a rule's prefix covers (a `cat` of a network share, which
+        // would send the user's credentials to that host). The exception is the
+        // tools plan mode adds when a running process switches into it, which
+        // that process was not launched with.
+        if (planModeGrants.has(toolName)) {
           return { behavior: 'allow', updatedInput: input };
         }
       }
