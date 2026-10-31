@@ -155,6 +155,15 @@ export function getReportedClaudeContextWindow(providerSessionId: string | null 
   return providerSessionId ? reportedClaudeContextWindows.get(providerSessionId) : undefined;
 }
 
+/**
+ * The window a model id is known to have before any turn reports one: Opus and every `[1m]`
+ * variant run with 1M. Used by the Claude runtime provider for a session's first turn, and by
+ * the history readers when this process has seen no report for the session.
+ */
+export function knownClaudeContextWindow(model: string | null | undefined): number | null {
+  return model && /opus|\[1m\]$/i.test(model) ? 1_000_000 : null;
+}
+
 /** Used by the Claude runtime provider to start a session with no report of its own from its model's last window. */
 export function getReportedClaudeModelContextWindow(requestedModel: string | null | undefined): number | undefined {
   return requestedModel ? reportedClaudeModelContextWindows.get(requestedModel) : undefined;
@@ -259,7 +268,8 @@ function emptyCodexTokenUsage(): TokenUsageResult {
  * once per turn.
  *
  * The total is the window the SDK reported for the session when there is one,
- * and the CONTEXT_WINDOW setting otherwise.
+ * else the window known for the newest turn's model, and the CONTEXT_WINDOW
+ * setting otherwise.
  */
 export function summarizeClaudeTokenUsage(
   entries: AnyRecord[],
@@ -270,6 +280,7 @@ export function summarizeClaudeTokenUsage(
   let outputTokens = 0;
   let cacheReadTokens = 0;
   let cacheCreationTokens = 0;
+  let model: string | null = null;
 
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
@@ -309,6 +320,7 @@ export function summarizeClaudeTokenUsage(
     cacheCreationTokens = rowCacheCreationTokens;
     inputTokens = rowInputTokens;
     outputTokens = rowOutputTokens;
+    model = typeof entry.message?.model === 'string' ? entry.message.model : null;
     break;
   }
 
@@ -316,7 +328,7 @@ export function summarizeClaudeTokenUsage(
   const configuredOrDefaultContextWindow = Number.isFinite(parsedContextWindow) ? parsedContextWindow : 160_000;
   const contextWindow = reportedContextWindow && reportedContextWindow > 0
     ? reportedContextWindow
-    : configuredOrDefaultContextWindow;
+    : knownClaudeContextWindow(model) ?? configuredOrDefaultContextWindow;
   const cacheTokens = cacheReadTokens + cacheCreationTokens;
 
   return {

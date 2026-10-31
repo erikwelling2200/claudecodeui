@@ -46,6 +46,7 @@ import type { ClaudeBilling } from '@/modules/usage/index.js';
 import {
   getReportedClaudeContextWindow,
   getReportedClaudeModelContextWindow,
+  knownClaudeContextWindow,
   rememberClaudeContextWindow
 } from '@/modules/providers/services/provider-token-usage.service.js';
 import { appendPromptText, buildAgentSessionEnv, createCompleteMessage, createNormalizedMessage } from '@/shared/utils.js';
@@ -697,14 +698,6 @@ function resolveContextWindow(reportedContextWindow?: number | null): number {
     return reportedContextWindow;
   }
   return parseInt(process.env.CONTEXT_WINDOW ?? '', 10) || 160000;
-}
-
-/**
- * The window a requested model id is known to have before any turn reports one: Opus and
- * every `[1m]` variant run with 1M. A reported window replaces this after the first turn.
- */
-function knownClaudeContextWindow(requestedModel: string | null | undefined): number | null {
-  return requestedModel && /opus|\[1m\]$/i.test(requestedModel) ? 1_000_000 : null;
 }
 
 /**

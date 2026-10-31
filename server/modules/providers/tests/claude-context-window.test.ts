@@ -271,3 +271,26 @@ test('an Opus session starts at 1M before any turn has reported a window', async
     assert.deepEqual(tokenBudgets(sent).map((budget) => budget.total), [1_000_000]);
   });
 });
+
+test('the history-derived usage of an Opus session no run has reported on is 1M', async () => {
+  await withContextWindowEnv('160000', async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'claude-context-window-opus-history-'));
+    const transcriptPath = path.join(tempDirectory, 'native-opus-history.jsonl');
+    try {
+      await writeFile(transcriptPath, `${JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-5-5', usage } })}\n`);
+      const service = createProviderTokenUsageService({
+        getSessionById: () => ({
+          session_id: 'app-opus-history',
+          provider: 'claude',
+          provider_session_id: 'native-opus-history',
+          jsonl_path: transcriptPath,
+        }) as never,
+        isProviderSessionSuperseded: () => false,
+      });
+
+      assert.equal((await service.getSessionTokenUsage('app-opus-history')).total, 1_000_000);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+});
