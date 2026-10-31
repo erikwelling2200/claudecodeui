@@ -18,15 +18,8 @@ type ScrollAnchor = {
  */
 const ANCHOR_CANDIDATE_COUNT = 8;
 
-/**
- * Rows starting inside the viewport, with the row cut off at its top edge and
- * the transcript's first row as a last resort: either can change its own
- * height, which moves everything below it without moving its own top. Rows are in document order,
- * so a binary search keeps this to a handful of rect reads on a long transcript.
- */
-function findAnchorRows(container: HTMLElement, content: Element): ScrollAnchor[] {
-  const rows = container.querySelectorAll<HTMLElement>('[data-transcript-row]');
-  const viewportTop = container.getBoundingClientRect().top;
+/** Index of the first row whose bottom edge is below `viewportTop`, or -1 when there is none. */
+export function findFirstRowInView(rows: NodeListOf<HTMLElement>, viewportTop: number): number {
   let low = 0;
   let high = rows.length - 1;
   let found = -1;
@@ -39,6 +32,19 @@ function findAnchorRows(container: HTMLElement, content: Element): ScrollAnchor[
       low = middle + 1;
     }
   }
+  return found;
+}
+
+/**
+ * Rows starting inside the viewport, with the row cut off at its top edge and
+ * the transcript's first row as a last resort: either can change its own
+ * height, which moves everything below it without moving its own top. Rows are in document order,
+ * so a binary search keeps this to a handful of rect reads on a long transcript.
+ */
+function findAnchorRows(container: HTMLElement, content: Element): ScrollAnchor[] {
+  const rows = container.querySelectorAll<HTMLElement>('[data-transcript-row]');
+  const viewportTop = container.getBoundingClientRect().top;
+  const found = findFirstRowInView(rows, viewportTop);
   if (found === -1) return [];
   const candidates = Array.from(rows).slice(found, found + ANCHOR_CANDIDATE_COUNT + 1);
   // The transcript's first row is re-rendered when an older page lands above

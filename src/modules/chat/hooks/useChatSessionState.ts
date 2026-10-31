@@ -6,6 +6,12 @@ import type { MarkSessionIdle, SessionActivityMap,Project,ProjectSession,LLMProv
 import type { SessionStore } from '@/modules/chat/hooks/useSessionStore';
 import { SESSION_MESSAGES_PAGE_SIZE } from '@/modules/chat/utils/sessionMessagePagination';
 import { useTranscriptScrollAnchor } from '@/modules/chat/hooks/useTranscriptScrollAnchor';
+import {
+  readFirstRowInView,
+  recallReadingPosition,
+  rememberReadingPosition,
+  scrollRowToOffset,
+} from '@/modules/chat/utils/transcriptReadingPositions';
 import { createMessageHistoryRefreshCoordinator } from '@/modules/chat/utils/messageHistoryRefreshCoordinator';
 import { createCachedDiffCalculator } from '@/modules/chat/utils/messageTransforms';
 import { normalizedToChatMessages } from '@/modules/chat/hooks/useChatMessages';
@@ -14,6 +20,13 @@ import { readSelectedProvider } from '@/shared/selectedProvider';
 import type { SearchTarget } from '@/modules/chat/utils/searchTargetLocator';
 
 const INITIAL_VISIBLE_MESSAGES = 100;
+
+/** Wide enough to show the row a returning user was reading, plus a page of messages that arrived since. */
+function initialVisibleMessageCount(chatKey: string | null) {
+  const readingPosition = recallReadingPosition(chatKey);
+  if (!readingPosition) return INITIAL_VISIBLE_MESSAGES;
+  return Math.max(INITIAL_VISIBLE_MESSAGES, readingPosition.visibleCount + SESSION_MESSAGES_PAGE_SIZE);
+}
 
 /** Messages kept below a search hit so it lands mid-viewport rather than at the edge. */
 const SEARCH_TARGET_CONTEXT_MESSAGES = 20;
@@ -190,6 +203,8 @@ export function useChatSessionState({
   const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
   const [tokenBudget, setTokenBudget] = useState<Record<string, unknown> | null>(null);
   const [visibleMessageCount, setVisibleMessageCount] = useState(INITIAL_VISIBLE_MESSAGES);
+  const visibleMessageCountRef = useRef(visibleMessageCount);
+  visibleMessageCountRef.current = visibleMessageCount;
   const [allMessagesLoaded, setAllMessagesLoaded] = useState(false);
   const [isLoadingAllMessages, setIsLoadingAllMessages] = useState(false);
   const [loadAllJustFinished, setLoadAllJustFinished] = useState(false);
@@ -314,10 +329,14 @@ export function useChatSessionState({
   isActiveRef.current = isActive;
   activeSessionIdRef.current = activeSessionId;
 
+  const chatKey = selectedProject && selectedSession ? `${selectedProject.projectId}:${selectedSession.id}` : null;
+  const chatKeyRef = useRef(chatKey);
+  chatKeyRef.current = chatKey;
+
   const { captureAnchor, clearAnchor } = useTranscriptScrollAnchor(
     scrollContainerRef,
     () => isActiveRef.current && !pendingInitialScrollRef.current && !searchScrollActiveRef.current,
-    `${selectedProject?.projectId}:${selectedSession?.id}`,
+    chatKey,
   );
 
   const latestRefreshExecutorRef = useRef<(sessionId: string) => Promise<boolean | void>>(
@@ -522,6 +541,15 @@ export function useChatSessionState({
     setIsUserScrolledUp(!nearBottom);
     if (nearBottom) clearAnchor();
     else captureAnchor();
+    // While the initial scroll or a search jump owns the position, it is not where the user chose to read.
+    if (!pendingInitialScrollRef.current && !searchScrollActiveRef.current) {
+      const firstRow = nearBottom ? null : readFirstRowInView(container);
+      rememberReadingPosition(chatKeyRef.current, firstRow && {
+        ...firstRow,
+        loadedCount: messagesOffsetRef.current,
+        visibleCount: visibleMessageCountRef.current,
+      });
+    }
     scrollPositionRef.current = {
       height: container.scrollHeight,
       top: container.scrollTop,
@@ -590,11 +618,14 @@ export function useChatSessionState({
     setSearchTarget(null);
 
     pendingInitialScrollRef.current = true;
-    setVisibleMessageCount(INITIAL_VISIBLE_MESSAGES);
+    setVisibleMessageCount(initialVisibleMessageCount(chatKey));
     topLoadLockRef.current = false;
     wasNearTopRef.current = false;
-    setIsUserScrolledUp(false);
-  }, [selectedProject?.projectId, selectedSession?.id]);
+    // Set on the ref too: the deferred scroll-to-bottom reads it before the state commits.
+    const returnsToReadingPosition = Boolean(recallReadingPosition(chatKey));
+    isUserScrolledUpRef.current = returnsToReadingPosition;
+    setIsUserScrolledUp(returnsToReadingPosition);
+  }, [chatKey]);
 
   // Initial scroll to bottom — robust to lazy content reflow.
   // The previous implementation fired one scrollToBottom() at +200ms and
@@ -613,32 +644,46 @@ export function useChatSessionState({
     if (searchScrollActiveRef.current) { pendingInitialScrollRef.current = false; return; }
 
     const container = scrollContainerRef.current;
+    const readingPosition = recallReadingPosition(chatKeyRef.current);
+    let restoring = Boolean(readingPosition);
     let frame = 0;
     let lastHeight = 0;
+    let lastTop = -1;
     let stableCount = 0;
     let rafId = 0;
 
+    // Lazy rows above the target mount over estimated placeholders for a few
+    // frames, so the position is re-applied until height and offset both hold.
     const tick = () => {
       if (!pendingInitialScrollRef.current || !scrollContainerRef.current) return;
-      container.scrollTop = container.scrollHeight;
-      if (container.scrollHeight === lastHeight) {
+      if (restoring && readingPosition) {
+        restoring = scrollRowToOffset(container, readingPosition.rowKey, readingPosition.offset);
+      }
+      if (!restoring) {
+        isUserScrolledUpRef.current = false;
+        container.scrollTop = container.scrollHeight;
+      }
+      if (container.scrollHeight === lastHeight && container.scrollTop === lastTop) {
         stableCount++;
       } else {
         stableCount = 0;
         lastHeight = container.scrollHeight;
+        lastTop = container.scrollTop;
       }
       frame++;
       if (stableCount < 3 && frame < 60) {
         rafId = requestAnimationFrame(tick);
       } else {
         pendingInitialScrollRef.current = false;
+        if (restoring) captureAnchor();
+        else setIsUserScrolledUp(false);
       }
     };
     rafId = requestAnimationFrame(tick);
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [chatMessages.length, isActive, isLoadingSessionMessages, scrollToBottom]);
+  }, [captureAnchor, chatMessages.length, isActive, isLoadingSessionMessages, scrollToBottom]);
 
   // Session replay/subscription remains active regardless of which main tab is
   // visible. Only persisted-history HTTP traffic is visibility-gated below.
@@ -718,7 +763,7 @@ export function useChatSessionState({
     messagesOffsetRef.current = 0;
     setHasMoreMessages(false);
     setTotalMessages(0);
-    setVisibleMessageCount(INITIAL_VISIBLE_MESSAGES);
+    setVisibleMessageCount(initialVisibleMessageCount(chatKeyRef.current));
     setAllMessagesLoaded(false);
     allMessagesLoadedRef.current = false;
     setIsLoadingAllMessages(false);
@@ -738,8 +783,10 @@ export function useChatSessionState({
 
     // Fetch from server → store updates → chatMessages re-derives automatically
     setIsLoadingSessionMessages(true);
+    // One page beyond what was loaded when the user left, for messages that arrived since.
+    const readingPosition = recallReadingPosition(chatKeyRef.current);
     sessionStore.fetchFromServer(selectedSessionId, {
-      limit: SESSION_MESSAGES_PAGE_SIZE,
+      limit: SESSION_MESSAGES_PAGE_SIZE + (readingPosition?.loadedCount ?? 0),
       offset: 0,
       canRequest: () => (
         isActiveRef.current
