@@ -204,6 +204,12 @@ const builtInCommands = [
     metadata: { type: "builtin" },
   },
   {
+    name: "/mcp",
+    description: "Show MCP server connections and reconnect them",
+    namespace: "builtin",
+    metadata: { type: "builtin" },
+  },
+  {
     name: "/memory",
     description: "Open CLAUDE.md memory file for editing",
     namespace: "builtin",
@@ -444,6 +450,16 @@ Custom commands can be created in:
       },
     };
   },
+
+  // The modal loads the live status itself, so it can refresh after a reconnect.
+  "/mcp": async (args, context) => ({
+    type: "builtin",
+    action: "mcp",
+    data: {
+      provider: readModelProvider(context?.provider),
+      sessionId: context?.sessionId || null,
+    },
+  }),
 
   "/config": async (args, context) => {
     return {

@@ -20,6 +20,8 @@ import path from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
+import { permissionExplainerService } from '@/modules/providers/services/permission-explainer.service.js';
+
 import {
   appendFilesInputTag,
   buildClaudeUserContent,
@@ -29,7 +31,7 @@ import {
   CLAUDE_PREDEFINED_MODELS,
   CLAUDE_ULTRACODE_EFFORT
 } from '@/modules/providers/list/claude/claude-models.provider.js';
-import { isToolCallAllowed, isToolCallDenied } from '@/modules/providers/list/claude/claude-tool-permissions.js';
+import { isToolCallDenied } from '@/modules/providers/list/claude/claude-tool-permissions.js';
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import {
   createNotificationEvent,
@@ -50,6 +52,7 @@ import { appendPromptText, buildAgentSessionEnv, createCompleteMessage, createNo
 import type {
   AnyRecord,
   BackgroundTaskSummary,
+  LiveMcpServerStatus,
   LiveTurnTerms,
   ProviderModelsDefinition,
   ProviderRuntimeContext,
@@ -192,6 +195,59 @@ const TOOL_APPROVAL_TIMEOUT_MS = parseInt(process.env.CLAUDE_TOOL_APPROVAL_TIMEO
 const BG_WAIT_CEILING_MS = 30 * 60 * 1000;
 
 const TOOLS_REQUIRING_INTERACTION = new Set(['AskUserQuestion', 'ExitPlanMode']);
+
+// The mode that settles approval without ever calling `canUseTool`, so
+// anything that has to reach the UI in it must be asked for from a PreToolUse
+// hook instead. Auto mode still routes interactive tools to the callback.
+const MODES_SKIPPING_CAN_USE_TOOL = new Set(['bypassPermissions']);
+
+// Grace on top of the approval wait, so a hook's own timeout cannot fire first
+// and deny a prompt the user is still reading.
+const HOOK_TIMEOUT_GRACE_SECONDS = 30;
+
+// A grant left behind by an approval the model never acted on must not sit
+// there approving a matching call minutes later.
+const ONE_SHOT_GRANT_TTL_MS = 2 * 60 * 1000;
+
+/** A PreToolUse hook's verdict in the shape the SDK reads it from. */
+function preToolUseDecision(
+  permissionDecision: 'allow' | 'deny' | 'ask',
+  permissionDecisionReason?: string,
+) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision,
+      ...(permissionDecisionReason ? { permissionDecisionReason } : {}),
+    },
+  };
+}
+
+/**
+ * What a one-shot grant matches the model's retry on. A retried call gets a new
+ * `tool_use_id`, so the grant keys on what the call does: its whole input,
+ * less the model's free-text `description`, which is the part most likely to be
+ * reworded on a retry and the only part that changes nothing. Every other field
+ * counts — a retry that adds `dangerouslyDisableSandbox` or moves to the
+ * background is not the call the user approved.
+ */
+function grantKey(toolName: string, input: unknown): string {
+  let fields = input;
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    // Sorted, since a retry need not list its fields in the same order.
+    fields = Object.fromEntries(
+      Object.entries(input as AnyRecord)
+        .filter(([key]) => key !== 'description')
+        .map(([key, value]) => [key, key === 'command' && typeof value === 'string' ? value.trim() : value])
+        .sort(([a], [b]) => a.localeCompare(b)),
+    );
+  }
+  try {
+    return `${toolName}:${JSON.stringify(fields) ?? ''}`;
+  } catch {
+    return `${toolName}:<unserializable>`;
+  }
+}
 
 // Ultracode is a session-scoped setting rather than an SDK effort level: it pairs xhigh
 // effort with standing dynamic-workflow orchestration, and the CLI only honours it when
@@ -1104,9 +1160,10 @@ function readLiveTurnTerms(options: AnyRecord): LiveTurnTerms {
  * - effort, which the CLI takes as a flag,
  * - bypass, which the CLI only enters when launched into it,
  * - plan, which adds its tools to the launch's allowed list,
- * - the tool lists, which the CLI enforces from its flags before our
- *   `canUseTool` sees a call. Allowing more is fine (the callback allows the
- *   additions); allowing less, or changing what is denied, is not.
+ * - the tool lists, which the CLI enforces from its flags. Allowing more is
+ *   fine: an added rule also lives in Claude's settings file, which the
+ *   running CLI reloads, and until it does the call is merely asked about
+ *   again. Allowing less, or changing what is denied, is not.
  *
  * The composer applies the same rule to the terms the server reports, so it
  * knows before sending whether a new process (and the existing dialog) is
@@ -1385,7 +1442,209 @@ async function queryClaudeSDK(
       releaseHeldSession(sessionKey()!);
     }
 
+    // Tool calls this run denied from its own deny list, so the
+    // PermissionDenied hook can tell its own verdict from the classifier's;
+    // one-shot grants for a refused call the user then allowed, waiting for the
+    // model's retry; and the tool-use ids that have already had a dialog, so
+    // one call never produces two.
+    const selfDeniedToolUses = new Set<string>();
+    const oneShotGrants = new Map<string, number>();
+    const answeredToolUses = new Set<string>();
+
+    /** Spends a grant; one the model never took up expires instead of approving a later call. */
+    const takeOneShotGrant = (key: string): boolean => {
+      const grantedAt = oneShotGrants.get(key);
+      if (grantedAt === undefined) {
+        return false;
+      }
+      oneShotGrants.delete(key);
+      return Date.now() - grantedAt <= ONE_SHOT_GRANT_TTL_MS;
+    };
+
+    /**
+     * Asks the user about one tool call and waits for the answer, taking a rule
+     * the user chose to remember off this run's deny list. Shared by
+     * the `canUseTool` callback and the PermissionDenied hook, so a prompt
+     * behaves the same whichever of them raised it.
+     *
+     * How long it waits belongs to the call: an interactive tool waits for as
+     * long as the user takes, anything else for the usual approval window.
+     */
+    const askUserAboutTool = async (
+      toolName: string,
+      input: unknown,
+      toolUseId: string,
+      signal?: AbortSignal,
+    ): Promise<ToolApprovalDecision> => {
+      const waitOptions = { signal, timeoutMs: TOOLS_REQUIRING_INTERACTION.has(toolName) ? 0 : undefined };
+      // The prompt and its answer stay with the turn that asked, even if a
+      // later turn takes the process over while it waits.
+      const writer = turnWriter;
+      const requestId = createRequestId();
+      writer.send(createNormalizedMessage({ kind: 'permission_request', requestId, toolName, input, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
+      emitNotification(notificationEvent({
+        provider: 'claude',
+        sessionId: sessionId || capturedSessionId || null,
+        kind: 'action_required',
+        code: 'permission.required',
+        meta: { toolName, sessionName: turnSessionSummary },
+        severity: 'warning',
+        requiresUserAction: true,
+        dedupeKey: `claude:permission:${sessionId || capturedSessionId || 'none'}:${requestId}`
+      }));
+
+      // Described after the prompt is already on screen, by a query of its own
+      // rather than by this agent, and never waited on: the dialog is usable
+      // whether or not a sentence arrives. A question or a plan approval is
+      // not a call to judge, so it is not described.
+      const explainToolCall = context.explainToolCall ?? permissionExplainerService.explain;
+      void (TOOLS_REQUIRING_INTERACTION.has(toolName) ? Promise.resolve(null) : explainToolCall({ toolName, input })).then((explanation) => {
+        if (explanation) {
+          writer.send(createNormalizedMessage({ kind: 'permission_explanation', requestId, explanation, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
+        }
+      }).catch((error: unknown) => {
+        // The writer may already be closed by the time a sentence arrives.
+        console.warn('[Claude] Could not deliver a tool-call description:', (error as Error)?.message || error);
+      });
+
+      const decision = await waitForToolApproval(requestId, {
+        timeoutMs: waitOptions.timeoutMs,
+        signal: waitOptions.signal,
+        metadata: {
+          // Keyed by the app session id so `chat.subscribe` can look pending
+          // approvals up directly; provider id only for legacy callers.
+          _sessionId: sessionId || capturedSessionId || null,
+          _toolName: toolName,
+          _input: input,
+          _receivedAt: new Date(),
+        },
+        onCancel: (reason: string) => {
+          writer.send(createNormalizedMessage({ kind: 'permission_cancelled', requestId, reason, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
+        }
+      });
+
+      // The call has had its dialog, whether it was answered, timed out or
+      // was cancelled, so the PermissionDenied hook does not open a second one.
+      if (toolUseId) {
+        answeredToolUses.add(toolUseId);
+      }
+
+      if (!decision || decision.cancelled) {
+        return decision;
+      }
+
+      // A client answered. Announce it on the run stream so the replay buffer
+      // and every other attached tab drop the prompt — resolving happens over
+      // the inbound socket only, so without this a mid-run page refresh
+      // replays the `permission_request` with nothing to retract it and the
+      // already-answered prompt resurrects.
+      writer.send(createNormalizedMessage({ kind: 'permission_resolved', requestId, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
+
+      // The remembered rule itself is written to Claude's settings file by the
+      // client, and the running CLI picks it up from there. All this run has to
+      // do is stop refusing it.
+      if (decision.allow && decision.rememberEntry && typeof decision.rememberEntry === 'string'
+        && Array.isArray(sdkOptions.disallowedTools)) {
+        sdkOptions.disallowedTools = sdkOptions.disallowedTools.filter((entry: string) => entry !== decision.rememberEntry);
+      }
+
+      return decision;
+    };
+
+    // The PermissionDenied hook waits on a person, so its timeout has to outlast
+    // the approval wait itself; the SDK takes hook timeouts in seconds.
+    const approvalHookTimeoutSeconds = Math.ceil(TOOL_APPROVAL_TIMEOUT_MS / 1000) + HOOK_TIMEOUT_GRACE_SECONDS;
+
     sdkOptions.hooks = {
+      // Runs before the permission-mode step. It never allows a call on the
+      // strength of an allow rule: the CLI already holds those rules and judges
+      // them with its own matcher, which is stricter than this app's and, in
+      // auto mode, drops the rules that would bypass the classifier. An `allow`
+      // from here would outrank both. What it does allow is a single call the
+      // user approved after the classifier refused it.
+      PreToolUse: [{
+        matcher: '',
+        hooks: [async (input: AnyRecord) => {
+          const toolName = typeof input?.tool_name === 'string' ? input.tool_name : '';
+          const toolUseId = typeof input?.tool_use_id === 'string' ? input.tool_use_id : '';
+          const toolInput = input?.tool_input;
+          if (!toolName) {
+            return {};
+          }
+
+          // Interactive tools have to reach the UI. In the modes that settle
+          // approval before `canUseTool`, asking is what gets them there.
+          if (TOOLS_REQUIRING_INTERACTION.has(toolName)) {
+            return MODES_SKIPPING_CAN_USE_TOOL.has(sdkOptions.permissionMode)
+              ? preToolUseDecision('ask')
+              : {};
+          }
+
+          if (takeOneShotGrant(grantKey(toolName, toolInput))) {
+            return preToolUseDecision('allow');
+          }
+
+          // Denying is the safe side: matching wider than the CLI can only
+          // refuse more, never let anything through.
+          if (isToolCallDenied(sdkOptions.disallowedTools || [], toolName, toolInput)) {
+            if (toolUseId) {
+              selfDeniedToolUses.add(toolUseId);
+            }
+            return preToolUseDecision('deny', 'Tool disallowed by settings');
+          }
+
+          return {};
+        }]
+      }],
+      // Where a refused call is put back to the user. Measured against CLI
+      // 2.1.314: when the auto-mode classifier refuses a call, this is the only
+      // hook that fires — neither PermissionRequest nor `canUseTool` sees it.
+      //
+      // `retry` cannot run the call; it tells the model it may try again. What
+      // makes the attempt succeed is the one-shot grant below: the retried call
+      // passes PreToolUse first, and an `allow` there outranks the classifier.
+      // Both halves were observed end to end. It still rests on the model
+      // taking the retry up and re-sending the same command; the grant ignores
+      // the free-text description it may reword, but not the command itself.
+      //
+      // A call this run has already shown a dialog for is not asked about twice.
+      PermissionDenied: [{
+        matcher: '',
+        timeout: approvalHookTimeoutSeconds,
+        hooks: [async (input: AnyRecord, _toolUseId: string | undefined, hookOptions?: { signal?: AbortSignal }) => {
+          if (sdkOptions.permissionMode !== 'auto') {
+            return {};
+          }
+
+          const toolName = typeof input?.tool_name === 'string' ? input.tool_name : '';
+          const toolUseId = typeof input?.tool_use_id === 'string' ? input.tool_use_id : '';
+          const toolInput = input?.tool_input;
+          if (!toolName) {
+            return {};
+          }
+
+          // This run's own deny list said no, so the user already decided.
+          if (toolUseId && selfDeniedToolUses.delete(toolUseId)) {
+            return {};
+          }
+
+          if (toolUseId && answeredToolUses.has(toolUseId)) {
+            return {};
+          }
+
+          const decision = await askUserAboutTool(toolName, toolInput, toolUseId, hookOptions?.signal);
+          if (!decision?.allow) {
+            return {};
+          }
+
+          // Granted whether or not the user also chose to remember a rule: a
+          // remembered rule reaches the CLI with the next process, and is often
+          // narrower than the call anyway (`Bash(cd:*)` for `cd x && git push`).
+          // The grant is spent by the retry or expires after a short while.
+          oneShotGrants.set(grantKey(toolName, toolInput), Date.now());
+          return { hookSpecificOutput: { hookEventName: 'PermissionDenied', retry: true } };
+        }]
+      }],
       Notification: [{
         matcher: '',
         hooks: [async (input: AnyRecord) => {
@@ -1406,13 +1665,12 @@ async function queryClaudeSDK(
       }]
     };
 
-    // Caveat: in 'auto' and 'bypassPermissions' modes the SDK resolves approval
-    // at the permission-mode step and skips this callback, so interactive tools
-    // (AskUserQuestion, ExitPlanMode) won't reach the UI — the classifier/bypass
-    // auto-approves them and the model acts on a generated answer. Move these
-    // tools to a PreToolUse hook (runs before the mode check) if we need them
-    // to work in those modes.
-    sdkOptions.canUseTool = async (toolName: string, input: unknown, context?: { signal?: AbortSignal }) => {
+    // `bypassPermissions` settles approval without ever reaching this
+    // callback, and in auto mode the classifier answers most calls before it.
+    // The hooks above cover both: PreToolUse applies the deny list ahead of
+    // the mode and asks for the interactive tools, and PermissionDenied puts
+    // a refused call back to the user.
+    sdkOptions.canUseTool = async (toolName: string, input: unknown, callOptions?: { signal?: AbortSignal; toolUseID?: string }) => {
       const requiresInteraction = TOOLS_REQUIRING_INTERACTION.has(toolName);
 
       if (!requiresInteraction) {
@@ -1425,43 +1683,19 @@ async function queryClaudeSDK(
           return { behavior: 'deny', message: 'Tool disallowed by settings' };
         }
 
-        const isAllowed = isToolCallAllowed(sdkOptions.allowedTools || [], toolName, input);
-        if (isAllowed) {
+        // Never allowed here on the strength of an allow rule: a call only
+        // reaches this callback once the CLI has judged it against those same
+        // rules and chosen to ask, and the CLI's own per-command checks refuse
+        // things a rule's prefix covers (a `cat` of a network share, which
+        // would send the user's credentials to that host). The exception is the
+        // tools plan mode adds when a running process switches into it, which
+        // that process was not launched with.
+        if (planModeGrants.has(toolName)) {
           return { behavior: 'allow', updatedInput: input };
         }
       }
 
-      // The prompt and its answer stay with the turn that asked, even if a
-      // later turn takes the process over while it waits.
-      const writer = turnWriter;
-      const requestId = createRequestId();
-      writer.send(createNormalizedMessage({ kind: 'permission_request', requestId, toolName, input, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
-      emitNotification(notificationEvent({
-        provider: 'claude',
-        sessionId: sessionId || capturedSessionId || null,
-        kind: 'action_required',
-        code: 'permission.required',
-        meta: { toolName, sessionName: turnSessionSummary },
-        severity: 'warning',
-        requiresUserAction: true,
-        dedupeKey: `claude:permission:${sessionId || capturedSessionId || 'none'}:${requestId}`
-      }));
-
-      const decision = await waitForToolApproval(requestId, {
-        timeoutMs: requiresInteraction ? 0 : undefined,
-        signal: context?.signal,
-        metadata: {
-          // Keyed by the app session id so `chat.subscribe` can look pending
-          // approvals up directly; provider id only for legacy callers.
-          _sessionId: sessionId || capturedSessionId || null,
-          _toolName: toolName,
-          _input: input,
-          _receivedAt: new Date(),
-        },
-        onCancel: (reason: string) => {
-          writer.send(createNormalizedMessage({ kind: 'permission_cancelled', requestId, reason, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
-        }
-      });
+      const decision = await askUserAboutTool(toolName, input, callOptions?.toolUseID ?? '', callOptions?.signal);
       if (!decision) {
         return { behavior: 'deny', message: 'Permission request timed out' };
       }
@@ -1470,22 +1704,7 @@ async function queryClaudeSDK(
         return { behavior: 'deny', message: 'Permission request cancelled' };
       }
 
-      // A client answered. Announce it on the run stream so the replay buffer
-      // and every other attached tab drop the prompt — resolving happens over
-      // the inbound socket only, so without this a mid-run page refresh
-      // replays the `permission_request` with nothing to retract it and the
-      // already-answered prompt resurrects.
-      writer.send(createNormalizedMessage({ kind: 'permission_resolved', requestId, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
-
       if (decision.allow) {
-        if (decision.rememberEntry && typeof decision.rememberEntry === 'string') {
-          if (!sdkOptions.allowedTools.includes(decision.rememberEntry)) {
-            sdkOptions.allowedTools.push(decision.rememberEntry);
-          }
-          if (Array.isArray(sdkOptions.disallowedTools)) {
-            sdkOptions.disallowedTools = sdkOptions.disallowedTools.filter((entry: string) => entry !== decision.rememberEntry);
-          }
-        }
         return { behavior: 'allow', updatedInput: decision.updatedInput ?? input };
       }
 
@@ -2242,6 +2461,55 @@ async function setClaudeSDKRemoteControl(sessionId: string, enabled: boolean): P
   return { enabled, sessionUrl: remoteControlUrls.get(sessionId) ?? null };
 }
 
+/** Reduces the SDK's per-server status to what the `/mcp` view shows; env vars and headers stay on the server. */
+function toLiveMcpServerStatus(server: AnyRecord): LiveMcpServerStatus {
+  const config = (server.config ?? {}) as AnyRecord;
+  const commandLine = typeof config.command === 'string'
+    ? [config.command, ...(Array.isArray(config.args) ? config.args : [])].join(' ')
+    : undefined;
+  const target = typeof config.url === 'string' ? config.url : commandLine;
+  const transport = typeof config.type === 'string' ? config.type : (commandLine ? 'stdio' : undefined);
+  return {
+    name: String(server.name),
+    status: server.status,
+    ...(server.error ? { error: String(server.error) } : {}),
+    ...(server.scope ? { scope: String(server.scope) } : {}),
+    ...(transport ? { transport } : {}),
+    ...(target ? { target } : {}),
+    ...(server.serverInfo?.version ? { serverVersion: String(server.serverInfo.version) } : {}),
+    toolCount: Array.isArray(server.tools) ? server.tools.length : 0,
+  };
+}
+
+/**
+ * Lists the MCP servers of a session's live process with their connection state.
+ * @param {string} sessionId - Session identifier
+ * @returns {Promise<LiveMcpServerStatus[]|null>} Null when no live process holds the session
+ */
+async function listClaudeSDKMcpServers(sessionId: string): Promise<LiveMcpServerStatus[] | null> {
+  const session = getSession(sessionId);
+  if (!session || session.status !== 'active') {
+    return null;
+  }
+  const servers = await session.instance.mcpServerStatus!();
+  return servers.map(toLiveMcpServerStatus).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Reconnects one MCP server in a session's live process. Throws the SDK's error when the reconnect fails.
+ * @param {string} sessionId - Session identifier
+ * @param {string} serverName - The server's configured name
+ * @returns {Promise<boolean>} False when no live process holds the session
+ */
+async function reconnectClaudeSDKMcpServer(sessionId: string, serverName: string): Promise<boolean> {
+  const session = getSession(sessionId);
+  if (!session || session.status !== 'active') {
+    return false;
+  }
+  await session.instance.reconnectMcpServer!(serverName);
+  return true;
+}
+
 /**
  * Checks if an SDK session is currently active
  * @param {string} sessionId - Session identifier
@@ -2324,6 +2592,8 @@ export const claudeRuntime = {
   acceptsLiveTurn: acceptsClaudeSDKLiveTurn,
   setPermissionMode: setClaudeSDKPermissionMode,
   setRemoteControl: setClaudeSDKRemoteControl,
+  listMcpServers: listClaudeSDKMcpServers,
+  reconnectMcpServer: reconnectClaudeSDKMcpServer,
   steerTurn: steerClaudeSDKTurn,
   interruptForSteer: interruptClaudeSDKTurnForSteer,
   releaseIdleProcess: releaseClaudeSDKIdleProcess,

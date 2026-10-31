@@ -486,6 +486,11 @@ export type PendingPermissionRequest = {
   context?: unknown;
   sessionId?: string | null;
   receivedAt?: Date;
+  /**
+   * One sentence on what the call would do, written by a separate query rather
+   * than by the agent asking. Arrives after the prompt, and may never arrive.
+   */
+  explanation?: string;
 };
 
 /** One question asked by the AskUserQuestion tool, with its answer options and whether more than one option may be selected. */
@@ -735,6 +740,8 @@ type MessageKind =
   | 'status'
   | 'permission_request'
   | 'permission_resolved'
+  // One sentence on what a pending call would do, from a query of its own.
+  | 'permission_explanation'
   | 'permission_cancelled'
   | 'session_created'
   | 'history_truncated'
@@ -776,6 +783,12 @@ export type CostCommandData = {
   model?: string;
 };
 
+/** Result payload of the chat `/mcp` slash command: which chat's live process the command modal asks for its MCP servers. */
+export type McpCommandData = {
+  provider?: string;
+  sessionId?: string | null;
+};
+
 /** Result payload of the chat `/status` slash command, carrying server version, uptime, provider/model and process telemetry for the command modal's status view. */
 export type StatusCommandData = {
   version?: string;
@@ -807,7 +820,7 @@ export type HelpCommandData = {
 /** Wrapper pairing a CommandModalKind with its matching command result data; pass it as the single payload prop that tells the chat command modal which slash-command result to render, or null to close it. */
 export type CommandModalPayload = {
   kind: CommandModalKind;
-  data: HelpCommandData | ModelCommandData | CostCommandData | StatusCommandData;
+  data: HelpCommandData | ModelCommandData | CostCommandData | StatusCommandData | McpCommandData;
 };
 
 /** A composer message queued while its session is still busy, holding the text, the in-memory and already-uploaded attachments and the send options snapshotted at queue time so it can be auto-sent unchanged once the session goes idle. */
@@ -852,8 +865,8 @@ export type SlashCommand = {
   [key: string]: unknown;
 };
 
-/** Discriminator naming which slash-command result the chat command modal is showing: 'help', 'models', 'cost' or 'status'. */
-type CommandModalKind = 'help' | 'models' | 'cost' | 'status';
+/** Discriminator naming which slash-command result the chat command modal is showing: 'help', 'models', 'cost', 'status' or 'mcp'. */
+type CommandModalKind = 'help' | 'models' | 'cost' | 'status' | 'mcp';
 
 // ---------------------------
 

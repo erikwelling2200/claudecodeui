@@ -3,6 +3,7 @@ import type {
   BackgroundTaskSummary,
   CliVersionProbe,
   LiveTurnTerms,
+  LiveMcpServerStatus,
   FetchHistoryOptions,
   FetchHistoryResult,
   LLMProvider,
@@ -81,6 +82,18 @@ export interface IProviderRuntime {
    * is sent with `remoteControl: true`.
    */
   setRemoteControl?(sessionId: string, enabled: boolean): Promise<{ enabled: boolean; sessionUrl: string | null } | null>;
+  /**
+   * The MCP servers of the session's live process and how each is connected.
+   * Resolves null when the session has no live process: its servers connect
+   * with the next turn, so there is nothing to report until then.
+   */
+  listMcpServers?(sessionId: string): Promise<LiveMcpServerStatus[] | null>;
+  /**
+   * Reconnects one MCP server in the session's live process. Resolves false
+   * when the session has no live process; rejects with the SDK's error when
+   * the reconnect itself fails.
+   */
+  reconnectMcpServer?(sessionId: string, serverName: string): Promise<boolean>;
   /**
    * Adds a user message to the session's turn in flight, so it reaches the
    * model at its next step instead of after the turn. `options` carries the

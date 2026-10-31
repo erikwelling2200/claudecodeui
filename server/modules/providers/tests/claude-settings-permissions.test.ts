@@ -269,3 +269,107 @@ test('GET /api/providers/claude/settings-permissions serves the sources and neve
     }
   });
 });
+
+// The permissions panel edits these same rules, so one set governs this UI and
+// the user's terminal sessions alike. A write must therefore leave every other
+// setting in the file — and the file's own encoding — exactly as it found it.
+
+test('updateUserRules replaces the rules and leaves the rest of the file alone', async () => {
+  await withHome(async (homeDir) => {
+    const userFile = path.join(homeDir, '.claude', 'settings.json');
+    await writeSettings(userFile, {
+      env: { DISABLE_AUTOUPDATER: '1' },
+      permissions: { allow: ['Bash'], deny: [], ask: ['WebFetch'], additionalDirectories: ['C:\Tools'] },
+      hooks: { PreToolUse: [{ hooks: [] }] },
+    });
+
+    const source = await claudeSettingsPermissionsService.updateUserRules(
+      { allow: { add: ['WebSearch', 'WebSearch', '  ', 'Read'], remove: ['Bash'] }, deny: { add: ['Bash(rm:*)'] } },
+      userFile,
+    );
+
+    assert.deepEqual(source.allow, ['WebSearch', 'Read'], 'the old entry is removed, blanks and duplicates dropped');
+    assert.deepEqual(source.deny, ['Bash(rm:*)']);
+
+    const written = JSON.parse(await readFile(userFile, 'utf8')) as Record<string, unknown>;
+    assert.deepEqual(written.env, { DISABLE_AUTOUPDATER: '1' });
+    assert.deepEqual(written.hooks, { PreToolUse: [{ hooks: [] }] });
+    assert.deepEqual((written.permissions as Record<string, unknown>).ask, ['WebFetch'], 'ask rules are not ours to touch');
+    assert.deepEqual((written.permissions as Record<string, unknown>).additionalDirectories, ['C:\Tools']);
+  });
+});
+
+test('updateUserRules creates the settings file when there is none', async () => {
+  await withHome(async (homeDir) => {
+    const userFile = path.join(homeDir, '.claude', 'settings.json');
+    await mkdir(path.dirname(userFile), { recursive: true });
+
+    const source = await claudeSettingsPermissionsService.updateUserRules({ allow: { add: ['Read'] }, deny: {} }, userFile);
+
+    assert.equal(source.status, 'ok');
+    assert.deepEqual(source.allow, ['Read']);
+    assert.deepEqual(JSON.parse(await readFile(userFile, 'utf8')), { permissions: { allow: ['Read'], deny: [] } });
+  });
+});
+
+test('updateUserRules writes a UTF-16 file back as UTF-16', async () => {
+  await withHome(async (homeDir) => {
+    const userFile = path.join(homeDir, '.claude', 'settings.json');
+    const original = JSON.stringify({ permissions: { allow: ['Read'] } });
+    await writeSettings(userFile, Buffer.from(`\uFEFF${original}`, 'utf16le'));
+
+    await claudeSettingsPermissionsService.updateUserRules({ allow: { add: ['WebSearch'], remove: ['Read'] }, deny: {} }, userFile);
+
+    const bytes = await readFile(userFile);
+    assert.equal(bytes[0], 0xff, 'the byte order mark survives');
+    assert.equal(bytes[1], 0xfe);
+    const reread = await claudeSettingsPermissionsService.listRuleSources(path.join(homeDir, 'none.json'));
+    assert.deepEqual(bySource(reread, 'user').allow, ['WebSearch']);
+  });
+});
+
+test('updateUserRules refuses a file it cannot parse rather than overwriting it', async () => {
+  await withHome(async (homeDir) => {
+    const userFile = path.join(homeDir, '.claude', 'settings.json');
+    const original = '{ not json at all';
+    await writeSettings(userFile, original);
+
+    await assert.rejects(() => claudeSettingsPermissionsService.updateUserRules({ allow: {}, deny: {} }, userFile));
+    assert.equal(await readFile(userFile, 'utf8'), original, 'the file is untouched');
+  });
+});
+
+test('PUT /api/providers/claude/settings-permissions saves the rules and rejects a bad body', async () => {
+  await withHome(async (homeDir) => {
+    const userFile = path.join(homeDir, '.claude', 'settings.json');
+    await writeSettings(userFile, { permissions: { allow: ['Bash'] } });
+
+    const app = express().use(express.json()).use('/api/providers', providerRouter);
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+      const { port } = server.address() as AddressInfo;
+      const url = `http://127.0.0.1:${port}/api/providers/claude/settings-permissions`;
+      const put = (body: unknown) => fetch(url, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const saved = await put({ allow: { add: ['Read'], remove: ['Bash'] }, deny: { add: ['Bash(rm:*)'] } });
+      const payload = await saved.json() as { success: boolean; data: { source: Source } };
+      assert.equal(saved.status, 200);
+      assert.deepEqual(payload.data.source.allow, ['Read']);
+      assert.deepEqual(payload.data.source.deny, ['Bash(rm:*)']);
+
+      const refused = await put({ allow: { add: 'Read' }, deny: {} });
+      assert.equal(refused.status, 400);
+      const reread = await claudeSettingsPermissionsService.listRuleSources(path.join(homeDir, 'none.json'));
+      assert.deepEqual(bySource(reread, 'user').allow, ['Read'], 'the refused write changed nothing');
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+});

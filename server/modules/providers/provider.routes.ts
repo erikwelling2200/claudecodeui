@@ -6,6 +6,7 @@ import { providerCapabilitiesService } from '@/modules/providers/services/provid
 import { providerCliService } from '@/modules/providers/services/provider-cli.service.js';
 import { providerMcpService } from '@/modules/providers/services/mcp.service.js';
 import { providerModelsService } from '@/modules/providers/services/provider-models.service.js';
+import { providerRuntimeService } from '@/modules/providers/services/provider-runtime.service.js';
 import { providerTokenUsageService } from '@/modules/providers/services/provider-token-usage.service.js';
 import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
@@ -752,6 +753,40 @@ router.post(
   }),
 );
 
+/** The MCP servers of the session's live process; `live: false` when no process holds the session. */
+router.get(
+  '/:provider/sessions/:sessionId/mcp',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const sessionId = parseSessionId(req.params.sessionId);
+    const servers = await providerRuntimeService.listMcpServers(provider, sessionId);
+    res.json(createApiSuccessResponse({ live: servers !== null, servers: servers ?? [] }));
+  }),
+);
+
+router.post(
+  '/:provider/sessions/:sessionId/mcp/:serverName/reconnect',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const sessionId = parseSessionId(req.params.sessionId);
+    const serverName = readPathParam(req.params.serverName, 'serverName');
+    let reconnected: boolean;
+    try {
+      reconnected = await providerRuntimeService.reconnectMcpServer(provider, sessionId, serverName);
+    } catch (error) {
+      throw new AppError((error as Error)?.message || String(error), { code: 'MCP_RECONNECT_FAILED', statusCode: 502 });
+    }
+    if (!reconnected) {
+      throw new AppError('This chat has no running process. MCP servers connect with the next message.', {
+        code: 'NO_LIVE_PROCESS',
+        statusCode: 409,
+      });
+    }
+    const servers = await providerRuntimeService.listMcpServers(provider, sessionId);
+    res.json(createApiSuccessResponse({ live: servers !== null, servers: servers ?? [] }));
+  }),
+);
+
 // ----------------- Skills routes -----------------
 router.get(
   '/:provider/skills',
@@ -866,12 +901,58 @@ router.get(
   }),
 );
 
-// Read-only: the rules Claude's own settings files add on top of the UI's lists.
+// The rules Claude's own settings files carry. For Claude these are the lists
+// the permissions panel edits, so that one set of rules governs this UI and the
+// user's terminal sessions alike; the managed file stays read-only.
 router.get(
   '/claude/settings-permissions',
   asyncHandler(async (_req: Request, res: Response) => {
     const sources = await claudeSettingsPermissionsService.listRuleSources();
     res.json(createApiSuccessResponse({ sources }));
+  }),
+);
+
+const readRuleList = (value: unknown, name: string): string[] => {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.some((rule) => typeof rule !== 'string')) {
+    throw new AppError(`${name} must be an array of rule strings.`, {
+      code: 'INVALID_PERMISSION_RULES',
+      statusCode: 400,
+    });
+  }
+  return value as string[];
+};
+
+/**
+ * One list's change, as additions and removals. A whole replacement list would
+ * carry the client's snapshot of the file with it and undo anything written
+ * since the panel loaded.
+ */
+const readRuleDelta = (value: unknown, name: string) => {
+  const delta = (value ?? {}) as Record<string, unknown>;
+  if (typeof delta !== 'object' || Array.isArray(delta)) {
+    throw new AppError(`${name} must be an object with add and remove lists.`, {
+      code: 'INVALID_PERMISSION_RULES',
+      statusCode: 400,
+    });
+  }
+  return {
+    add: readRuleList(delta.add, `${name}.add`),
+    remove: readRuleList(delta.remove, `${name}.remove`),
+  };
+};
+
+router.put(
+  '/claude/settings-permissions',
+  asyncHandler(async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const source = await claudeSettingsPermissionsService.updateUserRules({
+      allow: readRuleDelta(body.allow, 'allow'),
+      deny: readRuleDelta(body.deny, 'deny'),
+    });
+    res.json(createApiSuccessResponse({ source }));
   }),
 );
 

@@ -7,6 +7,7 @@ import { api, readApiErrorMessage } from '@/shared/api';
 import { AUTH_SESSION_EXPIRED_EVENT, AUTH_TOKEN_REFRESHED_EVENT, getAuthTokenRefreshDelay, isValidRefreshedToken, storeAuthToken } from '@/shared/authToken';
 import { hydrateChatDrafts, resetChatDrafts } from '@/shared/chatDrafts';
 import { hydrateUserPreferences, resetUserPreferences } from '@/shared/userSettings';
+import { loadClaudeRules } from '@/shared/claudePermissionRules';
 /** The signed-in account held by AuthContext - a required `username` plus an optional id and any additional fields the auth API returns - and should be read through `useAuth()` rather than re-derived from raw auth responses. */
 type AuthUser = {
   id?: number | string;
@@ -117,7 +118,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (!userKey) {
       return;
     }
-    void hydrateUserPreferences();
+    // Claude's rules live in its settings file, which may have changed by
+    // hand or by a sync since this machine last read it. The composer sends
+    // the cached copy with every turn, so refresh it once the cache is in.
+    void hydrateUserPreferences().then(() => loadClaudeRules());
     void hydrateChatDrafts();
   }, [userKey]);
 

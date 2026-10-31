@@ -224,6 +224,8 @@ export type MessageKind =
   | 'status'
   | 'permission_request'
   | 'permission_resolved'
+  // One sentence on what a pending call would do, from a query of its own.
+  | 'permission_explanation'
   | 'permission_cancelled'
   | 'session_created'
   | 'history_truncated'
@@ -470,6 +472,24 @@ export type BackgroundTaskSummary = {
 };
 
 /**
+ * One MCP server as a session's live process sees it right now, for the `/mcp`
+ * view. `status` is the SDK's connection state; `error` is set when it is
+ * `failed`. `transport` and `target` (URL or command line) come from the
+ * server's config and are absent when the SDK does not report one, as for an
+ * in-process SDK server. `toolCount` is only meaningful while connected.
+ */
+export type LiveMcpServerStatus = {
+  name: string;
+  status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled';
+  error?: string;
+  scope?: string;
+  transport?: string;
+  target?: string;
+  serverVersion?: string;
+  toolCount: number;
+};
+
+/**
  * What a held Claude process was launched with, in the vocabulary of the
  * `chat.send` options, for a session whose turn has ended while its
  * background work keeps the process open. Present only while that process can
@@ -696,8 +716,17 @@ export type ProviderRuntimeContext = {
     stopTask?(taskId: string): Promise<void>;
     setModel?(model?: string): Promise<void>;
     setPermissionMode?(mode: string): Promise<void>;
+    mcpServerStatus?(): Promise<AnyRecord[]>;
+    reconnectMcpServer?(serverName: string): Promise<void>;
     close?(): void;
   };
+  /**
+   * Writes the one-sentence description shown under a permission prompt.
+   * Production leaves this unset and the runtime uses the explainer service,
+   * which spawns a model query of its own; tests replace it so raising a
+   * prompt never starts a real, billed CLI run.
+   */
+  explainToolCall?: (call: { toolName: string; input: unknown }) => Promise<string | null>;
 };
 
 export type ProviderRunFunction = (

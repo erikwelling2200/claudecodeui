@@ -459,6 +459,10 @@ export const api = {
     updateCli: (provider: string) =>
       post(`/api/providers/${encodeURIComponent(provider)}/cli/update`),
     claudeSettingsPermissions: () => get('/api/providers/claude/settings-permissions'),
+    saveClaudeSettingsPermissions: (delta: {
+      allow: { add: string[]; remove: string[] };
+      deny: { add: string[]; remove: string[] };
+    }) => put('/api/providers/claude/settings-permissions', delta),
 
     models: (provider: string) => get(`/api/providers/${provider}/models`),
     createModel: (provider: string, input: unknown) =>
@@ -492,6 +496,11 @@ export const api = {
       post(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/active-effort`, {
         effort,
       }),
+
+    sessionMcpStatus: (provider: string, sessionId: string) =>
+      get(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/mcp`),
+    reconnectSessionMcpServer: (provider: string, sessionId: string, serverName: string) =>
+      post(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/mcp/${encodeURIComponent(serverName)}/reconnect`, {}),
 
     mcpServers: (
       provider: string,

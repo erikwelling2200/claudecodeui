@@ -1,59 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { isToolCallAllowed, isToolCallDenied } from '@/modules/providers/list/claude/claude-tool-permissions.js';
+import { isToolCallDenied } from '@/modules/providers/list/claude/claude-tool-permissions.js';
 
 const bash = (command: string) => ({ command });
 
-test('a Bash prefix rule allows the command it names', () => {
-  const entries = ['Bash(git checkout:*)'];
-  assert.equal(isToolCallAllowed(entries, 'Bash', bash('git checkout main')), true);
-  assert.equal(isToolCallAllowed(entries, 'Bash', bash('git checkout')), true);
-  assert.equal(isToolCallAllowed(entries, 'Bash', bash('git checkout main 2>&1')), true);
-  assert.equal(isToolCallAllowed(entries, 'Bash', bash('git checkout -- a && git checkout b')), true);
-});
-
-test('a Bash prefix rule needs a word boundary', () => {
-  assert.equal(isToolCallAllowed(['Bash(ls:*)'], 'Bash', bash('lsblk')), false);
-});
-
-test('a compound command is allowed only when every part is covered', () => {
-  const entries = ['Bash(git checkout:*)'];
-  for (const command of [
-    'git checkout x; rm -rf ~',
-    'git checkout x && rm -rf ~',
-    'git checkout x || rm -rf ~',
-    'git checkout x | sh',
-    'git checkout x & rm -rf ~',
-    'git checkout x\nrm -rf ~',
-  ]) {
-    assert.equal(isToolCallAllowed(entries, 'Bash', bash(command)), false, command);
-  }
-  assert.equal(
-    isToolCallAllowed([...entries, 'Bash(tail:*)', 'Bash(git status:*)'], 'Bash', bash('git checkout x 2>&1 | tail -5; git status')),
-    true,
-  );
-});
-
-test('separators inside quotes do not split the command', () => {
-  const entries = ['Bash(echo:*)'];
-  assert.equal(isToolCallAllowed(entries, 'Bash', bash('echo "a; rm -rf ~"')), true);
-  assert.equal(isToolCallAllowed(entries, 'Bash', bash("echo 'a && b | c'")), true);
-  assert.equal(isToolCallAllowed(entries, 'Bash', bash('echo a\\; rm')), true);
-});
-
-test('command substitution is never auto-allowed', () => {
-  const entries = ['Bash(echo:*)'];
-  assert.equal(isToolCallAllowed(entries, 'Bash', bash('echo $(rm -rf ~)')), false);
-  assert.equal(isToolCallAllowed(entries, 'Bash', bash('echo "`rm -rf ~`"')), false);
-  assert.equal(isToolCallAllowed(entries, 'Bash', bash('echo <(rm -rf ~)')), false);
-  assert.equal(isToolCallAllowed(entries, 'Bash', bash("echo '$(literal)'")), true);
-});
-
-test('an exact Bash rule matches only that command', () => {
-  assert.equal(isToolCallAllowed(['Bash(git status)'], 'Bash', bash('git status')), true);
-  assert.equal(isToolCallAllowed(['Bash(git status)'], 'Bash', bash('git status --short')), false);
-});
+// Only a deny list is matched in the app. The CLI holds the same rules and
+// judges every call against them first, with per-command checks no prefix rule
+// can express, so an app-side allow could only add calls it chose to refuse.
 
 test('a deny rule hits when any part matches', () => {
   const entries = ['Bash(rm:*)'];
@@ -62,9 +16,61 @@ test('a deny rule hits when any part matches', () => {
   assert.equal(isToolCallDenied(entries, 'Bash', bash('git status')), false);
 });
 
+test('a deny prefix rule needs a word boundary', () => {
+  assert.equal(isToolCallDenied(['Bash(rm:*)'], 'Bash', bash('rmdir x')), false);
+});
+
+test('separators inside quotes do not split the command', () => {
+  assert.equal(isToolCallDenied(['Bash(rm:*)'], 'Bash', bash('echo "a; rm -rf ~"')), false);
+  assert.equal(isToolCallDenied(['Bash(rm:*)'], 'Bash', bash("echo 'a && rm b'")), false);
+});
+
+test('a redirection ampersand is not a separator', () => {
+  assert.equal(isToolCallDenied(['Bash(rm:*)'], 'Bash', bash('git log 2>&1')), false);
+  assert.equal(isToolCallDenied(['Bash(rm:*)'], 'Bash', bash('git log 2>&1 & rm x')), true);
+});
+
+test('an exact deny rule matches only that command', () => {
+  assert.equal(isToolCallDenied(['Bash(git push)'], 'Bash', bash('git push')), true);
+  assert.equal(isToolCallDenied(['Bash(git push)'], 'Bash', bash('git push --force')), false);
+});
+
 test('plain tool names match exactly', () => {
-  assert.equal(isToolCallAllowed(['Read'], 'Read', { file_path: 'x' }), true);
-  assert.equal(isToolCallAllowed(['Read'], 'Write', { file_path: 'x' }), false);
-  assert.equal(isToolCallAllowed(['Bash'], 'Bash', bash('anything; at all')), true);
+  assert.equal(isToolCallDenied(['Write'], 'Write', { file_path: 'x' }), true);
+  assert.equal(isToolCallDenied(['Write'], 'Edit', { file_path: 'x' }), false);
   assert.equal(isToolCallDenied(['Bash'], 'Bash', bash('ls')), true);
+});
+
+test('a deny list takes the wide glob shapes the CLI also denies on', () => {
+  assert.equal(isToolCallDenied(['*'], 'Bash', bash('rm -rf /')), true);
+  assert.equal(isToolCallDenied(['mcp__*'], 'mcp__unity-vov__script-execute', {}), true);
+  assert.equal(isToolCallDenied(['mcp__unity-*__script-execute'], 'mcp__unity-comp__script-execute', {}), true);
+  assert.equal(isToolCallDenied(['mcp__*'], 'Bash', bash('ls')), false);
+});
+
+test('a deny rule may use a wildcard inside a command, still part by part', () => {
+  const entries = ['Bash(git -C * push:*)'];
+  assert.equal(isToolCallDenied(entries, 'Bash', bash('git -C C:/Unity/Operatie-OV push --force')), true);
+  assert.equal(isToolCallDenied(entries, 'Bash', bash('git status && git -C . push')), true);
+  assert.equal(isToolCallDenied(entries, 'Bash', bash('git -C . pushfoo')), false, 'still on a word boundary');
+  assert.equal(isToolCallDenied(['Bash(*)'], 'Bash', bash('rm -rf ~')), true);
+});
+
+test('a command rule is never read as a glob over tool names', () => {
+  assert.equal(isToolCallDenied(['Bash(git *:*)'], 'mcp__unity-vov__script-execute', {}), false);
+});
+
+test('an unterminated quote cannot hide a command from a deny rule', () => {
+  // The apostrophe opens a quote that never closes, so the `;` does not split.
+  assert.equal(isToolCallDenied(['Bash(rm:*)'], 'Bash', bash("echo don't; rm -rf ~/x")), true);
+});
+
+test('PowerShell rules work like Bash rules, and do not cross over', () => {
+  assert.equal(isToolCallDenied(['PowerShell(Remove-Item:*)'], 'PowerShell', bash('Remove-Item -Recurse x')), true);
+  assert.equal(isToolCallDenied(['PowerShell(Remove-Item:*)'], 'Bash', bash('Remove-Item x')), false);
+  assert.equal(isToolCallDenied(['Bash(rm:*)'], 'PowerShell', bash('rm x')), false);
+});
+
+test('a Windows path separator does not escape a separator in PowerShell', () => {
+  assert.equal(isToolCallDenied(['PowerShell(Remove-Item:*)'], 'PowerShell', bash('Get-Item C:\\x; Remove-Item C:\\y')), true);
 });

@@ -99,6 +99,7 @@
           "src/shared/voiceConfig.ts",
           "src/shared/codeEditorSettings.ts",
           "src/shared/userSettings.ts",
+          "src/shared/claudePermissionRules.ts",
           "src/shared/chatDrafts.ts",
           "src/shared/syntaxHighlighter.ts"
         ],
