@@ -31,6 +31,18 @@ test('replaces an optimistic image-only turn with its persisted Claude copy', ()
   assert.deepEqual(removeOptimisticUserEchoes([persisted], [local]), []);
 });
 
+test('replaces an optimistic slash command typed with a newline after its name', () => {
+  const local = createUserMessage('local_command', '2026-07-28T20:30:21.000Z', {
+    content: '/changefied:audit-fix\nM1\nL2',
+  });
+  const persisted = createUserMessage('claude_command', '2026-07-28T20:30:22.000Z', {
+    content: '/changefied:audit-fix M1\nL2',
+    isLocalCommand: true,
+  });
+
+  assert.deepEqual(removeOptimisticUserEchoes([persisted], [local]), []);
+});
+
 test('does not collapse an attachment-only turn into a server row without attachments', () => {
   const local = createUserMessage('local_image', '2026-07-28T20:30:21.000Z', {
     images: [{ path: 'C:/Users/test/.cloudcli/assets/upload.png' }],

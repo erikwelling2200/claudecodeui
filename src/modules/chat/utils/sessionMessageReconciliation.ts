@@ -13,7 +13,8 @@ type UserTurnFingerprint = {
 function userTurnFingerprint(message: NormalizedMessage): UserTurnFingerprint | null {
   if (message.kind !== 'text' || message.role !== 'user') return null;
 
-  const text = (message.content || '').trim();
+  // The transcript rebuilds a slash command as `name args` with one space, whatever separated them when typed.
+  const text = (message.content || '').trim().replace(/^(\/\S+)\s+/, '$1 ');
   const imageCount = Array.isArray(message.images) ? message.images.length : 0;
   const fileCount = Array.isArray(message.files) ? message.files.length : 0;
   if (!text && imageCount === 0 && fileCount === 0) return null;
