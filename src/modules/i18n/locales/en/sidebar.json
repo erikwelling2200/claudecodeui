@@ -91,7 +91,11 @@
     "noReading": "no reading yet, click to refresh",
     "clickToRefresh": "click to refresh",
     "refreshing": "refreshing...",
-    "resetsIn": "Resets in {{time}}"
+    "resetsIn": "Resets in {{time}}",
+    "apiKeyActive": "Billing your API key",
+    "subscriptionBackIn": "Subscription limit hit, back in {{time}}",
+    "apiSpendToday": "API key {{amount}} today",
+    "apiSpendMonth": "{{amount}} this month"
   },
   "branding": {
     "openSource": "Open Source"

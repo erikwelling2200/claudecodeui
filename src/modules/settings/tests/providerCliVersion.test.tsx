@@ -44,6 +44,8 @@ vi.mock('@/shared/api', async (importOriginal) => {
           return responses.update();
         },
       },
+      // The account view's fallback-key section; not what these tests are about.
+      usage: { claudeApiKey: () => new Promise<Response>(() => {}) },
     },
   };
 });
@@ -208,12 +210,12 @@ describe('ProviderCliVersion', () => {
       installedVersion: '2026.07.20-8cc9c0b',
       latestVersion: null,
       updateAvailable: false,
-      updateCommand: 'cursor-agent update',
+      updateCommand: 'agent update',
     })];
     responses.update = () => json({
       success: true,
       data: updateResult({
-        command: 'cursor-agent update',
+        command: 'agent update',
         previousVersion: '2026.07.20-8cc9c0b',
         installedVersion: '2026.07.20-8cc9c0b',
         output: 'Already up to date',

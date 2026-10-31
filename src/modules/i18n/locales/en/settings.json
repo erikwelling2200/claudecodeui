@@ -436,6 +436,16 @@
         "unconfirmed": "No answer came back from the server ({{error}}). The update may have run anyway; the version above is the last one the server reported."
       }
     },
+    "fallbackKey": {
+      "title": "Fallback API key",
+      "description": "Used only while the subscription is at a usage limit. Billed per token.",
+      "saved": "Saved key ending in {{hint}}",
+      "fromEnvironment": "Using the key in the server environment, ending in {{hint}}. A key saved here replaces it.",
+      "none": "No key saved. Chats stop at the limit.",
+      "save": "Save",
+      "replace": "Replace",
+      "remove": "Remove"
+    },
     "subscriptionOverride": {
       "title": "Your subscription login is not being used",
       "description": "{{variable}} is set in {{source}}, so Claude Code bills every request to that key as pay-as-you-go API usage instead of using your subscription login.",

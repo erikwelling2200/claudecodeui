@@ -48,7 +48,7 @@ const getProviderCommand = ({
   }
 
   if (provider === 'cursor') {
-    return 'cursor-agent login';
+    return 'agent login';
   }
 
   if (provider === 'codex') {

@@ -93,12 +93,12 @@ export class ClaudeProviderAuth implements IProviderAuth {
    * Finds an API-key style credential in the same order Claude Code checks them:
    * process env first (auth token, then API key), then the settings.json env block.
    */
-  private findApiKeyCredential(settingsEnv: Record<string, unknown>): ClaudeApiKeyCredential | null {
-    if (process.env.ANTHROPIC_AUTH_TOKEN?.trim()) {
+  private findApiKeyCredential(settingsEnv: Record<string, unknown>, includeProcessEnv: boolean): ClaudeApiKeyCredential | null {
+    if (includeProcessEnv && process.env.ANTHROPIC_AUTH_TOKEN?.trim()) {
       return { variable: 'ANTHROPIC_AUTH_TOKEN', source: 'process_env', label: 'Auth Token' };
     }
 
-    if (process.env.ANTHROPIC_API_KEY?.trim()) {
+    if (includeProcessEnv && process.env.ANTHROPIC_API_KEY?.trim()) {
       return { variable: 'ANTHROPIC_API_KEY', source: 'process_env', label: 'API Key Auth' };
     }
 
@@ -119,7 +119,11 @@ export class ClaudeProviderAuth implements IProviderAuth {
   private async checkCredentials(): Promise<ClaudeCredentialsStatus> {
     const settingsEnv = await this.loadSettingsEnv();
 
-    const apiKey = this.findApiKeyCredential(settingsEnv);
+    const subscription = await this.readCredentialsFile();
+    // Chats keep a key in the server env away from the CLI while the login
+    // works (claude-billing.service), so there it only stands in for a missing
+    // login. One in settings.json the CLI reads itself, past that.
+    const apiKey = this.findApiKeyCredential(settingsEnv, !subscription.authenticated);
     if (apiKey) {
       const status: ClaudeCredentialsStatus = { authenticated: true, email: apiKey.label, method: 'api_key' };
 
@@ -128,7 +132,6 @@ export class ClaudeProviderAuth implements IProviderAuth {
       // billed pay-as-you-go to the key (issue #568). Surface the bypassed
       // login so the settings page can warn about it; an expired or missing
       // login is not being bypassed, so it stays silent.
-      const subscription = await this.readCredentialsFile();
       if (subscription.authenticated) {
         status.subscriptionOverride = {
           variable: apiKey.variable,

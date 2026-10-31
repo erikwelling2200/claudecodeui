@@ -18,7 +18,10 @@ vi.mock('@/shared/api', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
     ...actual,
-    api: { providers: { cliStatus: () => new Promise<Response>(() => {}) } },
+    api: {
+      providers: { cliStatus: () => new Promise<Response>(() => {}) },
+      usage: { claudeApiKey: () => new Promise<Response>(() => {}) },
+    },
   };
 });
 

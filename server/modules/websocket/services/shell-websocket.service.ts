@@ -254,9 +254,9 @@ function buildShellCommand(
 
   if (provider === 'cursor') {
     if (resumeSessionId) {
-      return otherProgram(`cursor-agent --resume="${resumeSessionId}"`);
+      return otherProgram(`agent --resume="${resumeSessionId}"`);
     }
-    return otherProgram('cursor-agent');
+    return otherProgram('agent');
   }
 
   if (provider === 'codex') {
@@ -590,7 +590,7 @@ export function handleShellConnection(
         const isLoginCommand =
           !!initialCommand &&
           (initialCommand.includes('setup-token') ||
-            initialCommand.includes('cursor-agent login') ||
+            initialCommand.includes('agent login') ||
             initialCommand.includes('auth login'));
 
         const commandSuffix =

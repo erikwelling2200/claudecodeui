@@ -39,6 +39,8 @@ import {
   notifyUserIfEnabled
 } from '@/modules/notifications/index.js';
 import { sessionHistoryCache } from '@/modules/providers/services/session-history-cache.service.js';
+import { applyClaudeBillingEnv, claudeBilling } from '@/modules/usage/index.js';
+import type { ClaudeBilling } from '@/modules/usage/index.js';
 import {
   getReportedClaudeContextWindow,
   getReportedClaudeModelContextWindow,
@@ -330,6 +332,11 @@ export function buildClaudeSdkEnv(hostEnv: NodeJS.ProcessEnv = process.env): Nod
   };
 }
 
+/** The API-key variables a launch env carries, so two launches can be compared on what they bill to. */
+function readCredentialEnv(env: NodeJS.ProcessEnv | undefined): string {
+  return JSON.stringify([env?.ANTHROPIC_API_KEY ?? null, env?.ANTHROPIC_AUTH_TOKEN ?? null]);
+}
+
 // Tools plan mode lets through without a prompt, on top of the user's own allow list.
 const PLAN_MODE_TOOLS = ['Read', 'Task', 'exit_plan_mode', 'TodoRead', 'TodoWrite', 'WebFetch', 'WebSearch'];
 
@@ -382,11 +389,15 @@ export function mapCliOptionsToSDK(options: AnyRecord = {}) {
     effort,
     resumeAnchorId,
     resumeFromScratch,
+    billing,
   } = options;
 
   const sdkOptions: AnyRecord = {};
 
   sdkOptions.env = { ...buildClaudeSdkEnv(), ...buildAgentSessionEnv(sessionId) };
+  if (billing) {
+    sdkOptions.env = applyClaudeBillingEnv(sdkOptions.env, billing as ClaudeBilling);
+  }
 
   // Resolve the executable eagerly on Windows because the SDK uses raw child_process.spawn,
   // which does not reliably follow npm's shell wrappers like cross-spawn does.
@@ -1323,11 +1334,13 @@ async function queryClaudeSDK(
       console.warn('[Claude SDK] Unable to load provider models for effort validation:', error);
     }
 
+    const billing = claudeBilling.resolve();
     const sdkOptions = mapCliOptionsToSDK({
       ...options,
       providerSessionId,
       model: resolvedModel || options.model,
       effortModels,
+      billing,
     });
     reportedContextWindow ??= getReportedClaudeModelContextWindow(sdkOptions.model) ?? knownClaudeContextWindow(sdkOptions.model);
     const planModeGrants = new Set<string>();
@@ -1516,6 +1529,12 @@ async function queryClaudeSDK(
     const launchSettings = JSON.stringify(sdkOptions.settings ?? null);
     const launchMcpServers = JSON.stringify(sdkOptions.mcpServers ?? null);
     const launchCwd = sdkOptions.cwd ?? null;
+    const launchCredential = readCredentialEnv(sdkOptions.env);
+    // Whether this process bills to an API key: launched on one, or handed one by settings.json, which the CLI
+    // reads itself and the env cannot override. The CLI states its source on `init`.
+    let billedToKey = billing.mode === 'api_key';
+    // The CLI's running cost total for this process, so each `result` records only what its turn added.
+    let lastCostTotal = 0;
 
     const liveProcess: LiveProcess = {
       terms: launchTerms,
@@ -1542,7 +1561,9 @@ async function queryClaudeSDK(
           && next.effort === launchEffort
           && JSON.stringify(next.settings ?? null) === launchSettings
           && JSON.stringify(turn.mcpServers ?? null) === launchMcpServers
-          && (!turn.providerSessionId || turn.providerSessionId === capturedSessionId);
+          && (!turn.providerSessionId || turn.providerSessionId === capturedSessionId)
+          // A billing switch needs a new process, unless that would end background work still running in this one.
+          && (readCredentialEnv(next.env) === launchCredential || backgroundWork.hasOutstanding(sessionKey()!));
         if (!sameLaunch) {
           return null;
         }
@@ -1864,6 +1885,17 @@ async function queryClaudeSDK(
         sawTaskEventThisTurn = true;
       }
       backgroundWork.apply(sessionKey()!, message);
+
+      if (message.type === 'system' && message.subtype === 'init' && typeof message.apiKeySource === 'string') {
+        billedToKey ||= !['none', 'oauth'].includes(message.apiKeySource);
+      }
+      if (message.type === 'rate_limit_event' && !billedToKey) {
+        claudeBilling.noteRateLimit(message.rate_limit_info);
+      }
+      if (message.type === 'result' && billedToKey && typeof message.total_cost_usd === 'number') {
+        claudeBilling.recordSpend(message.total_cost_usd - lastCostTotal, sessionId || capturedSessionId || null);
+        lastCostTotal = message.total_cost_usd;
+      }
 
       if (message.type === 'result') {
         // The turn is done as far as the client is concerned.

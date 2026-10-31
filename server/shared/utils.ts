@@ -1399,7 +1399,7 @@ export function isClaudeNonTurnMessageRow(row: AnyRecord): boolean {
 //----------------- CLI PROMPT ARGUMENT UTILITIES ------------
 /**
  * Makes a prompt safe to pass as one CLI argument to `.cmd`-shimmed tools on
- * Windows (cursor-agent and opencode installed via npm-style shims).
+ * Windows (agent and opencode installed via npm-style shims).
  *
  * cmd.exe cannot carry newlines inside an argument: everything after the
  * first newline is silently dropped before the target CLI ever sees it, which
@@ -1488,7 +1488,7 @@ export const terminalTextStyles = {
  *
  * Each provider CLI wraps it differently: `2.1.295 (Claude Code)`,
  * `codex-cli 0.156.1`, a bare `1.18.25` from OpenCode, and the date-based
- * `2026.07.20-8cc9c0b` from cursor-agent. This returns the first
+ * `2026.07.20-8cc9c0b` from agent. This returns the first
  * `major.minor.patch` token with any `-prerelease` or `+build` suffix, or null
  * when the text has none.
  */

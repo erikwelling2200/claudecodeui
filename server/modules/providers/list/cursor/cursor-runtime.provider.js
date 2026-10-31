@@ -79,7 +79,7 @@ async function spawnCursor(command, options = {}, ws, context) {
       // Provide a prompt (works for both new and resumed sessions). Image
       // attachments ride along as an <images_input> path list appended to the
       // prompt; the session history reader strips the tag back out for display.
-      // cursor-agent is a .cmd shim on Windows, so the whole argument must be
+      // agent is a .cmd shim on Windows, so the whole argument must be
       // newline-free or cmd.exe silently truncates it at the first newline.
       const promptWithAttachments = appendFilesInputTag(
         appendImagesInputTag(command || '', images),
@@ -156,7 +156,7 @@ async function spawnCursor(command, options = {}, ws, context) {
         console.log('Retrying Cursor CLI with --trust after workspace trust prompt');
       }
 
-      const cursorProcess = spawnFunction('cursor-agent', args, {
+      const cursorProcess = spawnFunction('agent', args, {
         cwd: workingDir,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, ...buildAgentSessionEnv(sessionId) }

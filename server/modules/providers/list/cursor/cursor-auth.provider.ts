@@ -11,7 +11,7 @@ type CursorLoginStatus = {
   error?: string;
 };
 
-// `cursor-agent status` decides "logged in" from the locally stored tokens, then fetches the
+// `agent status` decides "logged in" from the locally stored tokens, then fetches the
 // account details from Cursor's API. That request cannot change the verdict (on failure the CLI
 // still reports logged in), it only adds a network round trip to the CLI's startup (3-6 s on a
 // busy host even when logged out). A 5 s cap reported fresh logins as "Command timeout" (#551).
@@ -19,10 +19,10 @@ const STATUS_TIMEOUT_MS = 20_000;
 
 export class CursorProviderAuth implements IProviderAuth {
   /**
-   * Checks whether the cursor-agent CLI is available on this host, and which version it is.
+   * Checks whether the agent CLI is available on this host, and which version it is.
    */
   checkInstalled(): CliVersionProbe {
-    return probeCliVersion('cursor-agent');
+    return probeCliVersion('agent');
   }
 
   /**
@@ -57,7 +57,7 @@ export class CursorProviderAuth implements IProviderAuth {
   }
 
   /**
-   * Runs cursor-agent status and parses the login marker from stdout.
+   * Runs agent status and parses the login marker from stdout.
    */
   private checkCursorLogin(): Promise<CursorLoginStatus> {
     return new Promise((resolve) => {
@@ -78,7 +78,7 @@ export class CursorProviderAuth implements IProviderAuth {
       }, STATUS_TIMEOUT_MS);
 
       try {
-        childProcess = spawn('cursor-agent', ['status']);
+        childProcess = spawn('agent', ['status']);
       } catch {
         clearTimeout(timeout);
         processCompleted = true;

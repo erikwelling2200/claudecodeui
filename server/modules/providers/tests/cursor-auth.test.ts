@@ -49,17 +49,17 @@ if (command === 'status') {
 `;
 
 async function createFakeCursorAgent(binDir: string) {
-  await writeFile(path.join(binDir, 'cursor-agent.cjs'), FAKE_CURSOR_AGENT_SCRIPT, 'utf8');
+  await writeFile(path.join(binDir, 'agent.cjs'), FAKE_CURSOR_AGENT_SCRIPT, 'utf8');
 
   if (process.platform === 'win32') {
-    const commandPath = path.join(binDir, 'cursor-agent.cmd');
-    await writeFile(commandPath, '@echo off\r\nnode "%~dp0cursor-agent.cjs" %*\r\n', 'utf8');
+    const commandPath = path.join(binDir, 'agent.cmd');
+    await writeFile(commandPath, '@echo off\r\nnode "%~dp0agent.cjs" %*\r\n', 'utf8');
     return;
   }
 
   // exec so the provider's kill() on timeout reaches the node process itself.
-  const commandPath = path.join(binDir, 'cursor-agent');
-  await writeFile(commandPath, '#!/bin/sh\nexec node "$(dirname "$0")/cursor-agent.cjs" "$@"\n', 'utf8');
+  const commandPath = path.join(binDir, 'agent');
+  await writeFile(commandPath, '#!/bin/sh\nexec node "$(dirname "$0")/agent.cjs" "$@"\n', 'utf8');
   await chmod(commandPath, 0o755);
 }
 
@@ -124,7 +124,7 @@ const withFakeCursorAgent = async (statusOutput: string, fn: (fake: FakeCursorAg
   }
 };
 
-test('getStatus waits for a logged-in `cursor-agent status` that takes longer than 5 s (#551)', async () => {
+test('getStatus waits for a logged-in `agent status` that takes longer than 5 s (#551)', async () => {
   await withFakeCursorAgent(LOGGED_IN_OUTPUT, async (fake) => {
     // getStatus() arms its timeout before it spawns `status`, so it must see the mocked setTimeout.
     mock.timers.enable({ apis: ['setTimeout'] });
@@ -148,7 +148,7 @@ test('getStatus waits for a logged-in `cursor-agent status` that takes longer th
   });
 });
 
-test('getStatus still gives up on, and kills, a `cursor-agent status` that never answers', async () => {
+test('getStatus still gives up on, and kills, a `agent status` that never answers', async () => {
   await withFakeCursorAgent(LOGGED_IN_OUTPUT, async (fake) => {
     mock.timers.enable({ apis: ['setTimeout'] });
     try {
@@ -171,7 +171,7 @@ test('getStatus still gives up on, and kills, a `cursor-agent status` that never
   });
 });
 
-test('getStatus reports no email when `cursor-agent status` could not fetch the account', async () => {
+test('getStatus reports no email when `agent status` could not fetch the account', async () => {
   // What the real CLI prints when its account request fails: the stored login is still valid.
   const output = '✓ Login successful!\nLogged in (unable to fetch user details)';
   await withFakeCursorAgent(output, async (fake) => {

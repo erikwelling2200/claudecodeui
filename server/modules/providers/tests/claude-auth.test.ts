@@ -237,38 +237,18 @@ test('checkCredentials: ANTHROPIC_API_KEY takes precedence over CLAUDE_CODE_OAUT
 // over the `claude /login` subscription, billing every request to the key. The
 // status must say so — and only when a usable login is really being bypassed.
 
-test('checkCredentials: ANTHROPIC_API_KEY in the process env alongside a valid subscription login reports the override', async () => {
+// A key in the server env is different: chats keep it from the CLI while the
+// login works and only use it as a fallback, so nothing is being bypassed.
+
+test('checkCredentials: an API key in the process env alongside a valid subscription login reports the login', async () => {
   await withTempHome(async (homeDir) => {
     await writeCredentialsFile(homeDir, validSubscriptionCredentials('someone@example.com'));
 
-    await withEnv({ ANTHROPIC_API_KEY: 'test-api-key' }, async () => {
-      const status = await checkCredentials(new ClaudeProviderAuth());
-      // The existing fields are untouched: the key still wins and keeps its label.
-      assert.equal(status.authenticated, true);
-      assert.equal(status.method, 'api_key');
-      assert.equal(status.email, 'API Key Auth');
-      assert.deepEqual(status.subscriptionOverride, {
-        variable: 'ANTHROPIC_API_KEY',
-        source: 'process_env',
-        subscriptionEmail: 'someone@example.com',
-      });
-    });
-  });
-});
-
-test('checkCredentials: ANTHROPIC_AUTH_TOKEN in the process env alongside a valid subscription login names the auth token', async () => {
-  await withTempHome(async (homeDir) => {
-    await writeCredentialsFile(homeDir, validSubscriptionCredentials());
-
     await withEnv({ ANTHROPIC_AUTH_TOKEN: 'test-auth-token', ANTHROPIC_API_KEY: 'test-api-key' }, async () => {
       const status = await checkCredentials(new ClaudeProviderAuth());
-      assert.equal(status.method, 'api_key');
-      assert.equal(status.email, 'Auth Token');
-      assert.deepEqual(status.subscriptionOverride, {
-        variable: 'ANTHROPIC_AUTH_TOKEN',
-        source: 'process_env',
-        subscriptionEmail: null,
-      });
+      assert.equal(status.authenticated, true);
+      assert.equal(status.method, 'credentials_file');
+      assert.equal(status.subscriptionOverride, undefined);
     });
   });
 });
@@ -341,7 +321,8 @@ test('getStatus: passes the subscription override through to the wire shape, and
   await withTempHome(async (homeDir) => {
     await writeCredentialsFile(homeDir, validSubscriptionCredentials('someone@example.com'));
 
-    await withEnv({ ANTHROPIC_API_KEY: 'test-api-key' }, async () => {
+    await writeSettingsFile(homeDir, { ANTHROPIC_API_KEY: 'test-api-key-from-settings' });
+    await withEnv({}, async () => {
       const status = await getStatusWithCliInstalled(new ClaudeProviderAuth());
       assert.equal(status.installed, true);
       assert.equal(status.provider, 'claude');
@@ -350,11 +331,12 @@ test('getStatus: passes the subscription override through to the wire shape, and
       assert.equal(status.email, 'API Key Auth');
       assert.deepEqual(status.subscriptionOverride, {
         variable: 'ANTHROPIC_API_KEY',
-        source: 'process_env',
+        source: 'settings_file',
         subscriptionEmail: 'someone@example.com',
       });
     });
 
+    await writeSettingsFile(homeDir, {});
     await withEnv({}, async () => {
       const status = await getStatusWithCliInstalled(new ClaudeProviderAuth());
       assert.equal(status.method, 'credentials_file');

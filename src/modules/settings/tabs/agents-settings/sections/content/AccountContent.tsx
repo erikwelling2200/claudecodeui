@@ -1,6 +1,7 @@
 import { AlertTriangle, LogIn } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import ClaudeFallbackKey from '@/modules/settings/tabs/agents-settings/sections/content/ClaudeFallbackKey';
 import ProviderCliVersion from '@/modules/settings/tabs/agents-settings/sections/content/ProviderCliVersion';
 import { Badge, Button, LLMProviderLogo } from '@/shared/ui';
 import type { AgentProvider, ProviderAuthStatus, ProviderAuthSubscriptionOverride } from '@/shared/types';
@@ -185,6 +186,8 @@ export default function AccountContent({ agent, authStatus, onLogin }: AccountCo
               </div>
             </div>
           )}
+
+          {agent === 'claude' && <ClaudeFallbackKey textClass={config.textClass} subtextClass={config.subtextClass} />}
 
           {authStatus.error && (
             <div className="border-t border-border/50 pt-4">

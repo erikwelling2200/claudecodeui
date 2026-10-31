@@ -217,7 +217,7 @@ test('each provider reports the version its CLI prints for --version', async () 
   await withIsolatedCliEnv(async (binDir) => {
     const claude = await createFakeCli(binDir, 'claude');
     await claude.set('version', '2.1.295 (Claude Code)\n');
-    const cursor = await createFakeCli(binDir, 'cursor-agent');
+    const cursor = await createFakeCli(binDir, 'agent');
     await cursor.set('version', '2026.07.20-8cc9c0b\n');
     const opencode = await createFakeCli(binDir, 'opencode');
     await opencode.set('version', '1.18.25\n');
@@ -438,13 +438,13 @@ test('getCliStatus does not ask the registry about a CLI that is not installed',
 
 test('Cursor has no npm release to compare with; Codex ships with CloudCLI; platform mode offers no update', async () => {
   await withIsolatedCliEnv(async (binDir) => {
-    const cursor = await createFakeCli(binDir, 'cursor-agent');
+    const cursor = await createFakeCli(binDir, 'agent');
     await cursor.set('version', '2026.07.20-8cc9c0b\n');
     const service = createService();
 
     const cursorStatus = await service.getCliStatus('cursor');
     assert.equal(cursorStatus.latestVersion, null);
-    assert.equal(cursorStatus.updateCommand, 'cursor-agent update');
+    assert.equal(cursorStatus.updateCommand, 'agent update');
     assert.equal(cursorStatus.updateUnavailableReason, null);
 
     const codexStatus = await service.getCliStatus('codex');
@@ -562,7 +562,7 @@ test('updateCli stops an updater that runs past the timeout, and the child it st
   skip: process.platform === 'win32' ? 'POSIX process groups' : false,
 }, async () => {
   await withIsolatedCliEnv(async (binDir) => {
-    const cursor = await createFakeCli(binDir, 'cursor-agent');
+    const cursor = await createFakeCli(binDir, 'agent');
     await cursor.set('version', '2026.07.20-8cc9c0b\n');
     // An updater that ignores SIGTERM and has a download child running, as
     // `claude update` has npm: only SIGKILL to the whole group stops both.
@@ -683,7 +683,7 @@ test('getCliStatus reports a running update and, once it is over, that run\'s re
 
 test('getCliStatus does not run --version while an update runs, and reports the version from before it', async () => {
   await withIsolatedCliEnv(async (binDir) => {
-    const cursor = await createFakeCli(binDir, 'cursor-agent');
+    const cursor = await createFakeCli(binDir, 'agent');
     await cursor.set('version', '2026.07.20-8cc9c0b\n');
     await cursor.set('update-sleep-ms', '600');
     await cursor.set('update-new-version', '2026.10.14-941492e\n');
@@ -800,7 +800,7 @@ test('getCliStatus reports the starting version of a run that began during the r
 
 test('a request still in its busy check is not reported as a running update', async () => {
   await withIsolatedCliEnv(async (binDir) => {
-    const cursor = await createFakeCli(binDir, 'cursor-agent');
+    const cursor = await createFakeCli(binDir, 'agent');
     await cursor.set('version', '2026.07.20-8cc9c0b\n');
     let answerBusyCheck: (busy: LLMProvider[]) => void = () => {};
     const service = createService({
@@ -825,10 +825,10 @@ test('a request still in its busy check is not reported as a running update', as
 
 test('updateCli keeps only the final state of spinner and progress-bar lines', async () => {
   await withIsolatedCliEnv(async (binDir) => {
-    const cursor = await createFakeCli(binDir, 'cursor-agent');
+    const cursor = await createFakeCli(binDir, 'agent');
     await cursor.set('version', '2026.07.20-8cc9c0b\n');
     await cursor.set('update-new-version', '2026.10.14-941492e\n');
-    // `cursor-agent update` draws its download progress with carriage returns.
+    // `agent update` draws its download progress with carriage returns.
     await cursor.set(
       'update-stdout',
       'Checking for updates...\nLatest version available: 2026.10.14-941492e\n\r####      6.0%\r########  56.2%\r########## 100.0%\nDone\n',
