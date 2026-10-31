@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 
 import { appConfigDb, sessionsDb, userDb } from '@/modules/database/index.js';
 import { providerMcpService, providerRuntimeService, sessionsService } from '@/modules/providers/index.js';
-import { broadcastRemoteControl, broadcastSessionUpserted, runDetachedChatTurn } from '@/modules/websocket/index.js';
+import { broadcastRemoteControl, broadcastSessionUpserted, chatRunRegistry, runDetachedChatTurn } from '@/modules/websocket/index.js';
 import type { ProviderRuntimeGateway } from '@/modules/websocket/index.js';
 import type { ChatToolsAppendMode, ChatToolsSettings, LLMProvider } from '@/shared/types.js';
 import { AGENT_SESSION_ID_ENV, AppError, appendPromptText, findServerRoot, getModuleDirectory } from '@/shared/utils.js';
@@ -149,7 +149,7 @@ function parseAppendMode(value: unknown): ChatToolsAppendMode {
 }
 
 // chatToolsService: used by the chat-tools routes (settings, and the MCP tools
-// that rename and start chats), by the websocket module's chat dispatch to
+// that rename, start and resume chats), by the websocket module's chat dispatch to
 // append text to prompts, and by the server entrypoint to register the MCP
 // server at startup.
 export const chatToolsService = {
@@ -271,5 +271,43 @@ export const chatToolsService = {
       });
 
     return { sessionId: created.sessionId, projectPath: created.projectPath, parentSessionId: parentSessionId ?? null };
+  },
+
+  /**
+   * Sends a message to an existing chat that is not running, which resumes its
+   * conversation with that message as the next turn. The turn runs detached, on
+   * the model and effort the chat last ran with, so this returns without waiting
+   * for the answer. A chat that is running is refused: its agent is reachable
+   * through SendMessage, and a new turn would cut off the one in flight.
+   */
+  async resumeChat(
+    callerSessionId: string,
+    input: { targetSessionId: string; message: string },
+    runtime: ProviderRuntimeGateway = providerRuntimeService,
+  ): Promise<{ sessionId: string; projectPath: string | null }> {
+    const target = sessionsDb.getSessionById(input.targetSessionId);
+    if (!target) {
+      throw new AppError(`Session "${input.targetSessionId}" was not found.`, { code: 'SESSION_NOT_FOUND', statusCode: 404 });
+    }
+    if (chatRunRegistry.isProcessing(target.session_id) || (runtime.hasBackgroundWork(target.session_id) && !runtime.acceptsLiveTurn(target.session_id, {}))) {
+      throw new AppError(`Chat "${target.session_id}" is still running. Message it with SendMessage instead.`, { code: 'SESSION_BUSY', statusCode: 409 });
+    }
+
+    // 'auto' is a Claude permission mode; other providers keep their own default.
+    const options = {
+      ...(target.model ? { model: target.model } : {}),
+      ...(target.effort ? { effort: target.effort } : {}),
+      ...(target.provider === 'claude' ? { permissionMode: 'auto' } : {}),
+    };
+    const userId = userDb.getFirstUser()?.id ?? null;
+    void runDetachedChatTurn({ sessionId: target.session_id, userId, content: input.message, options }, { runtime })
+      .then((result) => {
+        if (result.error) console.error(`[ChatTools] The chat resumed by session ${callerSessionId} failed: ${result.error}`);
+      })
+      .catch((error: unknown) => {
+        console.error(`[ChatTools] The chat resumed by session ${callerSessionId} failed:`, error instanceof Error ? error.message : error);
+      });
+
+    return { sessionId: target.session_id, projectPath: target.project_path };
   },
 };

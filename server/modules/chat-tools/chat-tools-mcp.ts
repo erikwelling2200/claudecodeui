@@ -45,6 +45,21 @@ const tools = [
       required: ['message', 'model'],
     },
   },
+  {
+    name: 'resume_chat',
+    description: 'Send a message to an existing CloudCLI chat that is no longer running, which resumes it with the message as its next turn, '
+      + 'in auto permission mode and on the model it last ran with. Use it when SendMessage cannot reach a chat because its session has ended. '
+      + 'The chat does not know who sent the message, so say so in it. Refused while the chat is running. '
+      + 'Returns as soon as the turn has started, without waiting for its answer.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sessionId: { type: 'string', description: 'Session id of the chat to resume.' },
+        message: { type: 'string', description: 'The message to send.' },
+      },
+      required: ['sessionId', 'message'],
+    },
+  },
 ];
 
 async function callChatToolsApi(toolName: string, input: Record<string, unknown>): Promise<unknown> {
@@ -81,6 +96,10 @@ async function callTool(name: string, args: Record<string, unknown>) {
         const result = await callChatToolsApi(name, input) as { sessionId: string; projectPath: string; parentSessionId: string | null };
         const placement = result.parentSessionId ? `as a thread of ${result.parentSessionId}` : 'as a top-level chat';
         return { content: [{ type: 'text', text: `Started chat ${result.sessionId} in ${result.projectPath} ${placement}.` }] };
+      }
+      case 'resume_chat': {
+        const result = await callChatToolsApi(name, { targetSessionId: args.sessionId, message: args.message }) as { sessionId: string };
+        return { content: [{ type: 'text', text: `Resumed chat ${result.sessionId} with the message.` }] };
       }
       default:
         throw new Error(`Unknown tool: ${name}`);

@@ -48,3 +48,12 @@ chatToolsMcpRoutes.post('/tools/start_chat', asyncHandler(async (req, res) => {
   });
   res.json(createApiSuccessResponse(result));
 }));
+
+chatToolsMcpRoutes.post('/tools/resume_chat', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const result = await chatToolsService.resumeChat(readRequiredString(body.sessionId, 'sessionId'), {
+    targetSessionId: readRequiredString(body.targetSessionId, 'targetSessionId'),
+    message: readRequiredString(body.message, 'message'),
+  });
+  res.json(createApiSuccessResponse(result));
+}));
