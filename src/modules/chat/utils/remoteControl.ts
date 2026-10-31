@@ -55,9 +55,15 @@ function subscribe(listener: Listener): () => void {
   };
 }
 
+/** A chat with no recorded wish of its own has Remote Control off; only a chat without a session id reads the "last" key. */
 export function readRemoteControlWanted(sessionId: string | null): boolean {
-  const stored = (sessionId ? readStored(storageKey(sessionId)) : null) ?? readStored(LAST_KEY);
-  return stored === '1';
+  return readStored(storageKey(sessionId)) === '1';
+}
+
+/** Records the wish a brand-new chat was showing under the session id it has just been given. */
+export function adoptRemoteControlWish(sessionId: string): void {
+  writeStored(storageKey(sessionId), readRemoteControlWanted(null));
+  publish();
 }
 
 export function setRemoteControlWanted(sessionId: string | null, wanted: boolean): void {

@@ -32,7 +32,7 @@ import { addPendingSteer, markPendingSteerInterrupting, onPendingSteerDeclined, 
 import { useFileMentions } from '@/modules/chat/hooks/useFileMentions';
 import { useInputHistory } from '@/modules/chat/hooks/useInputHistory';
 import { useSlashCommands } from '@/modules/chat/hooks/useSlashCommands';
-import { readRemoteControlWanted } from '@/modules/chat/utils/remoteControl';
+import { adoptRemoteControlWish, readRemoteControlWanted } from '@/modules/chat/utils/remoteControl';
 
 type UseChatComposerStateArgs = {
   selectedProject: Project | null;
@@ -1068,6 +1068,9 @@ export function useChatComposerState({
           return;
         }
 
+        if (provider === 'claude') {
+          adoptRemoteControlWish(targetSessionId);
+        }
         onSessionEstablished?.(targetSessionId, {
           provider,
           project: selectedProject,
