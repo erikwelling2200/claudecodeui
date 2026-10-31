@@ -60,7 +60,53 @@ const tools = [
       required: ['sessionId', 'message'],
     },
   },
+  {
+    name: 'list_worktree_locks',
+    description: 'List the worktree locks this chat holds: per locked worktree its unit key, suffix and checkout paths. '
+      + 'The unit key and suffix are what release_worktree_locks takes.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'release_worktree_locks',
+    description: 'Release worktree locks this chat holds, so other chats can work in those checkouts. '
+      + 'Pass unit and suffix to release one worktree, or all: true when you are done with every worktree. '
+      + 'Only releases locks this chat holds; a lock another chat holds is left alone.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        unit: { type: 'string', description: 'Unit key as list_worktree_locks reports it, e.g. "group:<name>" or "repo:<path>".' },
+        suffix: { type: 'string', description: 'Worktree suffix, the <x> of <repo>-<x>. "" is the main checkout.' },
+        all: { type: 'boolean', description: 'Release every lock this chat holds.' },
+      },
+    },
+  },
 ];
+
+type WorktreeClaim = { unit: string; unitName?: string; suffix: string; repos: { path: string }[] };
+type ReleasedLock = { unit: string; suffix: string; checkout: string };
+
+function describeWorktree(unit: string, suffix: string, paths: string[]): string {
+  return `${unit} ${suffix ? `worktree "${suffix}"` : 'main checkout'}: ${paths.join(', ')}`;
+}
+
+function formatClaims(claims: WorktreeClaim[]): string {
+  if (!claims.length) return 'This chat holds no worktree locks.';
+  const lines = claims.map((claim) => `- ${describeWorktree(claim.unit, claim.suffix, claim.repos.map((repo) => repo.path))}`);
+  return `This chat holds ${claims.length} worktree lock(s):\n${lines.join('\n')}`;
+}
+
+/** The script reports one released lock per repo; this folds them back into one line per worktree. */
+function formatReleased(released: ReleasedLock[]): string {
+  if (!released.length) return 'This chat held no matching worktree lock, so nothing was released.';
+  const worktrees = new Map<string, { unit: string; suffix: string; paths: string[] }>();
+  for (const lock of released) {
+    const id = `${lock.unit}\u0000${lock.suffix}`;
+    if (!worktrees.has(id)) worktrees.set(id, { unit: lock.unit, suffix: lock.suffix, paths: [] });
+    worktrees.get(id)!.paths.push(lock.checkout);
+  }
+  const lines = [...worktrees.values()].map((worktree) => `- ${describeWorktree(worktree.unit, worktree.suffix, worktree.paths)}`);
+  return `Released ${worktrees.size} worktree(s):\n${lines.join('\n')}`;
+}
 
 async function callChatToolsApi(toolName: string, input: Record<string, unknown>): Promise<unknown> {
   if (!apiToken) {
@@ -100,6 +146,14 @@ async function callTool(name: string, args: Record<string, unknown>) {
       case 'resume_chat': {
         const result = await callChatToolsApi(name, { targetSessionId: args.sessionId, message: args.message }) as { sessionId: string };
         return { content: [{ type: 'text', text: `Resumed chat ${result.sessionId} with the message.` }] };
+      }
+      case 'list_worktree_locks': {
+        const result = await callChatToolsApi(name, {}) as { claims: WorktreeClaim[] };
+        return { content: [{ type: 'text', text: formatClaims(result.claims) }] };
+      }
+      case 'release_worktree_locks': {
+        const result = await callChatToolsApi(name, { unit: args.unit, suffix: args.suffix, all: args.all }) as { released: ReleasedLock[] };
+        return { content: [{ type: 'text', text: formatReleased(result.released) }] };
       }
       default:
         throw new Error(`Unknown tool: ${name}`);

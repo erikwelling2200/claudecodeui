@@ -1,6 +1,7 @@
 import express from 'express';
 
 import { chatToolsService } from '@/modules/chat-tools/chat-tools.service.js';
+import { chatWorktreeLocks } from '@/modules/worktree-claims/index.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
 
 function readRequiredString(value: unknown, name: string): string {
@@ -56,4 +57,23 @@ chatToolsMcpRoutes.post('/tools/resume_chat', asyncHandler(async (req, res) => {
     message: readRequiredString(body.message, 'message'),
   });
   res.json(createApiSuccessResponse(result));
+}));
+
+chatToolsMcpRoutes.post('/tools/list_worktree_locks', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  res.json(createApiSuccessResponse(await chatWorktreeLocks.list(readRequiredString(body.sessionId, 'sessionId'))));
+}));
+
+chatToolsMcpRoutes.post('/tools/release_worktree_locks', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const sessionId = readRequiredString(body.sessionId, 'sessionId');
+  if (body.all === true) {
+    res.json(createApiSuccessResponse(await chatWorktreeLocks.release(sessionId, 'all')));
+    return;
+  }
+  // '' is the main checkout's suffix, so only a missing suffix is an error.
+  if (typeof body.suffix !== 'string') {
+    throw new AppError('Pass unit and suffix to release one worktree, or all: true to release every lock', { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
+  }
+  res.json(createApiSuccessResponse(await chatWorktreeLocks.release(sessionId, { unitKey: readRequiredString(body.unit, 'unit'), suffix: body.suffix.trim() })));
 }));

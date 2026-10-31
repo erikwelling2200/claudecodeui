@@ -30,6 +30,11 @@ function readUnitKey(unitKey: string): string {
   return unitKey;
 }
 
+// Locks are keyed by the provider's session id, which a chat started in the app only gets once its CLI reports it.
+function lockSessionId(sessionId: string): string {
+  return sessionsDb.getSessionById(sessionId)?.provider_session_id ?? sessionId;
+}
+
 /** Production composition of the worktree-claims services. */
 const worktreeClaimsServices: WorktreeClaimsServices = {
   getGroups: async (projectId) => readProjectLockstepGroups(projectFolders(projectId)),
@@ -52,9 +57,20 @@ const worktreeClaimsServices: WorktreeClaimsServices = {
     }
     return readFindWorktreeJob(jobId);
   },
-  // Locks are keyed by the provider's session id, which a chat started in the app only gets once its CLI reports it.
-  listClaims: (sessionId) => runFindWorktree(['claims', '--session', sessionsDb.getSessionById(sessionId)?.provider_session_id ?? sessionId]),
+  listClaims: (sessionId) => runFindWorktree(['claims', '--session', lockSessionId(sessionId)]),
   release: (unitKey, suffix) => runFindWorktree(['release', '--force', '--key', readUnitKey(unitKey), '--suffix', suffix]),
+};
+
+/**
+ * The worktree locks a chat holds itself, for the `cloudcli-chat` MCP tools. Releasing never forces,
+ * so a chat cannot drop another chat's lock.
+ */
+export const chatWorktreeLocks = {
+  list: (sessionId: string) => runFindWorktree(['claims', '--session', lockSessionId(sessionId)]),
+  release: (sessionId: string, target: { unitKey: string; suffix: string } | 'all') => runFindWorktree([
+    'release', '--session', lockSessionId(sessionId),
+    ...(target === 'all' ? [] : ['--key', readUnitKey(target.unitKey), '--suffix', target.suffix]),
+  ]),
 };
 
 /** Worktree-claims router, mounted by the server entrypoint at `/api/worktree-claims`. */
