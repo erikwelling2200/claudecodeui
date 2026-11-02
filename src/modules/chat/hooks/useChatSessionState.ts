@@ -89,6 +89,53 @@ function findRenderedMessageElement(
 
   return nearest;
 }
+/** Frames the row must hold still before a jump counts as landed, and the most frames a jump may take. */
+const JUMP_SETTLED_FRAMES = 5;
+const JUMP_MAX_FRAMES = 120;
+
+/**
+ * Scrolls `container` until the row `findRow` returns sits centred (or, when taller than the view, at its top) and
+ * stays there. One scroll is not enough: the rows it passes mount as they near the viewport and replace their
+ * estimated placeholder heights with real ones, which moves the target after the scroll was aimed. So it re-aims every
+ * frame until the position holds, and stops early when the user scrolls by hand.
+ */
+function scrollRowIntoViewUntilSettled(container: HTMLElement, findRow: () => HTMLElement | null): void {
+  let frames = 0;
+  let stillFrames = 0;
+  let cancelled = false;
+  const cancel = () => { cancelled = true; };
+  container.addEventListener('wheel', cancel, { once: true, passive: true });
+  container.addEventListener('touchstart', cancel, { once: true, passive: true });
+  const finish = () => {
+    container.removeEventListener('wheel', cancel);
+    container.removeEventListener('touchstart', cancel);
+  };
+
+  const step = () => {
+    const row = findRow();
+    if (cancelled || !row) {
+      finish();
+      return;
+    }
+    const view = container.getBoundingClientRect();
+    const rect = row.getBoundingClientRect();
+    const offset = rect.height > view.height
+      ? rect.top - view.top
+      : rect.top + rect.height / 2 - (view.top + view.height / 2);
+    const before = container.scrollTop;
+    if (Math.abs(offset) >= 1) container.scrollTop += offset;
+    // A row at the very top cannot be centred, so "still" means the scroll position held, not that the offset is zero.
+    stillFrames = Math.abs(container.scrollTop - before) < 1 ? stillFrames + 1 : 0;
+    frames += 1;
+    if (stillFrames >= JUMP_SETTLED_FRAMES || frames >= JUMP_MAX_FRAMES) {
+      finish();
+      return;
+    }
+    requestAnimationFrame(step);
+  };
+  step();
+}
+
 /** Stable empty list so `chatMessages` keeps its identity while no session is selected. */
 const NO_MESSAGES: NormalizedMessage[] = [];
 
@@ -952,7 +999,7 @@ export function useChatSessionState({
         );
 
         if (targetElement) {
-          targetElement.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          scrollRowIntoViewUntilSettled(container, () => findRenderedMessageElement(container, targetTimestamp, true));
           targetElement.classList.add('search-highlight-flash');
           setTimeout(() => targetElement.classList.remove('search-highlight-flash'), 4000);
           searchScrollTimerRef.current = null;
@@ -1143,8 +1190,8 @@ export function useChatSessionState({
       // timestamp), or the first attempt scrolls to an unrelated row and the
       // retries never run.
       const element = container ? findRenderedMessageElement(container, message.timestamp, remaining === 0) : null;
-      if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (container && element) {
+        scrollRowIntoViewUntilSettled(container, () => findRenderedMessageElement(container, message.timestamp, true));
         if (highlight) {
           element.classList.add('search-highlight-flash');
           setTimeout(() => element.classList.remove('search-highlight-flash'), 4000);
