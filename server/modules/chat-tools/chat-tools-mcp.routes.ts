@@ -77,3 +77,14 @@ chatToolsMcpRoutes.post('/tools/release_worktree_locks', asyncHandler(async (req
   }
   res.json(createApiSuccessResponse(await chatWorktreeLocks.release(sessionId, { unitKey: readRequiredString(body.unit, 'unit'), suffix: body.suffix.trim() })));
 }));
+
+chatToolsMcpRoutes.post('/tools/list_mcp_servers', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  res.json(createApiSuccessResponse(await chatToolsService.listMcpServers(readRequiredString(body.sessionId, 'sessionId'))));
+}));
+
+chatToolsMcpRoutes.post('/tools/reconnect_mcp_server', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const result = await chatToolsService.reconnectMcpServer(readRequiredString(body.sessionId, 'sessionId'), readRequiredString(body.name, 'name'));
+  res.json(createApiSuccessResponse(result));
+}));
