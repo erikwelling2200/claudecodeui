@@ -58,6 +58,22 @@ test('a path with a line suffix in inline code opens at that line', () => {
   assert.deepEqual(openFileInEditor.mock.calls[0], ['src/foo.ts', 42]);
 });
 
+test('an absolute path with a space in inline code opens it', () => {
+  const sqlPath = 'C:/Web apps/AdminApp/migrations/2026-11-02_build_changelog.sql';
+  clickReference(`Run \`${sqlPath}\` first.`, sqlPath);
+  assert.deepEqual(openFileInEditor.mock.calls[0], [sqlPath, null]);
+  clickReference('See `/home/me/My Notes/todo.md:3`.', '/home/me/My Notes/todo.md:3');
+  assert.deepEqual(openFileInEditor.mock.calls[0], ['/home/me/My Notes/todo.md', 3]);
+});
+
+test('commands and relative paths with a space in inline code stay plain code', () => {
+  for (const snippet of ['git add src/foo.ts', 'src/My Notes/todo.md', '/compact notes.md', 'cat ~/notes.md']) {
+    const { container, unmount } = render(<Markdown>{`run \`${snippet}\` now`}</Markdown>);
+    assert.equal(container.querySelector('a'), null, snippet);
+    unmount();
+  }
+});
+
 test('identifiers in inline code stay plain code', () => {
   for (const identifier of ['NPCGenerateConditionDate.Eval', 'Date.KingsDay', 'obj.length', 'KingsDay', '*.cs', '.cs']) {
     const { container, unmount } = render(<Markdown>{`the \`${identifier}\` case`}</Markdown>);
