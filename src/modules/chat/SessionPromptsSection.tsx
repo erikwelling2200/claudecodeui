@@ -11,7 +11,7 @@ type PromptItemProps = {
 
 function PromptItem({ label, prompt, onJump }: PromptItemProps) {
   const { t } = useTranslation();
-  const textRef = useRef<HTMLButtonElement | null>(null);
+  const textRef = useRef<HTMLSpanElement | null>(null);
   // Whether the full text is shown instead of the first three lines.
   const [expanded, setExpanded] = useState(false);
   // Whether the clamped text hides anything, which is what decides if the fold-out toggle is offered at all.
@@ -31,13 +31,15 @@ function PromptItem({ label, prompt, onJump }: PromptItemProps) {
     <div>
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <button
-        ref={textRef}
         type="button"
         onClick={() => onJump(prompt.timestamp)}
         title={t('sessionPrompts.jump')}
-        className={`mt-0.5 block w-full whitespace-pre-line break-words rounded px-1 py-0.5 text-left text-xs text-foreground hover:bg-accent ${expanded ? '' : 'line-clamp-3'}`}
+        className="mt-0.5 block w-full rounded px-1 py-0.5 text-left text-xs text-foreground hover:bg-accent"
       >
-        {prompt.text}
+        {/* The clamp sits on a span: Chrome does not clamp a button's own content. */}
+        <span ref={textRef} className={`whitespace-pre-line break-words ${expanded ? 'block' : 'line-clamp-3'}`}>
+          {prompt.text}
+        </span>
       </button>
       {(overflows || expanded) && (
         <button
