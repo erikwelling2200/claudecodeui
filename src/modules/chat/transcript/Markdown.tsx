@@ -61,9 +61,14 @@ const FILE_EXTENSIONS =
   'hlsl|cginc|compute|uss|uxml|inputactions|blend|fbx|png|jpg|jpeg|gif|svg|webp|pdf|lock';
 const FILE_NAME_PATTERN = new RegExp(`(^|[\\\\/])[^\\\\/]+\\.(${FILE_EXTENSIONS})$`, 'i');
 
+// `C:/…`, `~/…` or `/dir/…`: a POSIX path needs a space-free first segment, so `/compact notes.md` is no path.
+const ABSOLUTE_PATH_PATTERN = /^([A-Za-z]:[\\/]|~[\\/]|\/[^\s\\/]+\/)/;
+
 const looksLikeInlineCodeFile = (value: string): boolean => {
   const cleaned = stripLineSuffix(value.trim());
-  if (!cleaned || /[\s*?<>|"(){}]/.test(cleaned) || cleaned.includes('://')) {
+  // Spaces are only allowed in an absolute path; elsewhere they mark a command such as `git add foo.ts`.
+  const forbidden = ABSOLUTE_PATH_PATTERN.test(cleaned) ? /[\t\r\n*?<>|"(){}]/ : /[\s*?<>|"(){}]/;
+  if (!cleaned || forbidden.test(cleaned) || cleaned.includes('://')) {
     return false;
   }
   return FILE_NAME_PATTERN.test(cleaned);
