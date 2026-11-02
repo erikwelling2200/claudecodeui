@@ -41,6 +41,8 @@ type Scripted = {
   /** The stdin messages behind `prompts`. */
   stdin: Array<Record<string, unknown>>;
   calls: string[];
+  /** When set, `interrupt()` never answers, like a CLI too busy to read its control requests. */
+  ignoreInterrupt: boolean;
 };
 
 /**
@@ -71,6 +73,7 @@ function createScriptedQuery(): { createQuery: NonNullable<ProviderRuntimeContex
     prompts,
     stdin,
     calls,
+    ignoreInterrupt: false,
   };
 
   const createQuery: NonNullable<ProviderRuntimeContext['createQuery']> = ({ prompt }) => {
@@ -102,7 +105,12 @@ function createScriptedQuery(): { createQuery: NonNullable<ProviderRuntimeContex
     })();
 
     return Object.assign(iterator, {
-      interrupt: async () => { calls.push('interrupt'); },
+      interrupt: async () => {
+        calls.push('interrupt');
+        if (script.ignoreInterrupt) {
+          await new Promise(() => {});
+        }
+      },
       stopTask: async (taskId: string) => { calls.push(`stopTask:${taskId}`); },
       setModel: async (model?: string) => { calls.push(`setModel:${model}`); },
       setPermissionMode: async (mode: string) => { calls.push(`setPermissionMode:${mode}`); },
@@ -344,6 +352,89 @@ test('an interrupt that stops the background work leaves the process up for the 
     assert.deepEqual(listClaudeSDKBackgroundWork().filter((entry) => entry.sessionId === 'app-live-abort-stops'), []);
     assert.equal(acceptsClaudeSDKLiveTurn('app-live-abort-stops', {}), true);
   });
+});
+
+test('a stopped turn the CLI does not end is killed, without a second complete or an error', async () => {
+  await withHeldSession('app-live-abort-stuck', async ({ script, queries, send }) => {
+    const second = send('long question');
+    await waitFor(() => script.prompts.length === 2);
+
+    assert.equal(await abortClaudeSDKSession('app-live-abort-stuck'), true);
+    assert.deepEqual(script.calls, ['interrupt']);
+    assert.equal(acceptsClaudeSDKLiveTurn('app-live-abort-stuck', {}), false, 'not while the stopped turn may still be killed');
+
+    // The CLI keeps working instead of ending the turn.
+    script.emit(text('Still going.'));
+    await waitFor(() => script.calls.includes('close'), 'the process is killed', 10_000);
+    script.end();
+    await second.run;
+    assert.equal(second.writer.completes().length, 0, 'the chat handler sends the aborted complete, not the runtime');
+    assert.equal(second.writer.sent.some((message) => message.kind === 'error'), false);
+
+    const third = send('another');
+    await waitFor(() => queries() === 2, 'the next turn starts a new process');
+    script.emit(result());
+    script.end();
+    await third.run;
+    assert.equal(third.writer.completes().length, 1);
+  });
+});
+
+test('a stop the CLI never acknowledges kills the process at once', async () => {
+  await withHeldSession('app-live-abort-deaf', async ({ script, send }) => {
+    const second = send('long question');
+    await waitFor(() => script.prompts.length === 2);
+    script.ignoreInterrupt = true;
+
+    assert.equal(await abortClaudeSDKSession('app-live-abort-deaf'), true);
+    assert.deepEqual(script.calls, ['interrupt', 'close']);
+    script.end();
+    await second.run;
+    assert.equal(second.writer.completes().length, 0);
+  });
+});
+
+test('a stop that arrives while a run is still starting up keeps it from launching', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'claude-live-turns-'));
+  const { createQuery, script, queries } = createScriptedQuery();
+  const sessions = new ClaudeSessionsProvider({ getLiveRunStartTime: () => null });
+  let resumeModelAsked: () => void = () => {};
+  const asked = new Promise<void>((resolve) => { resumeModelAsked = resolve; });
+  let answerResumeModel: () => void = () => {};
+  const context: ProviderRuntimeContext = {
+    resolveProviderSessionId: () => null,
+    resolveResumeModel: () => {
+      resumeModelAsked();
+      return new Promise((resolve) => { answerResumeModel = () => resolve(undefined); });
+    },
+    getProviderModels: async () => CLAUDE_PREDEFINED_MODELS as never,
+    normalizeMessage: (raw, id) => sessions.normalizeMessage(raw, id),
+    isProviderInstalled: async () => true,
+    explainToolCall: async () => null,
+    createQuery,
+  };
+  try {
+    const writer = createWriter();
+    const run = queryClaudeSDK('hello', { sessionId: 'app-stop-starting', cwd }, writer.writer, context);
+    await asked;
+    assert.equal(await abortClaudeSDKSession('app-stop-starting'), false, 'no process to interrupt yet');
+    answerResumeModel();
+    await run;
+    assert.equal(queries(), 0, 'no process launched');
+    assert.equal(writer.completes().length, 0);
+
+    // The stop belongs to that run only: the next one launches.
+    const next = createWriter();
+    const nextRun = queryClaudeSDK('hello again', { sessionId: 'app-stop-starting', cwd }, next.writer, { ...context, resolveResumeModel: async () => undefined });
+    await waitFor(() => queries() === 1);
+    script.emit(init());
+    script.emit(result());
+    script.end();
+    await nextRun;
+    assert.equal(next.completes().length, 1);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
 
 test('a delivered turn whose work has all reported leaves the process up', async () => {

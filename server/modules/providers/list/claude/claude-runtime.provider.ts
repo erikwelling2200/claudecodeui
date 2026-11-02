@@ -139,6 +139,13 @@ type LiveProcess = {
    * is not waiting (anymore).
    */
   interruptForSteer(steerId: string): Promise<boolean>;
+  /**
+   * Makes a stop stick after its interrupt: kills the process at once when the
+   * CLI did not acknowledge the interrupt, and otherwise when the turn in flight
+   * has not ended within STOP_GRACE_MS. The run then ends without a word to
+   * the client, which the stop already told.
+   */
+  ensureStopped(interrupted: boolean): void;
 };
 
 type ToolApprovalDecision = AnyRecord | null;
@@ -177,6 +184,34 @@ const abortedSessionIds = new Set<string>();
 // (see addSession). Their run loops must stay silent on wind-down: the map
 // entry, the abort flag, and all client-facing events belong to the new run.
 const supersededInstances = new WeakSet<ClaudeQuery>();
+// Query instances killed because a stop's interrupt did not end their turn.
+// Their run loops wind down like an aborted run: the stop already sent `complete`.
+const killedInstances = new WeakSet<ClaudeQuery>();
+// The latest stop per app session, numbered, so a run still starting up can
+// tell a stop that arrived before it had a process to interrupt.
+let stopCount = 0;
+const lastStopBySession = new Map<string, number>();
+
+// How long a stop waits for the CLI to acknowledge its interrupt, and then
+// for the turn to actually end, before it kills the process instead.
+const INTERRUPT_ACK_MS = 3000;
+const STOP_GRACE_MS = 5000;
+
+/** Sends the CLI an interrupt; false when it fails or is not acknowledged within INTERRUPT_ACK_MS. */
+async function requestInterrupt(instance: ClaudeQuery, sessionId: string | null): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      instance.interrupt().then(() => true),
+      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), INTERRUPT_ACK_MS); }),
+    ]);
+  } catch (error) {
+    console.error(`Error interrupting session ${sessionId}:`, (error as Error)?.message || error);
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const TOOL_APPROVAL_TIMEOUT_MS = parseInt(process.env.CLAUDE_TOOL_APPROVAL_TIMEOUT_MS ?? '', 10) || 15 * 60 * 1000;
 
@@ -1283,6 +1318,18 @@ async function queryClaudeSDK(
   let deliveredTurnInterrupted = false;
   let interruptSettled: Promise<void> | null = null;
   let resolveInterruptSettled: (() => void) | null = null;
+  // Called by the next `result`, or by the run ending: what a stop waits on
+  // before it kills the process.
+  const turnEndListeners = new Set<() => void>();
+  const signalTurnEnd = () => {
+    for (const listener of turnEndListeners) {
+      listener();
+    }
+    turnEndListeners.clear();
+  };
+  // A stop counted after this mark arrived while this run was still starting up.
+  const stopMarkAtStart = sessionId ? lastStopBySession.get(sessionId) : undefined;
+  const stoppedWhileStarting = () => Boolean(sessionId) && lastStopBySession.get(sessionId) !== stopMarkAtStart;
 
   const emitNotification = (event: unknown) => {
     notifyUserIfEnabled({
@@ -1412,6 +1459,9 @@ async function queryClaudeSDK(
     // A process this session left running for its background work takes the
     // turn as streaming input when it can, so that work keeps going. An edit
     // resumes the transcript partway, which only a new process can do.
+    if (stoppedWhileStarting()) {
+      return;
+    }
     const heldSession = sessionKey() ? getSession(sessionKey()!) : undefined;
     if (heldSession?.liveProcess && !options.resumeAnchorId && !options.resumeFromScratch) {
       const delivery = await heldSession.liveProcess.deliverTurn({
@@ -1427,6 +1477,12 @@ async function queryClaudeSDK(
         await delivery.settled;
         return;
       }
+    }
+
+    // From here to the session's registration nothing awaits, so a stop that
+    // misses this check finds the new process to interrupt.
+    if (stoppedWhileStarting()) {
+      return;
     }
 
     // A new turn supersedes any earlier one still holding this session's process
@@ -1748,23 +1804,28 @@ async function queryClaudeSDK(
     // The CLI's running cost total for this process, so each `result` records only what its turn added.
     let lastCostTotal = 0;
 
+    // True while the process is between turns, or winding down an interrupted
+    // one that a delivered turn may wait out.
+    const takesTurnOnceSettled = () => {
+      const key = sessionKey();
+      return Boolean(
+        key
+        && capturedSessionId
+        && (betweenTurns || deliveredTurnInterrupted)
+        && !promptReleased
+        && !abortedSessionIds.has(key)
+        && getSession(key)?.instance === instance
+      );
+    };
+
     const liveProcess: LiveProcess = {
       terms: launchTerms,
 
-      canTakeTurn: () => {
-        const key = sessionKey();
-        return Boolean(
-          key
-          && capturedSessionId
-          && (betweenTurns || deliveredTurnInterrupted)
-          && !promptReleased
-          && !abortedSessionIds.has(key)
-          && getSession(key)?.instance === instance
-        );
-      },
+      // A process that has not ended a stopped turn yet may be killed any moment.
+      canTakeTurn: () => takesTurnOnceSettled() && turnEndListeners.size === 0,
 
       deliverTurn: async (turn) => {
-        if (!liveProcess.canTakeTurn()) {
+        if (!takesTurnOnceSettled()) {
           return null;
         }
         const next = turn.sdkOptions;
@@ -1897,26 +1958,32 @@ async function queryClaudeSDK(
         turnCompleteSent = true;
         deliveredTurnInterrupted = true;
         pendingSteers.clear();
-        interruptSettled =new Promise<void>((resolve) => { resolveInterruptSettled = resolve; });
-        try {
-          await instance.interrupt();
-        } catch (error) {
-          console.error(`Error interrupting turn for session ${sessionKey()}:`, (error as Error)?.message || error);
-          turnCompleteSent = false;
-          deliveredTurnInterrupted = false;
-          return false;
-        }
-        // The interrupted turn normally ends with a `result`, which settles
-        // it and puts the process between turns. Should none come, settle
-        // here, so the run is not left open and the process can take a turn.
-        const fallback = setTimeout(() => {
-          if (deliveredTurnInterrupted) {
-            settleTurn();
-            settleBetweenTurns();
-          }
-        }, INTERRUPT_SETTLE_MS);
-        fallback.unref?.();
+        interruptSettled = new Promise<void>((resolve) => { resolveInterruptSettled = resolve; });
+        // The interrupted turn normally ends with a `result`, which settles it
+        // and puts the process between turns; one that does not is killed.
+        liveProcess.ensureStopped(await requestInterrupt(instance, sessionKey()));
         return true;
+      },
+
+      ensureStopped: (interrupted) => {
+        const kill = () => {
+          console.warn(`[Claude SDK] Session ${sessionKey()} did not stop when interrupted; killing its process.`);
+          killedInstances.add(instance);
+          instance.close?.();
+        };
+        if (!interrupted) {
+          kill();
+          return;
+        }
+        if (betweenTurns) {
+          return;
+        }
+        const timer = setTimeout(() => {
+          turnEndListeners.delete(onTurnEnd);
+          kill();
+        }, STOP_GRACE_MS);
+        const onTurnEnd = () => clearTimeout(timer);
+        turnEndListeners.add(onTurnEnd);
       },
     };
 
@@ -2110,6 +2177,7 @@ async function queryClaudeSDK(
       }
 
       if (message.type === 'result') {
+        signalTurnEnd();
         // The turn is done as far as the client is concerned.
         const abortPending = sessionKey() ? abortedSessionIds.has(sessionKey()) : false;
         const completesTurn = !turnCompleteSent && !abortPending;
@@ -2162,7 +2230,8 @@ async function queryClaudeSDK(
     // Send the terminal completion event — skipped for aborted runs, whose
     // terminal `complete` (aborted: true) was already sent by abort-session, and
     // for runs that already reported completion when their `result` arrived.
-    const wasAborted = !superseded && sessionKey() ? abortedSessionIds.delete(sessionKey()!) : false;
+    const wasAborted = (!superseded && sessionKey() ? abortedSessionIds.delete(sessionKey()!) : false)
+      || killedInstances.has(queryInstance);
     if (!turnCompleteSent && !superseded) {
       turnCompleteSent = true;
       if (!wasAborted) {
@@ -2193,10 +2262,11 @@ async function queryClaudeSDK(
       return;
     }
 
-    const wasAborted = sessionKey() ? abortedSessionIds.delete(sessionKey()!) : false;
+    const wasAborted = (sessionKey() ? abortedSessionIds.delete(sessionKey()!) : false)
+      || Boolean(queryInstance && killedInstances.has(queryInstance));
     if (wasAborted) {
       // The abort already produced the terminal complete; a generator throw
-      // caused by interrupt() is expected noise, not a user-facing error.
+      // caused by interrupt() or close() is expected noise, not a user-facing error.
       return;
     }
 
@@ -2229,6 +2299,7 @@ async function queryClaudeSDK(
     releasePromptStream();
     // A turn delivered into this process ends with it.
     settleTurn();
+    signalTurnEnd();
   }
 }
 
@@ -2238,6 +2309,10 @@ async function queryClaudeSDK(
  * @returns {boolean} True if session was aborted, false if not found
  */
 async function abortClaudeSDKSession(sessionId: string) {
+  // A run still starting up has no process to interrupt yet; it checks this
+  // before launching one.
+  lastStopBySession.set(sessionId, ++stopCount);
+
   const session = getSession(sessionId);
 
   if (!session) {
@@ -2251,33 +2326,27 @@ async function abortClaudeSDKSession(sessionId: string) {
     return true;
   }
 
-  try {
-    console.log(`Aborting SDK session: ${sessionId}`);
+  console.log(`Aborting SDK session: ${sessionId}`);
 
-    // Mark before interrupting so the run loop knows not to emit its own
-    // terminal complete (the abort handler sends the aborted one).
-    abortedSessionIds.add(sessionId);
+  // Mark before interrupting so the run loop knows not to emit its own
+  // terminal complete (the abort handler sends the aborted one).
+  abortedSessionIds.add(sessionId);
 
-    // Call interrupt() on the query instance
-    await session.instance.interrupt();
+  const interrupted = await requestInterrupt(session.instance, sessionId);
 
-    // Release the held stdin stream; without this the CLI stays up for the rest
-    // of the post-turn hold even though the user cancelled.
-    session.releaseInput?.();
+  // Release the held stdin stream; without this the CLI stays up for the rest
+  // of the post-turn hold even though the user cancelled.
+  session.releaseInput?.();
+  session.status = 'aborted';
+  removeSession(sessionId);
 
-    // Update session status
-    session.status = 'aborted';
-
-    // Clean up session
-    removeSession(sessionId);
-
-    return true;
-  } catch (error) {
-    console.error(`Error aborting session ${sessionId}:`, error);
-    // The run keeps going; let it emit its own terminal complete.
-    abortedSessionIds.delete(sessionId);
-    return false;
+  if (session.liveProcess) {
+    session.liveProcess.ensureStopped(interrupted);
+  } else if (!interrupted) {
+    killedInstances.add(session.instance);
+    session.instance.close?.();
   }
+  return true;
 }
 
 /**
