@@ -80,7 +80,36 @@ const tools = [
       },
     },
   },
+  {
+    name: 'list_mcp_servers',
+    description: 'List the MCP servers of this chat with their connection state (connected, failed, pending, needs-auth, disabled), error and tool count. '
+      + 'Use it when an MCP tool fails with a closed or lost connection, to see whether its server dropped.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'reconnect_mcp_server',
+    description: 'Reconnect one MCP server of this chat, e.g. after the program behind it restarted (a Unity Editor reload, a Blender restart) and its tools stopped answering. '
+      + 'Waits for the attempt and returns the state of the server afterwards. If the program is still starting, wait a little and call it again.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The server name as list_mcp_servers reports it, i.e. the <server> of mcp__<server>__<tool>.' },
+      },
+      required: ['name'],
+    },
+  },
 ];
+
+// The SDK's own MCP connect timeout is 30 s; a reconnect may take that and more.
+const RECONNECT_TIMEOUT_MS = 90000;
+const DEFAULT_TIMEOUT_MS = 15000;
+
+type McpServerStatus = { name: string; status: string; error?: string; transport?: string; target?: string; toolCount: number };
+
+function describeMcpServer(server: McpServerStatus): string {
+  const where = [server.transport, server.target].filter(Boolean).join(' ');
+  return `- ${server.name}: ${server.status}, ${server.toolCount} tool(s)${where ? ` (${where})` : ''}${server.error ? ` - ${server.error}` : ''}`;
+}
 
 type WorktreeClaim = { unit: string; unitName?: string; suffix: string; repos: { path: string }[] };
 type ReleasedLock = { unit: string; suffix: string; checkout: string };
@@ -108,7 +137,7 @@ function formatReleased(released: ReleasedLock[]): string {
   return `Released ${worktrees.size} worktree(s):\n${lines.join('\n')}`;
 }
 
-async function callChatToolsApi(toolName: string, input: Record<string, unknown>): Promise<unknown> {
+async function callChatToolsApi(toolName: string, input: Record<string, unknown>, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
   if (!apiToken) {
     throw new Error('CLOUDCLI_CHAT_TOOLS_MCP_TOKEN is not configured.');
   }
@@ -120,7 +149,7 @@ async function callChatToolsApi(toolName: string, input: Record<string, unknown>
     method: 'POST',
     headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...input, sessionId }),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const data = await response.json() as { success?: boolean; data?: unknown; error?: { message?: string } | string };
   if (!response.ok || data.success === false) {
@@ -154,6 +183,17 @@ async function callTool(name: string, args: Record<string, unknown>) {
       case 'release_worktree_locks': {
         const result = await callChatToolsApi(name, { unit: args.unit, suffix: args.suffix, all: args.all }) as { released: ReleasedLock[] };
         return { content: [{ type: 'text', text: formatReleased(result.released) }] };
+      }
+      case 'list_mcp_servers': {
+        const result = await callChatToolsApi(name, {}) as { servers: McpServerStatus[] };
+        const lines = result.servers.map(describeMcpServer);
+        return { content: [{ type: 'text', text: lines.length ? `MCP servers of this chat:\n${lines.join('\n')}` : 'This chat has no MCP servers.' }] };
+      }
+      case 'reconnect_mcp_server': {
+        const result = await callChatToolsApi(name, { name: args.name }, RECONNECT_TIMEOUT_MS) as { server: McpServerStatus | null };
+        if (!result.server) return { content: [{ type: 'text', text: `Reconnected "${args.name}", but it no longer shows in the server list.` }] };
+        const isError = result.server.status !== 'connected';
+        return { isError, content: [{ type: 'text', text: `Reconnect of "${args.name}" done. Now:\n${describeMcpServer(result.server)}` }] };
       }
       default:
         throw new Error(`Unknown tool: ${name}`);

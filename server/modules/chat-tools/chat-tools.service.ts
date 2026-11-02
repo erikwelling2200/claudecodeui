@@ -10,7 +10,7 @@ import { appConfigDb, sessionsDb, userDb } from '@/modules/database/index.js';
 import { providerMcpService, providerRuntimeService, sessionsService } from '@/modules/providers/index.js';
 import { broadcastRemoteControl, broadcastSessionUpserted, chatRunRegistry, runDetachedChatTurn } from '@/modules/websocket/index.js';
 import type { ProviderRuntimeGateway } from '@/modules/websocket/index.js';
-import type { ChatToolsAppendMode, ChatToolsSettings, LLMProvider } from '@/shared/types.js';
+import type { ChatToolsAppendMode, ChatToolsSettings, LiveMcpServerStatus, LLMProvider } from '@/shared/types.js';
 import { AGENT_SESSION_ID_ENV, AppError, appendPromptText, findServerRoot, getModuleDirectory } from '@/shared/utils.js';
 
 const require = createRequire(import.meta.url);
@@ -34,6 +34,8 @@ const DEFAULT_SETTINGS: ChatToolsSettings = {
 };
 
 const APPEND_MODES: ChatToolsAppendMode[] = ['off', 'first', 'every'];
+
+type McpRuntime = Pick<typeof providerRuntimeService, 'listMcpServers' | 'reconnectMcpServer'>;
 
 function readSettings(): ChatToolsSettings {
   const raw = appConfigDb.get(SETTINGS_KEY);
@@ -148,8 +150,21 @@ function parseAppendMode(value: unknown): ChatToolsAppendMode {
   return value as ChatToolsAppendMode;
 }
 
+function getSessionProvider(sessionId: string): LLMProvider {
+  const session = sessionsDb.getSessionById(sessionId);
+  if (!session) {
+    throw new AppError(`Session "${sessionId}" was not found.`, { code: 'SESSION_NOT_FOUND', statusCode: 404 });
+  }
+  return session.provider as LLMProvider;
+}
+
+/** The runtime keeps no process for the chat, or cannot report its MCP servers (only Claude can). */
+function noLiveProcessError(sessionId: string): AppError {
+  return new AppError(`Chat "${sessionId}" has no live process whose MCP servers can be managed.`, { code: 'NO_LIVE_PROCESS', statusCode: 409 });
+}
+
 // chatToolsService: used by the chat-tools routes (settings, and the MCP tools
-// that rename, start and resume chats), by the websocket module's chat dispatch to
+// that rename, start and resume chats and reconnect their MCP servers), by the websocket module's chat dispatch to
 // append text to prompts, and by the server entrypoint to register the MCP
 // server at startup.
 export const chatToolsService = {
@@ -219,6 +234,36 @@ export const chatToolsService = {
     const result = sessionsService.renameSessionById(sessionId, summary);
     await broadcastSessionUpserted(sessionId);
     return result;
+  },
+
+  /** The MCP servers of the calling chat's live process, with their connection state. */
+  async listMcpServers(sessionId: string, runtime: McpRuntime = providerRuntimeService): Promise<{ servers: LiveMcpServerStatus[] }> {
+    const servers = await runtime.listMcpServers(getSessionProvider(sessionId), sessionId);
+    if (!servers) throw noLiveProcessError(sessionId);
+    return { servers };
+  },
+
+  /**
+   * Reconnects one MCP server of the calling chat's live process, e.g. after the
+   * program behind it restarted. Resolves once the SDK has tried, with the
+   * server's state afterwards; a failed reconnect throws the SDK's reason.
+   * `cloudcli-chat` itself is refused, because restarting it would drop the
+   * very tool call that asked for it.
+   */
+  async reconnectMcpServer(sessionId: string, serverName: string, runtime: McpRuntime = providerRuntimeService): Promise<{ server: LiveMcpServerStatus | null }> {
+    if (serverName === MCP_SERVER_NAME) {
+      throw new AppError(`${MCP_SERVER_NAME} cannot reconnect itself from one of its own tool calls.`, { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
+    }
+    const provider = getSessionProvider(sessionId);
+    let reconnected: boolean;
+    try {
+      reconnected = await runtime.reconnectMcpServer(provider, sessionId, serverName);
+    } catch (error) {
+      throw new AppError(`Reconnecting "${serverName}" failed: ${error instanceof Error ? error.message : String(error)}`, { code: 'MCP_RECONNECT_FAILED', statusCode: 502 });
+    }
+    if (!reconnected) throw noLiveProcessError(sessionId);
+    const servers = await runtime.listMcpServers(provider, sessionId);
+    return { server: servers?.find((server) => server.name === serverName) ?? null };
   },
 
   /**
