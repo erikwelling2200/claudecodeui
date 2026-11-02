@@ -423,10 +423,20 @@ function ChatInterface({
     }
   }, [currentProviderEffort, currentProviderModel, input, permissionMode, scheduleMessage, setInput]);
 
+  // Building an approved plan continues in auto mode, where the provider offers it.
+  const handlePlanBuild = useCallback((requestId: string) => {
+    const buildMode = availablePermissionModes.includes('auto') ? 'auto' : undefined;
+    if (buildMode) {
+      selectPermissionMode(buildMode, { applyToLiveTurn: false });
+    }
+    handlePermissionDecision(requestId, { allow: true, permissionMode: buildMode });
+  }, [availablePermissionModes, selectPermissionMode, handlePermissionDecision]);
+
   const permissionContextValue = useMemo(() => ({
     pendingPermissionRequests,
     handlePermissionDecision,
-  }), [pendingPermissionRequests, handlePermissionDecision]);
+    handlePlanBuild,
+  }), [pendingPermissionRequests, handlePermissionDecision, handlePlanBuild]);
 
   // Lets markdown image paths in the transcript resolve against this project.
   const markdownWorkspaceValue = useMemo(() => ({

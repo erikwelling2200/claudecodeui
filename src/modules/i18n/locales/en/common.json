@@ -415,6 +415,7 @@
   "worktreeClaims": {
     "detached": "detached",
     "changed": "{{count}} changed",
+    "lastCommitBranch": "Last commit on {{branch}}",
     "sidebar": {
       "title": "Worktrees",
       "release": "Release",

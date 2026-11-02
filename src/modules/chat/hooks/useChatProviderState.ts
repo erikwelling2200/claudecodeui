@@ -429,7 +429,8 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     );
   }, [selectedSession?.id]);
 
-  const selectPermissionMode = useCallback((nextMode: PermissionMode) => {
+  /** `applyToLiveTurn: false` when the switch already travels with something else, such as a plan approval. */
+  const selectPermissionMode = useCallback((nextMode: PermissionMode, { applyToLiveTurn = true } = {}) => {
     setPermissionMode(nextMode);
 
     // Persist per provider as well as per session: a brand-new chat has no
@@ -440,7 +441,9 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
       localStorage.setItem(`permissionMode-${selectedSession.id}`, nextMode);
       // A turn takes its mode when it is sent; this switches one already
       // running. The server ignores it when the session has no live turn.
-      sendMessage?.({ type: 'chat.set-permission-mode', sessionId: selectedSession.id, permissionMode: nextMode });
+      if (applyToLiveTurn) {
+        sendMessage?.({ type: 'chat.set-permission-mode', sessionId: selectedSession.id, permissionMode: nextMode });
+      }
     }
   }, [provider, selectedSession?.id, sendMessage]);
 

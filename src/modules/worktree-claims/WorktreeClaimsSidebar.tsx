@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { GitBranch, Loader2, Unlock } from 'lucide-react';
+import { GitBranch, GitCommitHorizontal, Loader2, Unlock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { SessionTasksSection, useSessionTasks } from '@/modules/session-tasks';
@@ -112,6 +112,12 @@ export function WorktreeClaimsSidebar({ sessionId, children }: WorktreeClaimsSid
                       <span className="flex-shrink-0">{t('worktreeClaims.changed', { count: repo.changedFiles })}</span>
                     )}
                   </div>
+                  {repo.lastCommitBranch && (
+                    <div className="flex items-center gap-1 text-muted-foreground" title={t('worktreeClaims.lastCommitBranch', { branch: repo.lastCommitBranch })}>
+                      <GitCommitHorizontal className="h-3 w-3 flex-shrink-0" />
+                      <span className="truncate font-mono">{repo.lastCommitBranch}</span>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
