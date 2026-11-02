@@ -107,6 +107,11 @@ export interface IProviderRuntime {
    * once. Resolves false when that message is not waiting.
    */
   interruptForSteer?(sessionId: string, steerId: string): Promise<boolean>;
+  /**
+   * Drops a steered message the CLI has not taken yet. Resolves false when that
+   * message is not waiting.
+   */
+  cancelSteer?(sessionId: string, steerId: string): Promise<boolean>;
 }
 
 /**

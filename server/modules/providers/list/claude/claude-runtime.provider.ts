@@ -140,6 +140,11 @@ type LiveProcess = {
    */
   interruptForSteer(steerId: string): Promise<boolean>;
   /**
+   * Drops a steered message the CLI has not taken yet, and tells the client
+   * with `steer_cancelled`. False when the CLI took it already.
+   */
+  cancelSteer(steerId: string): Promise<boolean>;
+  /**
    * Makes a stop stick after its interrupt: kills the process at once when the
    * CLI did not acknowledge the interrupt, and otherwise when the turn in flight
    * has not ended within STOP_GRACE_MS. The run then ends without a word to
@@ -1218,6 +1223,9 @@ const INTERRUPT_SETTLE_MS = 5000;
 // it at once; the wait only keeps a message it dropped from holding the turn open.
 const STEER_PICKUP_MS = 5000;
 
+// The SDK's Query has this at runtime (0.3.165) but leaves it out of its typings.
+type CancelAsyncMessageQuery = { cancelAsyncMessage(messageUuid: string): Promise<boolean> };
+
 /**
  * Loads MCP server configurations from ~/.claude.json
  * @param {string} cwd - Current working directory for project-specific configs
@@ -1949,6 +1957,32 @@ async function queryClaudeSDK(
         return true;
       },
 
+      cancelSteer: async (steerId) => {
+        if (!pendingSteers.has(steerId) || turnCompleteSent) {
+          return false;
+        }
+        const cancelled = await (instance as unknown as CancelAsyncMessageQuery).cancelAsyncMessage(steerId);
+        if (!cancelled || !pendingSteers.delete(steerId)) {
+          return false;
+        }
+        ownPromptUuids.delete(steerId);
+        turnWriter.send(createNormalizedMessage({
+          kind: 'steer_cancelled',
+          steerId,
+          sessionId: capturedSessionId || sessionId || null,
+          provider: 'claude',
+        }));
+        // A `result` held for this message has nothing left to wait for.
+        if (pendingSteers.size === 0 && steerPickupTimer) {
+          clearTimeout(steerPickupTimer);
+          steerPickupTimer = null;
+          settleBetweenTurns();
+          completeTurn();
+          settleTurn();
+        }
+        return true;
+      },
+
       interruptTurn: async () => {
         if (!settleDeliveredTurn || turnCompleteSent) {
           return false;
@@ -2418,6 +2452,17 @@ async function interruptClaudeSDKTurnForSteer(sessionId: string, steerId: string
 }
 
 /**
+ * Drops a session's steered message the CLI has not taken yet, as
+ * LiveProcess.cancelSteer.
+ * @param {string} sessionId - Session identifier
+ * @param {string} steerId - The id the message was steered with
+ * @returns {Promise<boolean>} False when the message is not waiting
+ */
+async function cancelClaudeSDKSteer(sessionId: string, steerId: string) {
+  return Boolean(await getSession(sessionId)?.liveProcess?.cancelSteer(steerId));
+}
+
+/**
  * Lets go of the process a session keeps between turns, when no turn is in
  * flight: its background tasks are stopped and stdin is ended, so the CLI and
  * its MCP servers exit. A session with a turn running is left alone; the
@@ -2658,6 +2703,7 @@ export const claudeRuntime = {
   reconnectMcpServer: reconnectClaudeSDKMcpServer,
   steerTurn: steerClaudeSDKTurn,
   interruptForSteer: interruptClaudeSDKTurnForSteer,
+  cancelSteer: cancelClaudeSDKSteer,
   releaseIdleProcess: releaseClaudeSDKIdleProcess,
   closeAll: closeAllClaudeSDKProcesses,
 };
@@ -2673,6 +2719,7 @@ export {
   setClaudeSDKRemoteControl,
   steerClaudeSDKTurn,
   interruptClaudeSDKTurnForSteer,
+  cancelClaudeSDKSteer,
   releaseClaudeSDKIdleProcess,
   closeAllClaudeSDKProcesses,
   isClaudeSDKSessionActive,

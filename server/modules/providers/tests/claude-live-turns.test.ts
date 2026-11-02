@@ -15,6 +15,7 @@ import {
   queryClaudeSDK,
   releaseClaudeSDKIdleProcess,
   interruptClaudeSDKTurnForSteer,
+  cancelClaudeSDKSteer,
   steerClaudeSDKTurn,
 } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import type { NormalizedMessage, ProviderRuntimeContext } from '@/shared/types.js';
@@ -43,6 +44,8 @@ type Scripted = {
   calls: string[];
   /** When set, `interrupt()` never answers, like a CLI too busy to read its control requests. */
   ignoreInterrupt: boolean;
+  /** What `cancelAsyncMessage` answers: false once the CLI has dequeued the message. */
+  cancelAccepted: boolean;
 };
 
 /**
@@ -74,6 +77,7 @@ function createScriptedQuery(): { createQuery: NonNullable<ProviderRuntimeContex
     stdin,
     calls,
     ignoreInterrupt: false,
+    cancelAccepted: true,
   };
 
   const createQuery: NonNullable<ProviderRuntimeContext['createQuery']> = ({ prompt }) => {
@@ -112,6 +116,10 @@ function createScriptedQuery(): { createQuery: NonNullable<ProviderRuntimeContex
         }
       },
       stopTask: async (taskId: string) => { calls.push(`stopTask:${taskId}`); },
+      cancelAsyncMessage: async (uuid: string) => {
+        calls.push(`cancelAsyncMessage:${uuid}`);
+        return script.cancelAccepted;
+      },
       setModel: async (model?: string) => { calls.push(`setModel:${model}`); },
       setPermissionMode: async (mode: string) => { calls.push(`setPermissionMode:${mode}`); },
       close: () => { calls.push('close'); },
@@ -613,5 +621,50 @@ test('sending a pending message now interrupts the step, and the turn runs on wi
     assert.equal(second.writer.completes().length, 1);
     assert.deepEqual(userTexts(second.writer).map((message) => message.content), ['stop, run only one']);
     assert.equal(await interruptClaudeSDKTurnForSteer('app-steer-now', STEER_ID), false, 'taken already');
+  }, {}, { withBackgroundAgent: false });
+});
+
+test('a cancelled pending message is dropped from the CLI, and a held turn completes at once', async () => {
+  await withHeldSession('app-steer-cancel', async ({ script, send }) => {
+    const second = send('summarise');
+    await waitFor(() => script.prompts.length === 2);
+    assert.equal(await steerClaudeSDKTurn('app-steer-cancel', 'in Dutch', { steerId: STEER_ID }), true);
+    await waitFor(() => script.prompts.length === 3);
+    assert.equal(await cancelClaudeSDKSteer('app-steer-cancel', crypto.randomUUID()), false, 'only for a message that waits');
+
+    // The turn's result is held for the waiting message.
+    script.emit(text('Summary.'));
+    script.emit(result());
+    await settle();
+    assert.equal(second.writer.completes().length, 0);
+
+    assert.equal(await cancelClaudeSDKSteer('app-steer-cancel', STEER_ID), true);
+    assert.deepEqual(script.calls, [`cancelAsyncMessage:${STEER_ID}`]);
+    const cancelled = second.writer.sent.filter((message) => message.kind === 'steer_cancelled');
+    assert.deepEqual(cancelled.map((message) => message.steerId), [STEER_ID]);
+    await second.run;
+    assert.equal(second.writer.completes().length, 1);
+    assert.deepEqual(userTexts(second.writer), [], 'never shown as sent');
+    assert.equal(acceptsClaudeSDKLiveTurn('app-steer-cancel', {}), true);
+    assert.equal(await cancelClaudeSDKSteer('app-steer-cancel', STEER_ID), false, 'gone already');
+  }, {}, { withBackgroundAgent: false });
+});
+
+test('a pending message the CLI already took cannot be cancelled', async () => {
+  await withHeldSession('app-steer-cancel-late', async ({ script, send }) => {
+    const second = send('summarise');
+    await waitFor(() => script.prompts.length === 2);
+    assert.equal(await steerClaudeSDKTurn('app-steer-cancel-late', 'in Dutch', { steerId: STEER_ID }), true);
+    await waitFor(() => script.prompts.length === 3);
+
+    script.cancelAccepted = false;
+    assert.equal(await cancelClaudeSDKSteer('app-steer-cancel-late', STEER_ID), false);
+    assert.ok(!second.writer.sent.some((message) => message.kind === 'steer_cancelled'));
+
+    script.emit(replayOf(script.stdin[2]));
+    script.emit(text('Samenvatting.'));
+    script.emit(result());
+    await second.run;
+    assert.deepEqual(userTexts(second.writer).map((message) => message.content), ['in Dutch']);
   }, {}, { withBackgroundAgent: false });
 });

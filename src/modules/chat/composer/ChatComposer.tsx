@@ -91,6 +91,7 @@ type ChatComposerProps = {
   onDeleteQueuedDraft: () => void;
   pendingSteers: PendingSteer[];
   onSendPendingSteerNow: (steerId: string) => void;
+  onCancelPendingSteer: (steerId: string) => void;
   attachedFiles: File[];
   onRemoveAttachment: (index: number) => void;
   fileErrors: Map<string, string>;
@@ -168,6 +169,7 @@ export default function ChatComposer({
   onDeleteQueuedDraft,
   pendingSteers,
   onSendPendingSteerNow,
+  onCancelPendingSteer,
   attachedFiles,
   onRemoveAttachment,
   fileErrors,
@@ -340,7 +342,9 @@ export default function ChatComposer({
           content={steer.content}
           attachmentCount={steer.attachmentCount}
           interrupting={steer.interrupting}
+          cancelling={steer.cancelling}
           onSendNow={() => onSendPendingSteerNow(steer.steerId)}
+          onCancel={() => onCancelPendingSteer(steer.steerId)}
         />
       ))}
 
