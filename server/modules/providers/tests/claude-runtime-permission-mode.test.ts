@@ -6,7 +6,12 @@ import test from 'node:test';
 
 import { ClaudeSessionsProvider } from '@/modules/providers/list/claude/claude-sessions.provider.js';
 import { CLAUDE_PREDEFINED_MODELS } from '@/modules/providers/list/claude/claude-models.provider.js';
-import { queryClaudeSDK, setClaudeSDKPermissionMode } from '@/modules/providers/list/claude/claude-runtime.provider.js';
+import {
+  getPendingApprovalsForSession,
+  queryClaudeSDK,
+  resolveToolApproval,
+  setClaudeSDKPermissionMode,
+} from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import type { AnyRecord, ProviderRuntimeContext } from '@/shared/types.js';
 import { waitFor } from '@/shared/tests/wait-for.js';
 
@@ -108,6 +113,37 @@ test('leaving plan mode takes back only the tools plan mode added', async () => 
     await setClaudeSDKPermissionMode(SESSION_ID, 'default');
 
     assert.deepEqual(script.options().allowedTools, ['WebSearch'], 'the user\'s own entry stays');
+  });
+});
+
+test('building an approved plan switches the run to the mode sent with the approval', async () => {
+  const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
+  await withRun({ permissionMode: 'plan', toolsSettings }, async (script) => {
+    const options = script.options();
+    const answer = options.canUseTool('ExitPlanMode', { plan: 'Do it' }, { signal: new AbortController().signal, toolUseID: 'plan-1' });
+    await waitFor(() => getPendingApprovalsForSession(SESSION_ID).length === 1, 'the plan is waiting for approval');
+
+    resolveToolApproval(getPendingApprovalsForSession(SESSION_ID)[0].requestId, { allow: true, permissionMode: 'auto' });
+
+    const result = await answer;
+    assert.equal(result.behavior, 'allow');
+    assert.deepEqual(result.updatedPermissions, [{ type: 'setMode', mode: 'auto', destination: 'session' }]);
+    assert.equal(options.permissionMode, 'auto');
+    assert.deepEqual(options.allowedTools, [], 'plan mode\'s own tools are taken back');
+  });
+});
+
+test('approving a plan without a mode leaves the mode to the CLI', async () => {
+  await withRun({ permissionMode: 'plan' }, async (script) => {
+    const options = script.options();
+    const answer = options.canUseTool('ExitPlanMode', { plan: 'Do it' }, { signal: new AbortController().signal, toolUseID: 'plan-2' });
+    await waitFor(() => getPendingApprovalsForSession(SESSION_ID).length === 1, 'the plan is waiting for approval');
+
+    resolveToolApproval(getPendingApprovalsForSession(SESSION_ID)[0].requestId, { allow: true });
+
+    const result = await answer;
+    assert.equal(result.updatedPermissions, undefined);
+    assert.equal(options.permissionMode, 'plan');
   });
 });
 

@@ -50,7 +50,7 @@ export const PlanDisplay: React.FC<PlanDisplayProps> = ({
 
   const handleBuild = () => {
     if (pendingRequest && permissionCtx) {
-      permissionCtx.handlePermissionDecision(pendingRequest.requestId, { allow: true });
+      permissionCtx.handlePlanBuild(pendingRequest.requestId);
     }
   };
 

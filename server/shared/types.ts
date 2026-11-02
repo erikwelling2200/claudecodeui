@@ -685,6 +685,8 @@ export type ProviderPermissionDecision = {
   updatedInput?: unknown;
   message?: string;
   rememberEntry?: unknown;
+  /** Permission mode the session switches to as the call is allowed; only a plan approval uses it. */
+  permissionMode?: string;
 };
 
 export type ProviderRuntimePermissionGateway = {
