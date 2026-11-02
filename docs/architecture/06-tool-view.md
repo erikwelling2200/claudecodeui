@@ -443,7 +443,7 @@ Three consumers pick a panel three different ways:
 
 | Prompt | Panel | How it is chosen |
 | --- | --- | --- |
-| `ExitPlanMode` or `exit_plan_mode` | `PlanDisplay`, inline in the transcript | `PlanDisplay` calls `usePermission()` and searches the pending list itself, by tool name. `PermissionRequestsBanner` filters those two names out so the prompt is not offered twice |
+| `ExitPlanMode` or `exit_plan_mode` | `PlanDisplay`, inline in the transcript | `PlanDisplay` calls `usePermission()` and searches the pending list itself, by tool name. Build goes through `handlePlanBuild`, which moves the composer to `auto` (when the provider offers it) and sends that mode with the approval, so the server switches the run in the same `canUseTool` answer (`updatedPermissions: setMode`). `PermissionRequestsBanner` filters those two names out so the prompt is not offered twice |
 | `AskUserQuestion` | `AskUserQuestionPanel`, above the composer input | `getPermissionPanel(request.toolName)` from `permissionPanelRegistry.ts` |
 | anything else | The generic `Confirmation` banner | Fallback in `PermissionRequestsBanner` |
 

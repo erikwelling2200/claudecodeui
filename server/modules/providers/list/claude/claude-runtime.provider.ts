@@ -1761,6 +1761,19 @@ async function queryClaudeSDK(
         return { behavior: 'deny', message: 'Permission request cancelled' };
       }
 
+      // An approved plan leaves plan mode for the mode the user builds in, in
+      // the same step that lets the plan through, so the CLI cannot reset it.
+      if (decision.allow && toolName === 'ExitPlanMode' && CLAUDE_PERMISSION_MODES.has(decision.permissionMode)) {
+        const sdkPermissionMode = resolveSdkPermissionMode(decision.permissionMode, Boolean(options.toolsSettings?.skipPermissions));
+        sdkOptions.permissionMode = sdkPermissionMode;
+        syncPlanModeTools(sdkOptions.allowedTools, planModeGrants, decision.permissionMode);
+        return {
+          behavior: 'allow',
+          updatedInput: decision.updatedInput ?? input,
+          updatedPermissions: [{ type: 'setMode', mode: sdkPermissionMode, destination: 'session' }],
+        };
+      }
+
       if (decision.allow) {
         return { behavior: 'allow', updatedInput: decision.updatedInput ?? input };
       }

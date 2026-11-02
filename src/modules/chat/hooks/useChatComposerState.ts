@@ -1531,7 +1531,7 @@ export function useChatComposerState({
   const handlePermissionDecision = useCallback(
     (
       requestIds: string | string[],
-      decision: { allow?: boolean; message?: string; rememberEntry?: string | null; updatedInput?: unknown },
+      decision: { allow?: boolean; message?: string; rememberEntry?: string | null; updatedInput?: unknown; permissionMode?: PermissionMode },
     ) => {
       const ids = Array.isArray(requestIds) ? requestIds : [requestIds];
       const validIds = ids.filter(Boolean);
@@ -1547,6 +1547,7 @@ export function useChatComposerState({
           updatedInput: decision?.updatedInput,
           message: decision?.message,
           rememberEntry: decision?.rememberEntry,
+          permissionMode: decision?.permissionMode,
         });
       });
 
