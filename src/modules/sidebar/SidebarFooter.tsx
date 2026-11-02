@@ -1,31 +1,22 @@
-import { Settings, ArrowUpCircle, AlertTriangle } from 'lucide-react';
+import { Settings, AlertTriangle } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import SidebarUsage from '@/modules/sidebar/SidebarUsage';
 import { IS_PLATFORM } from '@/shared/utils';
-import type { ReleaseInfo } from '@/shared/types';
 
 const GITHUB_REPO_URL = 'https://github.com/siteboon/claudecodeui';
 
 type SidebarFooterProps = {
-  updateAvailable: boolean;
   restartRequired: boolean;
-  releaseInfo: ReleaseInfo | null;
-  latestVersion: string | null;
   currentVersion: string;
-  onShowVersionModal: () => void;
   onShowSettings: () => void;
   t: TFunction;
 };
 
-/** Rendered by SidebarContent at the bottom of the panel for plan usage, settings and update status. */
+/** Rendered by SidebarContent at the bottom of the panel for plan usage, settings and restart status. */
 export default function SidebarFooter({
-  updateAvailable,
   restartRequired,
-  releaseInfo,
-  latestVersion,
   currentVersion,
-  onShowVersionModal,
   onShowSettings,
   t,
 }: SidebarFooterProps) {
@@ -43,54 +34,6 @@ export default function SidebarFooter({
                 {t('version.restartRequired')}
               </span>
             </div>
-          </div>
-        </>
-      )}
-
-      {/* Update banner */}
-      {updateAvailable && (
-        <>
-          <div className="nav-divider" />
-          {/* Desktop update */}
-          <div className="hidden px-2 py-1.5 md:block">
-            <button
-              className="group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-blue-50/80 dark:hover:bg-blue-900/15"
-              onClick={onShowVersionModal}
-            >
-              <div className="relative flex-shrink-0">
-                <ArrowUpCircle className="h-4 w-4 text-blue-500 dark:text-blue-400" />
-                <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-normal text-blue-600 dark:text-blue-300">
-                  {releaseInfo?.title || `v${latestVersion}`}
-                </span>
-                <span className="text-[10px] text-blue-500/70 dark:text-blue-400/60">
-                  {t('version.updateAvailable')}
-                </span>
-              </div>
-            </button>
-          </div>
-
-          {/* Mobile update */}
-          <div className="px-3 py-2 md:hidden">
-            <button
-              className="flex h-11 w-full items-center gap-3 rounded-xl border border-blue-200/60 bg-blue-50/80 px-3.5 transition-all active:scale-[0.98] dark:border-blue-700/40 dark:bg-blue-900/15"
-              onClick={onShowVersionModal}
-            >
-              <div className="relative flex-shrink-0">
-                <ArrowUpCircle className="h-4 w-4 text-blue-500 dark:text-blue-400" />
-                <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
-              </div>
-              <div className="min-w-0 flex-1 text-left">
-                <span className="block truncate text-sm font-normal text-blue-600 dark:text-blue-300">
-                  {releaseInfo?.title || `v${latestVersion}`}
-                </span>
-                <span className="text-xs text-blue-500/70 dark:text-blue-400/60">
-                  {t('version.updateAvailable')}
-                </span>
-              </div>
-            </button>
           </div>
         </>
       )}
