@@ -2,7 +2,7 @@ import { Activity, Archive, Folder, MessageSquare, RotateCcw, Search, Trash2 } f
 import type { TFunction } from 'i18next';
 
 import { HighlightedSnippet, LLMProviderLogo, ScrollArea } from '@/shared/ui';
-import type { ArchivedProjectListItem, ArchivedSessionListItem, ConversationSearchResults, Project, RecentConversationListItem, ReleaseInfo, SearchProgress, SidebarProjectListProps, SidebarSearchMode } from '@/shared/types';
+import type { ArchivedProjectListItem, ArchivedSessionListItem, ConversationSearchResults, Project, RecentConversationListItem, SearchProgress, SidebarProjectListProps, SidebarSearchMode } from '@/shared/types';
 import { getAllSessions } from '@/modules/sidebar/utils/sidebarProjectFormatting';
 import { formatCompactAge } from '@/shared/utils';
 import SidebarFooter from '@/modules/sidebar/SidebarFooter';
@@ -97,12 +97,8 @@ type SidebarContentProps = {
   onToggleShowHiddenProjects: () => void;
   onCreateProject: () => void;
   onCollapseSidebar: () => void;
-  updateAvailable: boolean;
   restartRequired: boolean;
-  releaseInfo: ReleaseInfo | null;
-  latestVersion: string | null;
   currentVersion: string;
-  onShowVersionModal: () => void;
   onShowSettings: () => void;
   projectListProps: SidebarProjectListProps;
   t: TFunction;
@@ -147,12 +143,8 @@ export default function SidebarContent({
   onToggleShowHiddenProjects,
   onCreateProject,
   onCollapseSidebar,
-  updateAvailable,
   restartRequired,
-  releaseInfo,
-  latestVersion,
   currentVersion,
-  onShowVersionModal,
   onShowSettings,
   projectListProps,
   t,
@@ -672,12 +664,8 @@ export default function SidebarContent({
 
       {!isRenamingOnMobile && (
         <SidebarFooter
-          updateAvailable={updateAvailable}
           restartRequired={restartRequired}
-          releaseInfo={releaseInfo}
-          latestVersion={latestVersion}
           currentVersion={currentVersion}
-          onShowVersionModal={onShowVersionModal}
           onShowSettings={onShowSettings}
           t={t}
         />
