@@ -168,7 +168,9 @@
       "label": "Pending",
       "nextStep": "Sends at the next step",
       "interrupting": "Interrupting",
+      "cancelling": "Cancelling",
       "sendNow": "Interrupt and send now",
+      "cancel": "Cancel pending message",
       "attachments_one": "{{count}} file attached",
       "attachments_other": "{{count}} files attached"
     }

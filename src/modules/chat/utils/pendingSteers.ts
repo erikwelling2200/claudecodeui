@@ -14,6 +14,8 @@ export type PendingSteer = {
   attachmentCount: number;
   /** Set once the user asked to interrupt the turn so it goes in at once. */
   interrupting: boolean;
+  /** Set once the user asked to drop it, until the server confirms. */
+  cancelling: boolean;
   /** What to send another way should the server decline it; only the tab that sent it has this. */
   resend?: QueuedDraft;
 };
@@ -50,7 +52,9 @@ export function listPendingSteers(sessionId: string): PendingSteer[] {
 }
 
 /** Adds a waiting message, or fills in what another tab's announcement lacked. */
-export function addPendingSteer(steer: Omit<PendingSteer, 'interrupting'> & { interrupting?: boolean }): void {
+export function addPendingSteer(
+  steer: Omit<PendingSteer, 'interrupting' | 'cancelling'> & { interrupting?: boolean; cancelling?: boolean },
+): void {
   const existing = steers.find((candidate) => candidate.steerId === steer.steerId);
   if (existing) {
     publish(steers.map((candidate) => (candidate === existing
@@ -58,7 +62,7 @@ export function addPendingSteer(steer: Omit<PendingSteer, 'interrupting'> & { in
       : candidate)));
     return;
   }
-  publish([...steers, { ...steer, interrupting: steer.interrupting ?? false }]);
+  publish([...steers, { ...steer, interrupting: steer.interrupting ?? false, cancelling: steer.cancelling ?? false }]);
 }
 
 /** Removes a waiting message and returns it, or null when it was not waiting. */
@@ -98,6 +102,10 @@ export function declinePendingSteer(steerId: string): void {
 
 export function markPendingSteerInterrupting(steerId: string): void {
   publish(steers.map((steer) => (steer.steerId === steerId ? { ...steer, interrupting: true } : steer)));
+}
+
+export function markPendingSteerCancelling(steerId: string): void {
+  publish(steers.map((steer) => (steer.steerId === steerId ? { ...steer, cancelling: true } : steer)));
 }
 
 export function resetPendingSteers(): void {

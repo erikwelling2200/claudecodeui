@@ -233,6 +233,8 @@ export type MessageKind =
   | 'task_status'
   // A message sent mid-turn that the CLI has not taken into the turn yet.
   | 'steer_pending'
+  // A message sent mid-turn that was dropped before the CLI took it.
+  | 'steer_cancelled'
   // Remote Control started or stopped in the session's process, or failed to start.
   | 'remote_control';
 

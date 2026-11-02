@@ -264,6 +264,13 @@ export function useChatRealtimeHandlers({
           }
           return;
 
+        // A waiting message the user dropped before the CLI took it.
+        case 'steer_cancelled':
+          if (typeof msg.steerId === 'string') {
+            takePendingSteer(msg.steerId);
+          }
+          return;
+
         case 'steer_declined':
           if (typeof msg.steerId === 'string') {
             declinePendingSteer(msg.steerId);

@@ -28,7 +28,13 @@ import {
 } from '@/shared/chatDrafts';
 import { escapeRegExp } from '@/modules/chat/utils/chatFormatting';
 import { describeBackgroundTask, ownBackgroundTasks, sendFitsLiveTurn } from '@/modules/chat/utils/backgroundTasks';
-import { addPendingSteer, markPendingSteerInterrupting, onPendingSteerDeclined, usePendingSteers } from '@/modules/chat/utils/pendingSteers';
+import {
+  addPendingSteer,
+  markPendingSteerCancelling,
+  markPendingSteerInterrupting,
+  onPendingSteerDeclined,
+  usePendingSteers,
+} from '@/modules/chat/utils/pendingSteers';
 import { useFileMentions } from '@/modules/chat/hooks/useFileMentions';
 import { useInputHistory } from '@/modules/chat/hooks/useInputHistory';
 import { useSlashCommands } from '@/modules/chat/hooks/useSlashCommands';
@@ -1305,6 +1311,16 @@ export function useChatComposerState({
     sendMessage({ type: 'chat.steer-now', sessionId: steerSessionId, steerId });
   }, [sendMessage, steerSessionId]);
 
+  // Drops a pending message before Claude reads it. The card goes once the
+  // server confirms; when Claude took it already, it shows up as sent instead.
+  const cancelPendingSteer = useCallback((steerId: string) => {
+    if (!steerSessionId) {
+      return;
+    }
+    markPendingSteerCancelling(steerId);
+    sendMessage({ type: 'chat.steer-cancel', sessionId: steerSessionId, steerId });
+  }, [sendMessage, steerSessionId]);
+
   // A message the server could not add to a turn (it ended just before, or it
   // is not one this server runs) is queued, as any message sent while the chat
   // is busy was before mid-turn sending: the server sends it once the chat is idle.
@@ -1603,6 +1619,7 @@ export function useChatComposerState({
     deleteQueuedDraft,
     pendingSteers,
     sendPendingSteerNow,
+    cancelPendingSteer,
     handleVoiceTranscript,
     handleInputChange,
     handleKeyDown,

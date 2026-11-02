@@ -95,6 +95,8 @@ export type ProviderRuntimeGateway = {
   steerTurn(provider: LLMProvider, sessionId: string, command: string, options: AnyRecord): Promise<boolean>;
   /** Interrupts the turn in flight for a message still waiting to go into it; false when it is not waiting. */
   interruptForSteer(provider: LLMProvider, sessionId: string, steerId: string): Promise<boolean>;
+  /** Drops a message still waiting to go into the turn in flight; false when it is not waiting. */
+  cancelSteer(provider: LLMProvider, sessionId: string, steerId: string): Promise<boolean>;
   /** Whether a provider runtime still holds background work for the session after its turn ended. */
   hasBackgroundWork(sessionId: string): boolean;
   /** Whether a turn with these options goes into the process the session keeps between turns. */
@@ -307,6 +309,30 @@ async function handleChatSteerNow(
   }
   // False when the message went in meanwhile, which is what was asked for.
   await dependencies.runtime.interruptForSteer(session.provider as LLMProvider, sessionId, steerId);
+}
+
+/**
+ * Handles `chat.steer-cancel`: drops a message waiting to go into the running
+ * turn. The runtime confirms with `steer_cancelled`; when the CLI took the
+ * message already, it arrives as the user message it is.
+ */
+async function handleChatSteerCancel(
+  ws: WebSocket,
+  data: AnyRecord,
+  dependencies: ChatWebSocketDependencies
+): Promise<void> {
+  const sessionId = readRequiredSessionId(data);
+  const steerId = readSteerId(data);
+  if (!sessionId || !steerId) {
+    sendProtocolError(ws, 'STEER_ID_REQUIRED', 'chat.steer-cancel requires a sessionId and a steerId.', sessionId ?? undefined);
+    return;
+  }
+  const session = sessionsDb.getSessionById(sessionId);
+  if (!session) {
+    sendProtocolError(ws, 'SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`, sessionId);
+    return;
+  }
+  await dependencies.runtime.cancelSteer(session.provider as LLMProvider, sessionId, steerId);
 }
 
 /**
@@ -775,6 +801,7 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  * - `chat.send`                { sessionId, content, options? }
  * - `chat.steer`               { sessionId, steerId, content, options? }  (a message for the turn in flight)
  * - `chat.steer-now`           { sessionId, steerId }  (interrupt the turn so that message goes in at once)
+ * - `chat.steer-cancel`        { sessionId, steerId }  (drop that message before the CLI takes it)
  * - `chat.abort`               { sessionId }
  * - `chat.stop-task`           { sessionId, taskId }
  * - `chat.set-permission-mode` { sessionId, permissionMode }
@@ -883,6 +910,9 @@ export function handleChatConnection(
           return;
         case 'chat.steer-now':
           await handleChatSteerNow(ws, data, dependencies);
+          return;
+        case 'chat.steer-cancel':
+          await handleChatSteerCancel(ws, data, dependencies);
           return;
         case 'chat.abort':
           await handleChatAbort(ws, data, dependencies);
