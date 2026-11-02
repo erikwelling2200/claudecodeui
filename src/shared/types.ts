@@ -2054,5 +2054,7 @@ export type WorktreeCheckoutState = {
   exists?: boolean;
   branch?: string | null;
   head?: string | null;
+  /** The local branch with the newest commit in the whole repo, which may differ from the checked-out one. */
+  lastCommitBranch?: string | null;
   changedFiles?: number;
 };
