@@ -17,6 +17,7 @@ import type {
   ProjectSession,
   SessionEstablishedContext,
   SessionNavigationOptions,
+  SessionPromptBookends,
 } from '@/shared/types';
 import { useChatProviderState } from '@/modules/chat/hooks/useChatProviderState';
 import { useScheduledMessages } from '@/modules/chat/composer/useScheduledMessages';
@@ -24,6 +25,7 @@ import { useChatSessionState } from '@/modules/chat/hooks/useChatSessionState';
 import { useChatRealtimeHandlers } from '@/modules/chat/hooks/useChatRealtimeHandlers';
 import { useChatComposerState } from '@/modules/chat/hooks/useChatComposerState';
 import { useSessionStore } from '@/modules/chat/hooks/useSessionStore';
+import { useSessionPromptBookends } from '@/modules/chat/hooks/useSessionPromptBookends';
 import { setRemoteControlWanted, useRemoteControl } from '@/modules/chat/utils/remoteControl';
 import {
   useProcessingSessions,
@@ -50,6 +52,10 @@ type ChatInterfaceProps = {
   newSessionTrigger?: number;
   onTaskClick?: (...args: unknown[]) => void;
   onShowAllTasks?: (() => void) | null;
+  /** Receives this chat's first and last user message whenever either changes, for the sidebar beside the chat. */
+  onPromptBookendsChange?: (bookends: SessionPromptBookends) => void;
+  /** A request to scroll to the user message sent at `timestamp`; each new object is a new request. */
+  promptJumpRequest?: { timestamp: string } | null;
 };
 
 /**
@@ -73,6 +79,8 @@ function ChatInterface({
   externalMessageUpdate,
   newSessionTrigger,
   onShowAllTasks,
+  onPromptBookendsChange,
+  promptJumpRequest,
 }: ChatInterfaceProps) {
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings();
   const { subscribe } = useWebSocket();
@@ -153,6 +161,7 @@ function ChatInterface({
     visibleMessages,
     loadEarlierMessages,
     revealMessage,
+    jumpToPrompt,
     loadAllMessages,
     loadFullTranscript,
     allMessagesLoaded,
@@ -180,6 +189,22 @@ function ChatInterface({
     lastSeqRef,
     sessionStore,
   });
+
+  const promptBookends = useSessionPromptBookends({
+    sessionId: selectedSession?.id ?? null,
+    chatMessages,
+    hasMoreMessages,
+  });
+
+  useEffect(() => {
+    onPromptBookendsChange?.(promptBookends);
+  }, [promptBookends, onPromptBookendsChange]);
+
+  useEffect(() => {
+    if (promptJumpRequest) jumpToPrompt(promptJumpRequest.timestamp);
+    // Only a new request jumps; `jumpToPrompt` changes with every message.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [promptJumpRequest]);
 
   // Brand-new conversation: the composer allocated a stable session id via
   // the session gateway before the first send. Record it locally and put it

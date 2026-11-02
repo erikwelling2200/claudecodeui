@@ -1129,7 +1129,7 @@ export function useChatSessionState({
   // sits in a lazy row that has not mounted: widen the window to include it,
   // then scroll to the row's wrapper, which is in the DOM as soon as the row
   // is inside the window, mounted or not.
-  const revealMessage = useCallback((message: ChatMessage) => {
+  const revealMessage = useCallback((message: ChatMessage, highlight = false) => {
     const index = chatMessages.indexOf(message);
     if (index >= 0) {
       setVisibleMessageCount((prev) => visibleCountToReveal(chatMessages.length, index, prev));
@@ -1145,6 +1145,10 @@ export function useChatSessionState({
       const element = container ? findRenderedMessageElement(container, message.timestamp, remaining === 0) : null;
       if (element) {
         element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (highlight) {
+          element.classList.add('search-highlight-flash');
+          setTimeout(() => element.classList.remove('search-highlight-flash'), 4000);
+        }
         return;
       }
       if (remaining > 0) {
@@ -1153,6 +1157,18 @@ export function useChatSessionState({
     };
     requestAnimationFrame(() => attempt(10));
   }, [chatMessages]);
+
+  // Scrolls to the user message sent at `timestamp`. One outside the loaded tail goes through the search-target path,
+  // which loads the whole transcript first.
+  const jumpToPrompt = useCallback((timestamp: string) => {
+    const message = chatMessages.find((candidate) => candidate.type === 'user' && String(candidate.timestamp) === timestamp);
+    if (message) {
+      revealMessage(message, true);
+      return;
+    }
+    searchScrollActiveRef.current = true;
+    setSearchTarget({ timestamp });
+  }, [chatMessages, revealMessage]);
 
   return {
     chatMessages,
@@ -1174,6 +1190,7 @@ export function useChatSessionState({
     visibleMessages,
     loadEarlierMessages,
     revealMessage,
+    jumpToPrompt,
     loadAllMessages,
     loadFullTranscript,
     allMessagesLoaded,

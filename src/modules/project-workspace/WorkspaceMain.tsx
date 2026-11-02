@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, type Dispatch, type SetStateAction, useState } from 'react';
 
-import { ChatInterface } from '@/modules/chat';
+import { ChatInterface, SessionPromptsSection } from '@/modules/chat';
 import { FileTree } from '@/modules/file-tree';
 import { StandaloneShell } from '@/modules/standalone-shell';
 import { GitPanel } from '@/modules/git-panel';
@@ -9,7 +9,7 @@ import { BrowserUsePanel, useBrowserUseEnabled } from '@/modules/browser-use';
 import { usePaletteOpsRegister } from '@/modules/command-palette';
 import { TaskMasterPanel, useTaskMasterProjectSync, useTasksSettings } from '@/modules/task-master';
 import { WorktreeClaimsSidebar } from '@/modules/worktree-claims';
-import type { AppTab, DirectoryRevealRequest, Project, ProjectSession, SessionEstablishedContext, SessionNavigationOptions, SettingsMainTab } from '@/shared/types';
+import type { AppTab, DirectoryRevealRequest, Project, ProjectSession, SessionEstablishedContext, SessionNavigationOptions, SessionPromptBookends, SettingsMainTab } from '@/shared/types';
 import { useUiPreferences } from '@/shared/context/UiPreferencesContext';
 import { useFileOpenResolver } from '@/modules/project-workspace/hooks/useFileOpenResolver';
 import { EditorSidebar, useEditorSidebar } from '@/modules/code-editor';
@@ -70,6 +70,12 @@ function WorkspaceMain({
   // The folder an in-chat `path/` reference asked to reveal. Held as an object
   // so that re-clicking the same folder is a new request the tree acts on.
   const [revealDirectory, setRevealDirectory] = useState<DirectoryRevealRequest | null>(null);
+
+  // The chat's first and last user message, reported up by the chat so the sidebar beside it can quote them.
+  const [promptBookends, setPromptBookends] = useState<SessionPromptBookends>({ first: null, last: null });
+  // The sidebar's latest "scroll to this message" click, handed down to the chat; a new object per click.
+  const [promptJumpRequest, setPromptJumpRequest] = useState<{ timestamp: string } | null>(null);
+  const jumpToPrompt = useCallback((timestamp: string) => setPromptJumpRequest({ timestamp }), []);
 
   const shouldShowTasksTab = Boolean(tasksEnabled && isTaskMasterInstalled);
   const shouldShowBrowserTab = browserUseEnabled;
@@ -177,10 +183,14 @@ function WorkspaceMain({
                   externalMessageUpdate={externalMessageUpdate}
                   newSessionTrigger={newSessionTrigger}
                   onShowAllTasks={tasksEnabled ? showAllTasks : null}
+                  onPromptBookendsChange={setPromptBookends}
+                  promptJumpRequest={promptJumpRequest}
                 />
               </WorkspaceErrorBoundary>
             </div>
-            <WorktreeClaimsSidebar sessionId={selectedSession?.id ?? null} />
+            <WorktreeClaimsSidebar sessionId={selectedSession?.id ?? null}>
+              {(promptBookends.first || promptBookends.last) && <SessionPromptsSection bookends={promptBookends} onJump={jumpToPrompt} />}
+            </WorktreeClaimsSidebar>
           </div>
 
           {activeTab === 'files' && (

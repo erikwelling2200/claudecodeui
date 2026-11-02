@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { GitBranch, Loader2, Unlock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -17,16 +17,19 @@ type WorktreeClaim = {
 
 type WorktreeClaimsSidebarProps = {
   sessionId: string | null;
+  /** Rendered above the task list; the sidebar shows while this is set, even with no tasks or claims. */
+  children?: ReactNode;
 };
 
 // Claims are taken by the chat's hooks and run out on their own; nothing announces either, so the list is polled.
 const REFRESH_INTERVAL_MS = 15000;
 
 /**
- * Rendered by the project-workspace module beside the chat: the task list this
- * chat is keeping, and the worktrees it holds with a release button each.
+ * Rendered by the project-workspace module beside the chat: what that module
+ * passes in as children, the task list this chat is keeping, and the worktrees
+ * it holds with a release button each.
  */
-export function WorktreeClaimsSidebar({ sessionId }: WorktreeClaimsSidebarProps) {
+export function WorktreeClaimsSidebar({ sessionId, children }: WorktreeClaimsSidebarProps) {
   const { t } = useTranslation();
   const tasks = useSessionTasks(sessionId);
   // The chat's live claims, refreshed on an interval; empty hides the sidebar.
@@ -67,10 +70,11 @@ export function WorktreeClaimsSidebar({ sessionId }: WorktreeClaimsSidebarProps)
     }
   }, [refresh]);
 
-  if (claims.length === 0 && tasks.length === 0) return null;
+  if (!children && claims.length === 0 && tasks.length === 0) return null;
 
   return (
     <aside className="hidden w-64 flex-shrink-0 flex-col gap-3 overflow-y-auto border-l border-border/60 bg-card/40 p-3 lg:flex">
+      {children}
       {tasks.length > 0 && <SessionTasksSection tasks={tasks} />}
       {claims.length > 0 && (
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
