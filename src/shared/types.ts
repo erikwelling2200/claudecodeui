@@ -2033,6 +2033,18 @@ export type SessionTask = {
   blockedBy: string[];
 };
 
+/** One message the user sent in a chat, as the chat's sidebar quotes it; the timestamp is what a jump back to it resolves. */
+export type SessionPrompt = {
+  text: string;
+  timestamp: string;
+};
+
+/** The first and the last message the user sent in a chat, reported by the chat to the sidebar beside it; null while unknown. */
+export type SessionPromptBookends = {
+  first: SessionPrompt | null;
+  last: SessionPrompt | null;
+};
+
 /** One repository's checkout within a worktree, with what is checked out there. */
 export type WorktreeCheckoutState = {
   repo: string;

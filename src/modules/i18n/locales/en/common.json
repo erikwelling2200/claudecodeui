@@ -441,5 +441,12 @@
     "title": "Tasks",
     "open": "{{count}} open",
     "blockedBy": "Blocked by {{ids}}"
+  },
+  "sessionPrompts": {
+    "first": "First message",
+    "last": "Last message",
+    "showMore": "Show more",
+    "showLess": "Show less",
+    "jump": "Scroll to this message"
   }
 }
