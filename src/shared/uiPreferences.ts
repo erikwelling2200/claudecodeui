@@ -12,6 +12,7 @@ import { readUserPreference } from '@/shared/userSettings';
 export type UiPreferences = {
   showRawParameters: boolean;
   showThinking: boolean;
+  expandThinking: boolean;
   sendByCtrlEnter: boolean;
   sidebarVisible: boolean;
   keepProjectsExpanded: boolean;
@@ -27,6 +28,7 @@ export type UiPreferencesAction =
 const DEFAULTS: UiPreferences = {
   showRawParameters: false,
   showThinking: true,
+  expandThinking: false,
   sendByCtrlEnter: false,
   sidebarVisible: true,
   keepProjectsExpanded: false,

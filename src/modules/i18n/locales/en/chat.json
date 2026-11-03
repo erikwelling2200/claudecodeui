@@ -152,6 +152,8 @@
     "remoteControl": "Remote Control",
     "remoteControlOn": "Remote Control on",
     "remoteControlOff": "Remote Control off",
+    "expandThinking": "Expand all thinking",
+    "collapseThinking": "Collapse all thinking",
     "openRemoteControl": "Open on claude.ai",
     "clearInput": "Clear input",
     "scrollToBottom": "Scroll to bottom",

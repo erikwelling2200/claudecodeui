@@ -3,6 +3,7 @@ import { BrainIcon, ChevronDownIcon } from 'lucide-react';
 
 import { cn } from '@/shared/utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger, Shimmer } from '@/shared/ui';
+import { useExpandThinking } from '@/modules/chat/context/ExpandThinkingContext';
 
 /* ─── Context ────────────────────────────────────────────────────── */
 
@@ -48,8 +49,9 @@ export const Reasoning = React.memo<ReasoningProps>(
     children,
     ...props
   }) => {
-    const resolvedDefaultOpen = defaultOpen ?? isStreaming;
-    const isExplicitlyClosed = defaultOpen === false;
+    const expandAll = useExpandThinking();
+    const resolvedDefaultOpen = expandAll || (defaultOpen ?? isStreaming);
+    const isExplicitlyClosed = defaultOpen === false && !expandAll;
 
     // Controllable open state
     const [internalOpen, setInternalOpen] = React.useState(resolvedDefaultOpen);
@@ -62,6 +64,14 @@ export const Reasoning = React.memo<ReasoningProps>(
       },
       [isControlled, onOpenChange]
     );
+
+    // Follow the expand-all toggle when it flips, not on mount.
+    const prevExpandAllRef = React.useRef(expandAll);
+    React.useEffect(() => {
+      if (prevExpandAllRef.current === expandAll) return;
+      prevExpandAllRef.current = expandAll;
+      setIsOpen(expandAll);
+    }, [expandAll, setIsOpen]);
 
     // Duration tracking
     const [duration, setDuration] = React.useState<number | undefined>(durationProp);
@@ -96,14 +106,14 @@ export const Reasoning = React.memo<ReasoningProps>(
 
     // Auto-close after streaming ends
     React.useEffect(() => {
-      if (hasEverStreamedRef.current && !isStreaming && isOpen && !hasAutoClosed) {
+      if (hasEverStreamedRef.current && !isStreaming && isOpen && !hasAutoClosed && !expandAll) {
         const timer = setTimeout(() => {
           setIsOpen(false);
           setHasAutoClosed(true);
         }, AUTO_CLOSE_DELAY);
         return () => clearTimeout(timer);
       }
-    }, [isStreaming, isOpen, setIsOpen, hasAutoClosed]);
+    }, [isStreaming, isOpen, setIsOpen, hasAutoClosed, expandAll]);
 
     const contextValue = React.useMemo(
       () => ({ duration, isOpen, isStreaming, setIsOpen }),

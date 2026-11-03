@@ -10,7 +10,7 @@ import { usePaletteOpsRegister } from '@/modules/command-palette';
 import { TaskMasterPanel, useTaskMasterProjectSync, useTasksSettings } from '@/modules/task-master';
 import { WorktreeClaimsSidebar } from '@/modules/worktree-claims';
 import type { AppTab, DirectoryRevealRequest, Project, ProjectSession, SessionEstablishedContext, SessionNavigationOptions, SessionPromptBookends, SettingsMainTab } from '@/shared/types';
-import { useUiPreferences } from '@/shared/context/UiPreferencesContext';
+import { useSetUiPreference, useUiPreferences } from '@/shared/context/UiPreferencesContext';
 import { useFileOpenResolver } from '@/modules/project-workspace/hooks/useFileOpenResolver';
 import { EditorSidebar, useEditorSidebar } from '@/modules/code-editor';
 import WorkspaceHeader from '@/modules/project-workspace/WorkspaceHeader';
@@ -61,7 +61,9 @@ function WorkspaceMain({
   onRenameSession,
 }: WorkspaceMainProps) {
   const preferences = useUiPreferences();
-  const { showRawParameters, showThinking, sendByCtrlEnter } = preferences;
+  const { showRawParameters, showThinking, expandThinking, sendByCtrlEnter } = preferences;
+  const setPreference = useSetUiPreference();
+  const toggleExpandThinking = useCallback(() => setPreference('expandThinking', !expandThinking), [setPreference, expandThinking]);
 
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings();
   const browserUseEnabled = useBrowserUseEnabled();
@@ -179,6 +181,8 @@ function WorkspaceMain({
                   onShowSettings={onShowSettings}
                   showRawParameters={showRawParameters}
                   showThinking={showThinking}
+                  expandThinking={expandThinking}
+                  onToggleExpandThinking={toggleExpandThinking}
                   sendByCtrlEnter={sendByCtrlEnter}
                   externalMessageUpdate={externalMessageUpdate}
                   newSessionTrigger={newSessionTrigger}

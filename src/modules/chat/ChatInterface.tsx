@@ -8,6 +8,7 @@ import { useWebSocket } from '@/shared/context/WebSocketContext';
 import PermissionContext from '@/modules/chat/context/PermissionContext';
 import { MarkdownWorkspaceContext } from '@/modules/chat/context/MarkdownWorkspaceContext';
 import { TranscriptSessionContext } from '@/modules/chat/context/TranscriptSessionContext';
+import { ExpandThinkingContext } from '@/modules/chat/context/ExpandThinkingContext';
 import { api } from '@/shared/api';
 import { useSingleFolderProviders } from '@/shared/hooks/useProviderCapabilities';
 import { getFolderName } from '@/shared/utils';
@@ -47,6 +48,8 @@ type ChatInterfaceProps = {
   onShowSettings?: () => void;
   showRawParameters?: boolean;
   showThinking?: boolean;
+  expandThinking?: boolean;
+  onToggleExpandThinking?: () => void;
   sendByCtrlEnter?: boolean;
   externalMessageUpdate?: number;
   newSessionTrigger?: number;
@@ -75,6 +78,8 @@ function ChatInterface({
   onShowSettings,
   showRawParameters,
   showThinking,
+  expandThinking = false,
+  onToggleExpandThinking,
   sendByCtrlEnter,
   externalMessageUpdate,
   newSessionTrigger,
@@ -519,6 +524,7 @@ function ChatInterface({
       <div className="flex h-full min-h-0 flex-col">
         <MarkdownWorkspaceContext.Provider value={markdownWorkspaceValue}>
           <TranscriptSessionContext.Provider value={transcriptSessionValue}>
+          <ExpandThinkingContext.Provider value={expandThinking}>
             <ChatMessagesPane
               scrollContainerRef={scrollContainerRef}
               // Not redundant with the `scroll` listener. A first page is 20 rows,
@@ -575,6 +581,7 @@ function ChatInterface({
               onForkFromMessage={supportsSessionForking ? handleForkFromMessage : undefined}
               onLoadFullTranscript={loadFullTranscript}
             />
+          </ExpandThinkingContext.Provider>
           </TranscriptSessionContext.Provider>
         </MarkdownWorkspaceContext.Provider>
 
@@ -622,6 +629,8 @@ function ChatInterface({
           onToggleCommandMenu={handleToggleCommandMenu}
           remoteControl={provider === 'claude' ? remoteControl : null}
           onToggleRemoteControl={handleToggleRemoteControl}
+          expandThinking={showThinking && onToggleExpandThinking ? expandThinking : null}
+          onToggleExpandThinking={onToggleExpandThinking}
           onSubmit={handleSubmit}
           isDragActive={isDragActive}
           queuedDraft={queuedDraft}
