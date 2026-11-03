@@ -34,6 +34,7 @@ test('a fresh install gets the documented defaults', () => {
   assert.deepEqual(readStoredUiPreferences(), {
     showRawParameters: false,
     showThinking: true,
+    expandThinking: false,
     sendByCtrlEnter: false,
     sidebarVisible: true,
     keepProjectsExpanded: false,

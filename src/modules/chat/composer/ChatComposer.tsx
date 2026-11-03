@@ -10,7 +10,7 @@ import type {
   RefObject,
   TouchEvent,
 } from 'react';
-import { PaperclipIcon, SlashIcon,Loader2, ArrowUpIcon, PencilIcon, RadioTowerIcon, ExternalLinkIcon } from 'lucide-react';
+import { PaperclipIcon, SlashIcon,Loader2, ArrowUpIcon, PencilIcon, RadioTowerIcon, ExternalLinkIcon, BrainIcon } from 'lucide-react';
 
 import { useVoiceInput } from '@/modules/chat/hooks/useVoiceInput';
 import { useVoiceAvailable } from '@/modules/chat/hooks/useVoiceAvailable';
@@ -75,6 +75,9 @@ type ChatComposerProps = {
   /** Null when the provider has no Remote Control. */
   remoteControl: RemoteControlStatus | null;
   onToggleRemoteControl: () => void;
+  /** Null hides the toggle, as when thinking is not shown at all. */
+  expandThinking: boolean | null;
+  onToggleExpandThinking?: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement> | MouseEvent<HTMLButtonElement> | TouchEvent<HTMLButtonElement>) => void;
   isDragActive: boolean;
   queuedDraft: QueuedDraft | null;
@@ -155,6 +158,8 @@ export default function ChatComposer({
   onToggleCommandMenu,
   remoteControl,
   onToggleRemoteControl,
+  expandThinking,
+  onToggleExpandThinking,
   onSubmit,
   isDragActive,
   queuedDraft,
@@ -490,6 +495,18 @@ export default function ChatComposer({
             >
               <SlashIcon />
             </PromptInputButton>
+
+            {expandThinking !== null && (
+              <PromptInputButton
+                tooltip={{ content: expandThinking ? t('input.collapseThinking') : t('input.expandThinking') }}
+                onClick={onToggleExpandThinking}
+                aria-label={t('input.expandThinking')}
+                aria-pressed={expandThinking}
+                className={expandThinking ? 'bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary' : undefined}
+              >
+                <BrainIcon />
+              </PromptInputButton>
+            )}
 
             {remoteControl && (
               <PromptInputButton
