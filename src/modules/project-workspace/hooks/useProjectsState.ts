@@ -92,6 +92,9 @@ const withoutSessionId = (ids: Set<string>, targetSessionId: string): Set<string
   return next;
 };
 
+/** Whether the user can actually see the session on screen: the tab is visible and its window has focus. */
+const pageIsActive = (): boolean => document.visibilityState === 'visible' && document.hasFocus();
+
 const serialize = (value: unknown) => JSON.stringify(value ?? null);
 
 const getSessionProvider = (session: ProjectSession): LLMProvider => {
@@ -486,10 +489,13 @@ export function useProjectsState({
     sessionLookupRef.current = null;
   }, [sessionId]);
 
-  /** Adds a session that is not the one on screen to an indicator set; a session the user is looking at has nothing to flag. */
+  /**
+   * Adds a session to an indicator set unless the user is looking at it. The open session counts as looked at only
+   * while the window has focus; flagged while unfocused, it is cleared again once the window regains focus.
+   */
   const flagSession = useCallback((setIds: Dispatch<SetStateAction<Set<string>>>, targetSessionId: string) => {
     const viewedSessionId = selectedSessionRef.current?.id ?? sessionId ?? null;
-    if (targetSessionId === viewedSessionId) {
+    if (targetSessionId === viewedSessionId && pageIsActive()) {
       return;
     }
 
@@ -527,6 +533,21 @@ export function useProjectsState({
     clearSessionAttention(targetSessionId);
     setUnreadSessionIds((previous) => withoutSessionId(previous, targetSessionId));
   }, [clearSessionAttention]);
+
+  useEffect(() => {
+    const clearViewedSessionOnReturn = () => {
+      if (pageIsActive()) {
+        clearSessionIndicators(selectedSessionRef.current?.id ?? sessionIdRef.current ?? null);
+      }
+    };
+
+    window.addEventListener('focus', clearViewedSessionOnReturn);
+    document.addEventListener('visibilitychange', clearViewedSessionOnReturn);
+    return () => {
+      window.removeEventListener('focus', clearViewedSessionOnReturn);
+      document.removeEventListener('visibilitychange', clearViewedSessionOnReturn);
+    };
+  }, [clearSessionIndicators]);
 
   const fetchProjects = useCallback(async ({ showLoadingState = true }: FetchProjectsOptions = {}) => {
     // Claimed before the request starts and read again in `finally`, so the
