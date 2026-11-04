@@ -380,7 +380,9 @@ async function dispatchRun(
   // A session without a provider id has not run its first turn yet. Editing the
   // first message also restarts from scratch, but the chat already had its first turn.
   const isFirstMessage = !session.provider_session_id && !extraRuntimeOptions.resumeFromScratch;
-  const command = chatToolsService.appendToPrompt(typeof data.content === 'string' ? data.content : '', isFirstMessage);
+  const content = typeof data.content === 'string' ? data.content : '';
+  const command = chatToolsService.appendToPrompt(content, isFirstMessage);
+  const followUpInstruction = chatToolsService.followUpForSlashCommand(content, isFirstMessage);
 
   // Record what this turn runs with so reopening the session later restores the
   // same model and reasoning effort, and so the resume path has a
@@ -418,6 +420,7 @@ async function dispatchRun(
     additionalDirectories,
     // The recorded choice also covers turns no composer sent, such as a thread's first turn.
     remoteControl: clientOptions.remoteControl === true || Boolean(session.remote_control),
+    ...(followUpInstruction ? { followUpInstruction } : {}),
   };
 
   let failure: string | null = null;

@@ -1395,6 +1395,30 @@ async function queryClaudeSDK(
     return { ...(message as AnyRecord), uuid: messageUuid };
   });
 
+  // Steered messages the server wrote rather than the user; the client never shows them.
+  const hiddenSteerUuids = new Set<string>();
+  // Instructions for a turn that opens with a skill. Appended to the command they
+  // would reach the skill as its arguments, so they are steered in once it runs.
+  const followUpInstruction = typeof options.followUpInstruction === 'string' ? options.followUpInstruction.trim() : '';
+  const slashCommandName = /^\/(\S+)/.exec(command.trimStart())?.[1] ?? null;
+  let commandIsSkill = false;
+  let followUpSent = !followUpInstruction || !slashCommandName;
+  const steerHiddenPrompt = (text: string) => {
+    const steered = trackPrompt([{
+      type: 'user',
+      message: { role: 'user', content: appendPromptText('', text) },
+      parent_tool_use_id: null,
+      timestamp: new Date().toISOString(),
+    }]).map((message): AnyRecord => ({ ...message, priority: 'next' }));
+    if (!pushPrompt(steered)) {
+      return;
+    }
+    for (const message of steered) {
+      pendingSteers.add(message.uuid);
+      hiddenSteerUuids.add(message.uuid);
+    }
+  };
+
   // Marks the process as between turns once a turn is over, and notes whether
   // that turn left background work going. The process stays up either way.
   //
@@ -2127,7 +2151,7 @@ async function queryClaudeSDK(
         if (pendingSteers.delete(message.uuid)) {
           // Shown where the model read it. The `local_` id lets the client
           // retire it for the transcript's own row once that is loaded.
-          const delivered = context.normalizeMessage({
+          const delivered = hiddenSteerUuids.delete(message.uuid) ? [] : context.normalizeMessage({
             type: 'user',
             uuid: message.uuid,
             timestamp: new Date().toISOString(),
@@ -2214,6 +2238,14 @@ async function queryClaudeSDK(
 
       if (message.type === 'system' && message.subtype === 'init' && typeof message.apiKeySource === 'string') {
         billedToKey ||= !['none', 'oauth'].includes(message.apiKeySource);
+      }
+      if (message.type === 'system' && message.subtype === 'init' && Array.isArray(message.skills)) {
+        commandIsSkill = message.skills.includes(slashCommandName);
+      }
+      // A built-in CLI command never reaches the model, so only a skill gets the follow-up.
+      if (!followUpSent && commandIsSkill && message.type === 'assistant' && !message.parent_tool_use_id) {
+        followUpSent = true;
+        steerHiddenPrompt(followUpInstruction);
       }
       if (message.type === 'rate_limit_event' && !billedToKey) {
         claudeBilling.noteRateLimit(message.rate_limit_info);

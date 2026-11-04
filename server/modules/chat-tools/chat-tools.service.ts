@@ -208,13 +208,25 @@ export const chatToolsService = {
    * Returns the prompt with the configured text appended, when the append mode
    * covers this message. `isFirstMessage` is true for the turn that starts a
    * chat's conversation. Slash commands are left alone, because the CLI would
-   * read the appended text as the command's arguments.
+   * read the appended text as the command's arguments; see {@link followUpForSlashCommand}.
    */
   appendToPrompt(prompt: string, isFirstMessage: boolean): string {
     const { appendMode, appendText } = readSettings();
     if (appendMode === 'off' || (appendMode === 'first' && !isFirstMessage)) return prompt;
     if (prompt.trimStart().startsWith('/')) return prompt;
     return appendPromptText(prompt, appendText);
+  },
+
+  /**
+   * The configured text for a slash command the append mode covers, worded to be
+   * steered into the command's turn once it runs; null when nothing is due.
+   */
+  followUpForSlashCommand(prompt: string, isFirstMessage: boolean): string | null {
+    const { appendMode, appendText } = readSettings();
+    if (appendMode === 'off' || (appendMode === 'first' && !isFirstMessage)) return null;
+    if (!prompt.trimStart().startsWith('/') || !appendText.trim()) return null;
+    return `This note comes from the app, not from the user. ${appendText.trim()} `
+      + 'Then go on with the command you are running from where you left off: this is not a new request.';
   },
 
   getMcpToken(): string {
