@@ -3,13 +3,13 @@ import { html } from '@codemirror/lang-html';
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
 import { StreamLanguage } from '@codemirror/language';
-import { csharp } from '@codemirror/legacy-modes/mode/clike';
 import { markdown } from '@codemirror/lang-markdown';
 import { python } from '@codemirror/lang-python';
 import { getChunks } from '@codemirror/merge';
 import { EditorView, ViewPlugin } from '@codemirror/view';
 import { showMinimap } from '@replit/codemirror-minimap';
 
+import { csharpSyntaxExtensions } from '@/modules/code-editor/utils/csharpLanguage';
 import type { CodeEditorFile } from '@/shared/types';
 
 // Lightweight lexer for `.env` files (including `.env.*` variants).
@@ -28,9 +28,6 @@ const envLanguage = StreamLanguage.define({
     return null;
   },
 });
-
-// No official Lezer grammar exists for C#, so this uses the CodeMirror 5 stream mode.
-const csharpLanguage = StreamLanguage.define(csharp);
 
 export const getLanguageExtensions = (filename: string) => {
   const lowerName = filename.toLowerCase();
@@ -52,7 +49,7 @@ export const getLanguageExtensions = (filename: string) => {
     case 'py':
       return [python()];
     case 'cs':
-      return [csharpLanguage];
+      return csharpSyntaxExtensions;
     case 'html':
     case 'htm':
       return [html()];

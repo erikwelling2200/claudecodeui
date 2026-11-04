@@ -54,6 +54,7 @@ import browserUseRoutes from './modules/browser-use/browser-use.routes.js';
 import { assetsRoutes } from './modules/assets/index.js';
 import { chatToolsMcpRoutes, chatToolsRoutes, chatToolsService } from './modules/chat-tools/index.js';
 import { fileTreeRoutes } from './modules/file-tree/index.js';
+import { csharpLanguageRoutes } from './modules/csharp-language/index.js';
 import { worktreesRoutes } from './modules/worktrees/index.js';
 import { worktreeClaimsRoutes } from './modules/worktree-claims/index.js';
 import { sessionTasksRoutes } from './modules/session-tasks/index.js';
@@ -164,6 +165,9 @@ app.use('/api/auth', authRoutes);
 
 // File Tree API Routes (protected)
 app.use('/api/file-tree', authenticateToken, fileTreeRoutes);
+
+// C# semantic coloring, go to definition and find references for the code editor, served by Roslyn
+app.use('/api/csharp-language', authenticateToken, csharpLanguageRoutes);
 
 // Projects API Routes (protected)
 app.use('/api/projects', authenticateToken, projectModuleRoutes);

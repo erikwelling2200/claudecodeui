@@ -11,6 +11,7 @@ import { useCodeEditorSettings } from '@/modules/code-editor/hooks/useCodeEditor
 import { useEditorKeyboardShortcuts } from '@/modules/code-editor/hooks/useEditorKeyboardShortcuts';
 import type { CodeEditorFile, CodeEditorGotoTarget } from '@/shared/types';
 import { createMinimapExtension, createScrollToFirstChunkExtension, getLanguageExtensions } from '@/modules/code-editor/utils/editorExtensions';
+import { createCsharpSemanticExtension } from '@/modules/code-editor/utils/csharpSemanticLayer';
 import { getEditorStyles } from '@/modules/code-editor/utils/editorStyles';
 import { createEditorToolbarPanelExtension } from '@/modules/code-editor/utils/editorToolbarPanel';
 import CodeEditorFooter from '@/modules/code-editor/CodeEditorFooter';
@@ -31,6 +32,8 @@ type CodeEditorProps = {
   isExpanded?: boolean;
   onToggleExpand?: (() => void) | null;
   onPopOut?: (() => void) | null;
+  // Opens another file at a 1-based line; go to definition and find references use it to leave this file.
+  onOpenLocation?: (filePath: string, line: number) => void;
 };
 
 /** Rendered by the code-editor module's own EditorSidebar, and re-exported on the module barrel, as the full CodeMirror editor for one open file. */
@@ -43,6 +46,7 @@ export default function CodeEditor({
   isExpanded = false,
   onToggleExpand = null,
   onPopOut = null,
+  onOpenLocation,
 }: CodeEditorProps) {
   const { t } = useTranslation('codeEditor');
   const paletteOps = usePaletteOps();
@@ -186,11 +190,36 @@ export default function CodeEditor({
     [file, isExpanded, isSidebar, onPopOut, onToggleExpand, showDiff, t],
   );
 
+  // The Roslyn-backed layer for C#: semantic colors, F12 and Shift+F12. It needs an absolute path to find the solution.
+  const csharpSemanticExtension = useMemo(() => {
+    if (!onOpenLocation || file.name.split('.').pop()?.toLowerCase() !== 'cs') return null;
+    const isAbsolutePath = /^([a-zA-Z]:[\\/]|[\\/])/.test(file.path);
+    const absolutePath = isAbsolutePath || !projectPath ? file.path : `${projectPath.replace(/[\\/]+$/, '')}/${file.path}`;
+    return createCsharpSemanticExtension({
+      filePath: absolutePath,
+      onOpenLocation,
+      labels: {
+        loading: (solutionName) => t('csharp.loading', 'Loading {{solutionName}}', { solutionName }),
+        findingDefinition: t('csharp.findingDefinition', 'Finding definition'),
+        findingReferences: t('csharp.findingReferences', 'Finding references'),
+        noDefinition: t('csharp.noDefinition', 'No definition found'),
+        noReferences: t('csharp.noReferences', 'No references found'),
+        definitions: (count) => t('csharp.definitions', '{{count}} definitions', { count }),
+        references: (count) => t('csharp.references', '{{count}} references', { count }),
+        close: t('actions.close', 'Close'),
+      },
+    });
+  }, [file.name, file.path, onOpenLocation, projectPath, t]);
+
   const extensions = useMemo(() => {
     const allExtensions: Extension[] = [
       ...getLanguageExtensions(file.name),
       ...toolbarPanelExtension,
     ];
+
+    if (csharpSemanticExtension) {
+      allExtensions.push(csharpSemanticExtension);
+    }
 
     if (file.diffInfo && showDiff && file.diffInfo.old_string !== undefined) {
       allExtensions.push(
@@ -212,6 +241,7 @@ export default function CodeEditor({
 
     return allExtensions;
   }, [
+    csharpSemanticExtension,
     file.diffInfo,
     file.name,
     minimapExtension,

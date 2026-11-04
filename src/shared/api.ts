@@ -330,6 +330,16 @@ export const api = {
   getFiles: (projectId: string, options: ApiRequestOptions = {}) =>
     get(`/api/file-tree/projects/${projectId}/files${query({ respectGitignore: true })}`, options),
 
+  // C# semantic layer served by Roslyn. Each call sends the editor's own text, so unsaved edits are understood.
+  csharpLanguage: {
+    status: (filePath: string) => post('/api/csharp-language/status', { filePath }),
+    semanticTokens: (filePath: string, text: string) => post('/api/csharp-language/semantic-tokens', { filePath, text }),
+    definition: (filePath: string, text: string, line: number, character: number) =>
+      post('/api/csharp-language/definition', { filePath, text, line, character }),
+    references: (filePath: string, text: string, line: number, character: number) =>
+      post('/api/csharp-language/references', { filePath, text, line, character }),
+  },
+
   // File operations
   createFile: (
     projectId: string,

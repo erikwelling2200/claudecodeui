@@ -1851,3 +1851,83 @@ export type ChatToolsSettings = {
   /** Whether the `cloudcli-chat` MCP server (the `set_chat_name` tool) is registered with every provider. */
   renameToolEnabled: boolean;
 };
+
+// ---------------------------
+//----------------- CSHARP LANGUAGE MODULE CONTRACTS ------------
+/**
+ * Load state of the Roslyn language server behind one `.sln`, as the code editor shows it.
+ * `starting` and `loading` both mean the semantic layer is not there yet; `unavailable` means no
+ * solution or no Roslyn install was found, so the editor keeps only its syntactic coloring.
+ */
+export type CsharpLanguageServerState = 'starting' | 'loading' | 'ready' | 'failed' | 'unavailable';
+
+/**
+ * Where the language server for a `.cs` file stands. `solutionPath` is null when no `.sln` was found
+ * above the file; `message` explains a `failed` or `unavailable` state. `semanticRevision` goes up each
+ * time Roslyn says earlier semantic tokens are out of date, such as when analysis that was still partial
+ * at load completes, so an editor re-fetches its tokens when it changes.
+ */
+export type CsharpLanguageStatus = {
+  state: CsharpLanguageServerState;
+  solutionPath: string | null;
+  message: string | null;
+  semanticRevision: number;
+};
+
+/**
+ * One `.cs` document as the editor holds it right now. The text is the editor buffer, not the file on
+ * disk, so results stay correct for unsaved edits. Line and character are 0-based UTF-16 positions, the
+ * same units as the language server protocol and JavaScript strings.
+ */
+export type CsharpDocumentRequest = {
+  filePath: string;
+  text: string;
+};
+
+/** A {@link CsharpDocumentRequest} plus the caret position the definition or references lookup starts at. */
+export type CsharpPositionRequest = CsharpDocumentRequest & {
+  line: number;
+  character: number;
+};
+
+/**
+ * One classified identifier from Roslyn's semantic tokens, already decoded from the protocol's
+ * relative encoding. `type` is Roslyn's token type name, such as `class`, `struct`, `method` or `parameter`.
+ */
+export type CsharpSemanticToken = {
+  line: number;
+  character: number;
+  length: number;
+  type: string;
+};
+
+/**
+ * One definition or reference location. `preview` is the trimmed source line, so a references list
+ * can show context without reading every file. Line and character are 0-based.
+ */
+export type CsharpLocation = {
+  filePath: string;
+  line: number;
+  character: number;
+  preview: string;
+};
+
+/**
+ * Semantic results answer only once the solution is loaded; until then they carry the current status so
+ * the editor can keep its loading indicator up and ask again.
+ */
+export type CsharpSemanticResult<TValue> = {
+  status: CsharpLanguageStatus;
+  result: TValue | null;
+};
+
+/**
+ * The C# language service consumed by the csharp-language routes. Each call finds the `.sln` above the
+ * file, starts its Roslyn server on first use and reuses it after that.
+ */
+export type CsharpLanguageServices = {
+  getStatus(filePath: string): Promise<CsharpLanguageStatus>;
+  getSemanticTokens(request: CsharpDocumentRequest): Promise<CsharpSemanticResult<CsharpSemanticToken[]>>;
+  findDefinition(request: CsharpPositionRequest): Promise<CsharpSemanticResult<CsharpLocation[]>>;
+  findReferences(request: CsharpPositionRequest): Promise<CsharpSemanticResult<CsharpLocation[]>>;
+};

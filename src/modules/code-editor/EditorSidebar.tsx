@@ -19,6 +19,8 @@ type EditorSidebarProps = {
   onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
   projectPath?: string;
   fillSpace?: boolean;
+  // Forwarded to CodeEditor so go to definition and find references can open another file at a line.
+  onOpenLocation?: (filePath: string, line: number) => void;
 };
 
 // Minimum width for the left content (file tree, chat, etc.)
@@ -40,6 +42,7 @@ export default function EditorSidebar({
   onUnsavedChangesChange,
   projectPath,
   fillSpace,
+  onOpenLocation,
 }: EditorSidebarProps) {
   const [poppedOut, setPoppedOut] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -145,6 +148,7 @@ export default function EditorSidebar({
           isExpanded={!isFloating && editorExpanded}
           onToggleExpand={isFloating ? null : onToggleEditorExpand}
           onPopOut={isFloating ? null : handlePopOut}
+          onOpenLocation={onOpenLocation}
         />
       </div>
     </div>

@@ -272,7 +272,9 @@ export async function resolvePathUnderRoots(targetPath: string, roots: string[])
       continue;
     }
 
-    if (resolvedPath === resolvedRoot || resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {
+    // A filesystem root (`C:\`, `/`) already ends in a separator; adding another would match nothing.
+    const rootPrefix = resolvedRoot.endsWith(path.sep) ? resolvedRoot : `${resolvedRoot}${path.sep}`;
+    if (resolvedPath === resolvedRoot || resolvedPath.startsWith(rootPrefix)) {
       return resolvedPath;
     }
   }

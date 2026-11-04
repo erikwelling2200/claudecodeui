@@ -151,6 +151,7 @@
     "@codemirror/merge": "^6.11.1",
     "@codemirror/theme-one-dark": "^6.1.2",
     "@iarna/toml": "^2.2.5",
+    "@lezer/highlight": "^1.2.5",
     "@octokit/rest": "^22.0.0",
     "@openai/codex": "0.156.1",
     "@openai/codex-sdk": "^0.156.0",
