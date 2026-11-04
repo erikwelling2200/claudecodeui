@@ -1030,6 +1030,31 @@ function unwrapPastedContent(text: string): string {
   return result.replace(/^[\r\n]+|[\r\n]+$/g, '');
 }
 
+/**
+ * A subagent's or teammate's message reaches the session as a synthetic user
+ * turn: `Another Claude session sent a message:\n<agent-message from="ID">\nBODY\n</agent-message>`
+ * followed by a paragraph of harness guidance. A final report additionally
+ * opens BODY with a one-line `[Subagent hand-back]` frame and indents every
+ * report line by two spaces, sometimes after a `[harness: ...]` note.
+ */
+const AGENT_MESSAGE = /^Another Claude session sent a message:\n<agent-message from="([^"]*)">\n?([\s\S]*?)\n?<\/agent-message>/;
+const HANDBACK_FRAME = /^\[Subagent hand-back\][^\n]*\n/;
+
+/**
+ * Returns the sender and the report body of an `<agent-message>` turn, with
+ * the harness text around and inside it removed, or null for any other text.
+ */
+export function parseAgentMessage(text: string): { from: string; content: string } | null {
+  const match = AGENT_MESSAGE.exec(text);
+  if (!match) return null;
+
+  let body = match[2];
+  if (HANDBACK_FRAME.test(body)) {
+    body = body.replace(HANDBACK_FRAME, '').replace(/^ {2}/gm, '').replace(/^\[harness: [^\n]*\]\n/, '');
+  }
+  return { from: match[1], content: body.trim() };
+}
+
 function isInternalContent(content: string): boolean {
   return INTERNAL_CONTENT_PREFIXES.some((prefix) => content.startsWith(prefix));
 }
@@ -1406,6 +1431,30 @@ export class ClaudeSessionsProvider implements IProviderSessions {
       }
 
       return [];
+    }
+
+    // Checked before the `isMeta` filter: the transcript marks these rows meta,
+    // but they carry an agent's report the user wants to read.
+    if (raw.message?.role === 'user' && raw.message?.content) {
+      const userText = typeof raw.message.content === 'string'
+        ? raw.message.content
+        : Array.isArray(raw.message.content)
+          ? raw.message.content.filter((part: AnyRecord) => part?.type === 'text').map((part: AnyRecord) => part.text || '').join('\n')
+          : '';
+      const agentMessage = parseAgentMessage(userText);
+      if (agentMessage) {
+        messages.push(createNormalizedMessage({
+          id: baseId,
+          sessionId,
+          timestamp: ts,
+          provider: PROVIDER,
+          kind: 'text',
+          role: 'user',
+          content: agentMessage.content,
+          agentMessageFrom: agentMessage.from,
+        }));
+        return messages;
+      }
     }
 
     if (raw.message?.role === 'user' && raw.message?.content && raw.isMeta !== true) {
