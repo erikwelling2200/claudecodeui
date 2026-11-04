@@ -127,6 +127,11 @@ function WorkspaceMain({
     }
   }, [handleFileOpen, setActiveTab]);
 
+  // Go to definition and find references in the editor; stable so the editor keeps its C# layer across renders.
+  const handleOpenLocation = useCallback((filePath: string, line: number) => {
+    handleFileOpen(filePath, null, line);
+  }, [handleFileOpen]);
+
   // Opens the editor side panel in place, keeping the current tab (e.g. chat).
   const openFileInEditor = useCallback((filePath: string, line?: number | null) => {
     resolvedFileOpen(filePath, undefined, line);
@@ -262,6 +267,7 @@ function WorkspaceMain({
           onUnsavedChangesChange={handleUnsavedChangesChange}
           projectPath={selectedProject.path}
           fillSpace={activeTab === 'files'}
+          onOpenLocation={handleOpenLocation}
         />
       </div>
     </div>

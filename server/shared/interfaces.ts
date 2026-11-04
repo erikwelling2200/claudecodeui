@@ -1,6 +1,8 @@
 import type {
   AnyRecord,
   BackgroundTaskSummary,
+  CsharpDocumentRequest,
+  CsharpLanguageStatus,
   CliVersionProbe,
   LiveTurnTerms,
   LiveMcpServerStatus,
@@ -335,4 +337,26 @@ export interface IProviderSessionSynchronizer {
    * Parses and upserts one provider artifact file without running a full scan.
    */
   synchronizeFile(filePath: string): Promise<string | null>;
+}
+
+// ---------------------------
+//----------------- CSHARP LANGUAGE SERVER INTERFACE ------------
+
+/**
+ * One running Roslyn language server for one solution, implemented by `RoslynLanguageServer` in the
+ * csharp-language module and consumed by that module's service, which keeps one per `.sln`. Tests replace
+ * it with a fake so the service's decoding and lifetime logic run without spawning .NET.
+ */
+export interface ICsharpLanguageServer {
+  readonly solutionPath: string;
+  /** Load state; `ready` once Roslyn reports that every project of the solution is loaded. */
+  getStatus(): CsharpLanguageStatus;
+  /** Roslyn's semantic token type names, indexed by the type numbers its semantic tokens carry. */
+  getSemanticTokenTypes(): string[];
+  /** Opens the document in the server, or replaces its text when the editor buffer changed since the last call. */
+  syncDocument(document: CsharpDocumentRequest): void;
+  /** Sends one protocol request and resolves with its raw result; rejects on a protocol error or timeout. */
+  request(method: string, params: unknown): Promise<unknown>;
+  /** Stops the server process. The instance is unusable afterwards. */
+  dispose(): void;
 }

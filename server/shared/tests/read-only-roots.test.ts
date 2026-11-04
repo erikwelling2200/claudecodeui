@@ -150,3 +150,10 @@ test('a root that does not exist does not stop later roots from matching', async
 test('traversal out of the temp directory does not resolve', async () => {
   assert.equal(await resolveReadOnlyRootPath(`${os.tmpdir()}/../etc/passwd`), null);
 });
+
+test('resolvePathUnderRoots accepts a filesystem root such as C:\ or /', async () => {
+  const filePath = path.join(outsideDirectory, 'under-drive-root.txt');
+  await writeFile(filePath, 'x');
+
+  assert.equal(await resolvePathUnderRoots(filePath, [path.parse(filePath).root]), await realpath(filePath));
+});
