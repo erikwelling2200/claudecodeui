@@ -1312,6 +1312,8 @@ export function useProjectsState({
     projects,
     selectedProject,
     selectedSession,
+    attentionSessionIds,
+    unreadSessionIds,
     activeTab,
     sidebarOpen,
     isLoadingProjects,
