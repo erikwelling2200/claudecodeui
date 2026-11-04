@@ -105,6 +105,31 @@ test('output marks a session unread only once its turn ends, and opening it clea
   assert.equal(result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), false);
 });
 
+test('the open session is marked unread only while the window is unfocused, and focusing clears it', async () => {
+  const hasFocus = vi.spyOn(document, 'hasFocus');
+  const { result } = await renderProjectsState();
+  await waitFor(() => assert.equal(result.current.sidebarSharedProps.isLoading, false));
+  act(() => result.current.sidebarSharedProps.onSessionSelect(project.sessions![0]));
+
+  hasFocus.mockReturnValue(true);
+  emit({ kind: 'complete', sessionId: BACKGROUND_SESSION_ID, exitCode: 0 });
+  assert.equal(result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), false);
+
+  hasFocus.mockReturnValue(false);
+  emit({ kind: 'complete', sessionId: BACKGROUND_SESSION_ID, exitCode: 0 });
+  emit({ kind: 'permission_request', sessionId: BACKGROUND_SESSION_ID });
+  assert.equal(result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), true);
+  assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), true);
+
+  hasFocus.mockReturnValue(true);
+  act(() => {
+    window.dispatchEvent(new Event('focus'));
+  });
+  assert.equal(result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), false);
+  assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), false);
+  hasFocus.mockRestore();
+});
+
 test('an answered permission request clears the amber dot', async () => {
   const { result } = await renderProjectsState();
   await waitFor(() => assert.equal(result.current.sidebarSharedProps.isLoading, false));
