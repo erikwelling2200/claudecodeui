@@ -668,3 +668,63 @@ test('a pending message the CLI already took cannot be cancelled', async () => {
     assert.deepEqual(userTexts(second.writer).map((message) => message.content), ['in Dutch']);
   }, {}, { withBackgroundAgent: false });
 });
+
+/** Runs a chat's first turn as `command` with a follow-up instruction, until the turn completes. */
+async function runFirstTurnWithFollowUp(
+  sessionId: string,
+  command: string,
+  scriptTurn: (script: Scripted) => Promise<void>,
+): Promise<{ script: Scripted; writer: Writer }> {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'claude-live-turns-'));
+  const { createQuery, script } = createScriptedQuery();
+  const sessions = new ClaudeSessionsProvider({ getLiveRunStartTime: () => null });
+  const context: ProviderRuntimeContext = {
+    resolveProviderSessionId: () => null,
+    resolveResumeModel: async () => undefined,
+    getProviderModels: async () => CLAUDE_PREDEFINED_MODELS as never,
+    normalizeMessage: (raw, id) => sessions.normalizeMessage(raw, id),
+    isProviderInstalled: async () => true,
+    explainToolCall: async () => null,
+    createQuery,
+  };
+  const writer = createWriter();
+  const run = queryClaudeSDK(command, { sessionId, cwd, followUpInstruction: 'Name this chat.' }, writer.writer, context);
+  try {
+    await settle();
+    await scriptTurn(script);
+    await waitFor(() => writer.completes().length === 1);
+  } finally {
+    script.end();
+    await run;
+    await rm(cwd, { recursive: true, force: true });
+  }
+  return { script, writer };
+}
+
+test('a chat opening with a skill gets its follow-up steered in, unseen, once the skill runs', async () => {
+  const { script, writer } = await runFirstTurnWithFollowUp('app-follow-up-skill', '/changefied:timesheet last week', async (script) => {
+    await waitFor(() => script.prompts.length === 1);
+    script.emit({ ...init(), skills: ['changefied:timesheet'] });
+    await settle();
+    assert.equal(script.prompts.length, 1, 'nothing goes in before the skill runs');
+    script.emit(toolUse('toolu_read', 'Read', { file_path: 'a.txt' }));
+    await waitFor(() => script.prompts.length === 2);
+    script.emit(replayOf(script.stdin[1]));
+    script.emit(text('Done.'));
+    script.emit(result());
+  });
+  assert.equal(script.prompts[0], '/changefied:timesheet last week', 'the command reaches the CLI as typed');
+  assert.match(script.prompts[1] ?? '', /^\s*<cloudcli_appended>\nName this chat\.\n<\/cloudcli_appended>$/);
+  assert.equal(script.stdin[1]?.priority, 'next');
+  assert.deepEqual(userTexts(writer), [], 'never shown as a message');
+  assert.ok(!writer.sent.some((message) => message.kind === 'steer_pending'));
+});
+
+test('a built-in command gets no follow-up, since it never reaches the model', async () => {
+  const { script } = await runFirstTurnWithFollowUp('app-follow-up-builtin', '/compact', async (script) => {
+    script.emit({ ...init(), skills: ['changefied:timesheet'] });
+    script.emit(text('Compacted.'));
+    script.emit(result());
+  });
+  assert.deepEqual(script.prompts, ['/compact']);
+});

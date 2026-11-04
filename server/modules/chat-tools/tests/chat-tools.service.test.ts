@@ -84,3 +84,14 @@ test('the registered MCP command answers the handshake when started outside the 
     assert.equal(await chatToolsService.checkMcpStarts(), null);
   });
 });
+
+test('followUpForSlashCommand carries the appended text for slash commands only', async () => {
+  await withIsolatedDatabase(async () => {
+    assert.equal(chatToolsService.followUpForSlashCommand('hello', true), null, 'plain text gets it appended instead');
+    assert.match(chatToolsService.followUpForSlashCommand('/changefied:timesheet', true) ?? '', /set_chat_name/);
+    assert.equal(chatToolsService.followUpForSlashCommand('/changefied:timesheet', false), null, 'the default covers the first message');
+
+    await chatToolsService.updateSettings({ appendMode: 'off' });
+    assert.equal(chatToolsService.followUpForSlashCommand('/changefied:timesheet', true), null);
+  });
+});
