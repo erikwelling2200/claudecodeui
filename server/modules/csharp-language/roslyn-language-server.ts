@@ -24,6 +24,8 @@ type PendingRequest = {
 
 // Finding every reference of a widely used Unity type can take most of a minute on a cold solution.
 const REQUEST_TIMEOUT_MS = 120_000;
+// Operatie-OV loads in about a minute; a solution Roslyn cannot load never reports completion at all.
+const LOAD_TIMEOUT_MS = 10 * 60_000;
 
 /**
  * Runs `Microsoft.CodeAnalysis.LanguageServer` over stdio for one solution. Created by the csharp-language
@@ -41,6 +43,7 @@ export class RoslynLanguageServer implements ICsharpLanguageServer {
   private nextRequestId = 1;
   private lastErrorLog: string | null = null;
   private semanticRevision = 0;
+  private loadTimeout: NodeJS.Timeout | null = null;
 
   constructor(executablePath: string, solutionPath: string) {
     this.solutionPath = solutionPath;
@@ -134,6 +137,11 @@ export class RoslynLanguageServer implements ICsharpLanguageServer {
       this.notify('initialized', {});
       this.notify('solution/open', { solution: pathToFileURL(this.solutionPath).href });
       this.status = { state: 'loading', solutionPath: this.solutionPath, message: null, semanticRevision: 0 };
+      this.loadTimeout = setTimeout(() => {
+        this.fail(`Roslyn did not finish loading ${path.basename(this.solutionPath)} within ${LOAD_TIMEOUT_MS / 60_000} minutes`);
+        this.child.kill();
+      }, LOAD_TIMEOUT_MS);
+      this.loadTimeout.unref();
     } catch (error) {
       this.fail(error instanceof Error ? error.message : String(error));
     }
@@ -141,6 +149,7 @@ export class RoslynLanguageServer implements ICsharpLanguageServer {
 
   private fail(message: string): void {
     if (this.status.state === 'failed') return;
+    if (this.loadTimeout) clearTimeout(this.loadTimeout);
     this.status = { state: 'failed', solutionPath: this.solutionPath, message, semanticRevision: 0 };
     for (const pendingRequest of this.pending.values()) {
       clearTimeout(pendingRequest.timeout);
@@ -202,6 +211,7 @@ export class RoslynLanguageServer implements ICsharpLanguageServer {
     }
 
     if (message.method === 'workspace/projectInitializationComplete') {
+      if (this.loadTimeout) clearTimeout(this.loadTimeout);
       this.status = { state: 'ready', solutionPath: this.solutionPath, message: null, semanticRevision: 0 };
     } else if (message.method === 'window/logMessage') {
       const log = message.params as { type?: number; message?: string };
