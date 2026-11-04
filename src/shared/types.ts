@@ -431,6 +431,8 @@ export type ChatMessage = {
   isLocalCommand?: boolean;
   isLocalCommandStdout?: boolean;
   isCompactSummary?: boolean;
+  /** Id of the subagent or teammate that sent this message; drawn as theirs, not the user's. */
+  agentMessageFrom?: string;
   /** Set on the row that stands in for a compaction, so it is drawn as one. */
   compact?: CompactionInfo;
   /** The summary that compaction produced, folded into the row above rather than left loose. */
@@ -603,6 +605,8 @@ export type NormalizedMessage = {
   isLocalCommand?: boolean;
   isLocalCommandStdout?: boolean;
   isCompactSummary?: boolean;
+  /** Id of the subagent or teammate that sent this user-role row. */
+  agentMessageFrom?: string;
   /** Set by the provider on the row that stands in for a compaction. */
   compact?: CompactionInfo;
   images?: Array<{ path?: string; data?: string; name?: string }>;

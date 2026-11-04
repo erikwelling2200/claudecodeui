@@ -49,7 +49,9 @@ const COPY_HIDDEN_TOOL_NAMES = new Set(['Bash', 'Edit', 'Write', 'ApplyPatch']);
  */
 const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, showRawParameters, showThinking, selectedProject, provider, onEditMessage, onForkFromMessage }: MessageComponentProps) => {
   const { t } = useTranslation('chat');
+  const isAgentMessage = message.type === 'user' && Boolean(message.agentMessageFrom);
   const isGrouped = prevMessage && prevMessage.type === message.type &&
+    prevMessage.agentMessageFrom === message.agentMessageFrom &&
     ((prevMessage.type === 'assistant') ||
       (prevMessage.type === 'user') ||
       (prevMessage.type === 'tool') ||
@@ -95,9 +97,34 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
     <div
       ref={messageRef}
       data-message-timestamp={message.timestamp || undefined}
-      className={`chat-message ${message.type} ${isGrouped ? 'grouped' : ''} ${message.type === 'user' ? 'flex justify-end px-3 sm:px-0' : 'px-3 sm:px-0'}`}
+      className={`chat-message ${message.type} ${isGrouped ? 'grouped' : ''} ${message.type === 'user' && !isAgentMessage ? 'flex justify-end px-3 sm:px-0' : 'px-3 sm:px-0'}`}
     >
-      {message.type === 'user' ? (
+      {isAgentMessage ? (
+        /* A subagent's or teammate's message: the user's bubble, mirrored to the left */
+        <div className="flex w-full items-end space-x-0 sm:w-auto sm:max-w-[85%] sm:space-x-3 md:max-w-md lg:max-w-lg xl:max-w-xl">
+          {!isGrouped && (
+            <div
+              title={message.agentMessageFrom}
+              className="hidden h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-purple-500 text-sm text-white dark:bg-purple-400 sm:flex"
+            >
+              S
+            </div>
+          )}
+          <div className={`group min-w-0 max-w-full flex-1 rounded-2xl rounded-bl-md border border-border/60 bg-muted/60 px-3 py-2 text-foreground shadow-sm dark:bg-gray-800/60 sm:flex-initial sm:px-4 ${isGrouped ? 'sm:ml-11' : ''}`}>
+            <div dir="auto" className="break-words font-serif text-sm">
+              <Markdown breaks className="prose prose-sm max-w-none font-serif dark:prose-invert">
+                {message.content}
+              </Markdown>
+            </div>
+            <div className="mt-1 flex items-center justify-end gap-1 text-xs text-muted-foreground">
+              {shouldShowUserCopyControl && (
+                <MessageCopyControl content={userCopyContent} messageType="user" />
+              )}
+              <span>{formattedTime}</span>
+            </div>
+          </div>
+        </div>
+      ) : message.type === 'user' ? (
         /* User turn on the right: claude.ai-style attachment cards above the bubble */
         <div className="flex w-full items-end space-x-0 sm:w-auto sm:max-w-[85%] sm:space-x-3 md:max-w-md lg:max-w-lg xl:max-w-xl">
           <div className="flex min-w-0 flex-1 flex-col items-end gap-2 sm:flex-initial">

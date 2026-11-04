@@ -378,6 +378,8 @@ export type NormalizedMessage = {
   isLocalCommand?: boolean;
   isLocalCommandStdout?: boolean;
   isCompactSummary?: boolean;
+  /** Id of the subagent or teammate that sent this user-role row; the user did not type it. */
+  agentMessageFrom?: string;
   /** Set on the row that stands in for a compaction, so the UI can draw it as one. */
   compact?: CompactionInfo;
   images?: unknown;
