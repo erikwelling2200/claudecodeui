@@ -14,6 +14,7 @@ import { TaskListContent } from '@/modules/chat/tools/ContentRenderers/TaskListC
 import { TextContent } from '@/modules/chat/tools/ContentRenderers/TextContent';
 import { QuestionAnswerContent } from '@/modules/chat/tools/ContentRenderers/QuestionAnswerContent';
 import { PlanDisplay } from '@/modules/chat/tools/PlanDisplay';
+import { MarkdownImage } from '@/modules/chat/transcript/MarkdownImage';
 import { ToolStatusBadge } from '@/modules/chat/tools/ToolStatusBadge';
 import { DiffStatsBadge } from '@/modules/chat/tools/DiffStatsBadge';
 import { parseToolPayload, summarizeDiff } from '@/modules/chat/utils/messageTransforms';
@@ -32,6 +33,9 @@ type ToolRendererProps = {
   /** Lifecycle the provider reported, when it reports one. Overrides the result-based inference. */
   toolStatus?: string;
 };
+
+// Files the Read tool hands to the model as an image rather than as text.
+const READ_IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp)$/i;
 
 function getToolCategory(toolName: string): string {
   if (['Edit', 'Write', 'ApplyPatch'].includes(toolName)) return 'edit';
@@ -160,8 +164,12 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
   if (displayConfig.type === 'one-line') {
     const value = displayConfig.getValue?.(parsedData) || '';
     const secondary = displayConfig.getSecondary?.(parsedData);
+    // An image the agent read is shown under its row, so the user sees what the agent is looking at.
+    const readImagePath = toolName === 'Read' && mode === 'input' && toolStatus === 'completed' && READ_IMAGE_EXTENSION.test(value)
+      ? value
+      : null;
 
-    return (
+    const row = (
       <OneLineDisplay
         toolName={displayName}
         toolResult={toolResult}
@@ -178,6 +186,14 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
         resultId={mode === 'input' ? `tool-result-${toolId}` : undefined}
         status={toolStatus !== 'completed' ? toolStatus : undefined}
       />
+    );
+
+    if (!readImagePath) return row;
+    return (
+      <>
+        {row}
+        <MarkdownImage src={readImagePath} alt={readImagePath.split(/[\\/]/).pop()} />
+      </>
     );
   }
 
