@@ -205,3 +205,37 @@ test('rewrites only the files whose input changed, and only after the recheck in
   assert.deepEqual(writes.map((written) => path.basename(written)), ['Assembly-CSharp.csproj', '.cloudcli-stamp']);
   assert.equal(second.fingerprint, first.fingerprint, 'the same projects keep the same fingerprint');
 });
+
+function solutionProjectNames(solutionText: string): string[] {
+  return [...solutionText.matchAll(/^Project\("[^"]+"\) = "([^"]+)"/gm)].map((match) => match[1]);
+}
+
+test('replaces a consumer project that compiles a package folder with the editable source, keeping one project per assembly', async () => {
+  const files = createTree();
+  // Unity generates this when it is set to make projects for git packages, while other projects still reference the DLL.
+  files.set(path.join(consumerRoot, 'misc.runtime.csproj'), csproj('misc.runtime', '{M}', '    <Compile Include="Packages\\com.misc\\Runtime\\PerformanceMonoBehaviour.cs" />'));
+  files.set(path.join(consumerRoot, 'Assembly-CSharp-firstpass.csproj'), csproj('Assembly-CSharp-firstpass', '{F}', [
+    '    <Compile Include="Assets\\Plugins\\Plugin.cs" />',
+    projectReference('misc.runtime.csproj', '{M}'),
+  ].join('\n')));
+  const { generator } = createGenerator(files);
+
+  const prepared = await generator.prepare(unitySolution);
+
+  const names = solutionProjectNames(files.get(prepared.solutionPath)!);
+  assert.equal(names.filter((name) => name === 'misc.runtime').length, 1);
+  assert.equal(files.has(path.join(path.dirname(prepared.solutionPath), 'misc.runtime.csproj')), false);
+  const sourceCopy = path.join(path.dirname(prepared.solutionPath), 'sources', 'Packages', 'misc.runtime.csproj');
+  assert.ok(generatedFile(files, prepared.solutionPath, 'Assembly-CSharp-firstpass.csproj').includes(`<ProjectReference Include="${sourceCopy}">`));
+  assert.ok(generatedFile(files, prepared.solutionPath, 'Assembly-CSharp.csproj').includes(`<ProjectReference Include="${sourceCopy}">`));
+});
+
+test('loads the Unity solution as it is when the consumer builds the assembly from its own Assets folder', async () => {
+  const files = createTree();
+  files.set(path.join(consumerRoot, 'misc.runtime.csproj'), csproj('misc.runtime', '{C}', '    <Compile Include="Assets\\Misc\\PerformanceMonoBehaviour.cs" />'));
+  const { generator } = createGenerator(files);
+
+  const prepared = await generator.prepare(unitySolution);
+
+  assert.equal(prepared.solutionPath, unitySolution);
+});

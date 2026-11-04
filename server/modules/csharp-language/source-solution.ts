@@ -49,7 +49,7 @@ type ProjectFile = {
 type SourceProject = ProjectFile & { sourceRoot: string };
 
 // Bumped whenever the generated output changes shape, so existing caches are rewritten.
-const GENERATOR_VERSION = '1';
+const GENERATOR_VERSION = '2';
 const CSHARP_PROJECT_TYPE_GUID = '{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}';
 const STAMP_FILE_NAME = '.cloudcli-stamp';
 
@@ -212,45 +212,64 @@ export class SourceSolutionGenerator {
       for (const project of await this.readProjects(sourceRoot)) sourceProjects.push({ ...project, sourceRoot });
     }
 
-    // Only assemblies compiled from the source project's own Assets folder are editable source worth navigating to.
+    // Only assemblies compiled from a project's own Assets folder are editable source worth navigating to.
+    const isEditable = (project: ProjectFile): boolean => {
+      const compileItems = listCompileItems(project.text);
+      return compileItems.length > 0 && compileItems.every((item) => /^Assets[\\/]/i.test(item));
+    };
     const editableSources = new Map<string, SourceProject>();
     for (const project of sourceProjects) {
-      const compileItems = listCompileItems(project.text);
-      if (compileItems.length > 0 && compileItems.every((item) => /^Assets[\\/]/i.test(item)) && !editableSources.has(project.assemblyName)) {
-        editableSources.set(project.assemblyName, project);
-      }
+      if (isEditable(project) && !editableSources.has(project.assemblyName)) editableSources.set(project.assemblyName, project);
     }
 
-    const consumedAssemblies = new Set(consumerProjects.flatMap((project) => listScriptAssemblyReferences(project.text)).filter((name) => editableSources.has(name)));
-    if (consumedAssemblies.size === 0) return unchanged;
+    // Each assembly is built by exactly one project, because Roslyn never finishes loading a solution that holds two
+    // projects with the same name and GUID. A consumer's own project wins when it is editable; one that compiles a
+    // package folder (Unity generates those for packages when asked to) gives way to the editable source.
+    const builders = new Map<string, ProjectFile>();
+    const keptConsumers = consumerProjects.filter((project) => isEditable(project) || !editableSources.has(project.assemblyName));
+    for (const project of keptConsumers) builders.set(project.assemblyName, project);
+    const consumerByFileName = new Map(consumerProjects.map((project) => [project.fileName.toLowerCase(), project]));
+    const findSourceProject = (sourceRoot: string, fileName: string) => sourceProjects.find((candidate) => candidate.sourceRoot === sourceRoot && candidate.fileName.toLowerCase() === fileName.toLowerCase());
+    const referencedAssembly = (project: ProjectFile, reference: string): string => {
+      const referenced = 'sourceRoot' in project ? findSourceProject((project as SourceProject).sourceRoot, reference) : consumerByFileName.get(reference.toLowerCase());
+      return referenced?.assemblyName ?? reference.slice(0, -'.csproj'.length);
+    };
+
+    // Source projects to copy: those standing in for a DLL or a replaced project of the consumer, plus the editable
+    // source projects they in turn reference that nothing else builds.
+    const pending: SourceProject[] = [];
+    for (const project of keptConsumers) {
+      const needed = [...listScriptAssemblyReferences(project.text), ...listProjectReferences(project.text).map((reference) => referencedAssembly(project, reference))];
+      for (const assemblyName of needed) {
+        const source = editableSources.get(assemblyName);
+        if (source && !builders.has(assemblyName)) pending.push(source);
+      }
+    }
+    const includedSources: SourceProject[] = [];
+    while (pending.length > 0) {
+      const project = pending.pop()!;
+      if (builders.has(project.assemblyName)) continue;
+      builders.set(project.assemblyName, project);
+      includedSources.push(project);
+      for (const reference of listProjectReferences(project.text)) {
+        const source = editableSources.get(referencedAssembly(project, reference));
+        if (source && !builders.has(source.assemblyName)) pending.push(source);
+      }
+    }
+    if (includedSources.length === 0) return unchanged;
 
     const consumerHash = createHash('sha256').update(path.resolve(consumerRoot).toLowerCase()).digest('hex').slice(0, 8);
     const outputDirectory = path.join(this.options.outputRoot, `${path.basename(consumerRoot)}-${consumerHash}`);
     const generatedSolutionPath = path.join(outputDirectory, path.basename(unitySolutionPath));
-    const consumerByFileName = new Map(consumerProjects.map((project) => [project.fileName.toLowerCase(), project]));
-    const findSourceProject = (sourceRoot: string, fileName: string) => sourceProjects.find((candidate) => candidate.sourceRoot === sourceRoot && candidate.fileName.toLowerCase() === fileName.toLowerCase());
+    const keptConsumerSet = new Set<ProjectFile>(keptConsumers);
     const generatedPathOf = (project: ProjectFile): string => (
-      consumerByFileName.get(project.fileName.toLowerCase()) === project
+      keptConsumerSet.has(project)
         ? path.join(outputDirectory, project.fileName)
         : path.join(outputDirectory, 'sources', path.basename(project.directory), project.fileName)
     );
 
-    // Source projects to copy: the consumed ones, plus the editable source projects they reference that the consumer lacks.
-    const includedSources = new Map<string, SourceProject>();
-    const pending = [...consumedAssemblies].map((name) => editableSources.get(name)!);
-    while (pending.length > 0) {
-      const project = pending.pop()!;
-      if (includedSources.has(project.assemblyName)) continue;
-      includedSources.set(project.assemblyName, project);
-      for (const reference of listProjectReferences(project.text)) {
-        if (consumerByFileName.has(reference.toLowerCase())) continue;
-        const referenced = findSourceProject(project.sourceRoot, reference);
-        if (referenced && editableSources.get(referenced.assemblyName) === referenced) pending.push(referenced);
-      }
-    }
-
-    const sortedSources = [...includedSources.values()].sort((left, right) => left.assemblyName.localeCompare(right.assemblyName));
-    const solutionProjects = [...consumerProjects, ...sortedSources].map((project) => ({ name: project.assemblyName, projectPath: generatedPathOf(project), guid: project.guid }));
+    const sortedSources = includedSources.sort((left, right) => left.assemblyName.localeCompare(right.assemblyName));
+    const solutionProjects = [...keptConsumers, ...sortedSources].map((project) => ({ name: project.assemblyName, projectPath: generatedPathOf(project), guid: project.guid }));
     const result = {
       unitySolutionPath,
       solutionPath: generatedSolutionPath,
@@ -263,20 +282,31 @@ export class SourceSolutionGenerator {
     const stampPath = path.join(outputDirectory, STAMP_FILE_NAME);
     if (await this.options.fileSystem.readTextFileIfExists(stampPath) === stamp) return result;
 
-    const swapSourceDlls = (originalText: string, text: string): string => listScriptAssemblyReferences(originalText)
-      .filter((assemblyName) => includedSources.has(assemblyName))
-      .reduce((current, assemblyName) => {
-        const source = includedSources.get(assemblyName)!;
-        return replaceItemBlock(current, 'Reference', assemblyName, (indent) => projectReferenceXml(source, generatedPathOf(source), indent));
-      }, text);
+    // Points every reference at the project building that assembly in this solution; a project reference to an
+    // assembly no project here builds compiles against the DLL Unity built for it.
+    const rewriteReferences = async (project: ProjectFile, ownRoot: string, text: string): Promise<string> => {
+      let rewritten = text;
+      for (const reference of listProjectReferences(project.text)) {
+        const assemblyName = referencedAssembly(project, reference);
+        const builder = builders.get(assemblyName);
+        if (builder) {
+          rewritten = replaceItemBlock(rewritten, 'ProjectReference', reference, (indent) => projectReferenceXml(builder, generatedPathOf(builder), indent));
+          continue;
+        }
+        const consumerDll = path.join(consumerRoot, 'Library', 'ScriptAssemblies', `${assemblyName}.dll`);
+        const hintPath = await this.options.fileSystem.getModifiedTime(consumerDll) !== null ? consumerDll : path.join(ownRoot, 'Library', 'ScriptAssemblies', `${assemblyName}.dll`);
+        rewritten = replaceItemBlock(rewritten, 'ProjectReference', reference, (indent) => dllReferenceXml(assemblyName, hintPath, indent));
+      }
+      for (const assemblyName of listScriptAssemblyReferences(project.text)) {
+        const builder = builders.get(assemblyName);
+        if (builder && builder !== project) rewritten = replaceItemBlock(rewritten, 'Reference', assemblyName, (indent) => projectReferenceXml(builder, generatedPathOf(builder), indent));
+      }
+      return rewritten;
+    };
 
     const outputs = new Map<string, string>();
-    for (const project of consumerProjects) {
-      let text = absolutizeProjectPaths(project.text, project.directory);
-      for (const reference of listProjectReferences(project.text)) {
-        text = text.replace(`<ProjectReference Include="${reference}">`, `<ProjectReference Include="${path.join(outputDirectory, reference)}">`);
-      }
-      outputs.set(generatedPathOf(project), swapSourceDlls(project.text, text));
+    for (const project of keptConsumers) {
+      outputs.set(generatedPathOf(project), await rewriteReferences(project, consumerRoot, absolutizeProjectPaths(project.text, project.directory)));
     }
 
     for (const project of sortedSources) {
@@ -284,23 +314,8 @@ export class SourceSolutionGenerator {
       const ownFolders = assemblyDefinitions.map((definition) => path.dirname(path.resolve(project.directory, definition)));
       const filesOnDisk = (await Promise.all(ownFolders.map((folder) => this.options.fileSystem.listFilesRecursively(folder)))).flat();
       const missingSources = findMissingSources(project.directory, listCompileItems(project.text), assemblyDefinitions, filesOnDisk);
-      let text = addCompileItems(absolutizeProjectPaths(project.text, project.directory), missingSources);
-      for (const reference of listProjectReferences(project.text)) {
-        const consumerProject = consumerByFileName.get(reference.toLowerCase());
-        const referenced = findSourceProject(project.sourceRoot, reference);
-        if (consumerProject) {
-          text = replaceItemBlock(text, 'ProjectReference', reference, (indent) => projectReferenceXml(consumerProject, generatedPathOf(consumerProject), indent));
-        } else if (referenced && includedSources.get(referenced.assemblyName) === referenced) {
-          text = replaceItemBlock(text, 'ProjectReference', reference, (indent) => projectReferenceXml(referenced, generatedPathOf(referenced), indent));
-        } else {
-          // A dependency that is neither the consumer's own project nor editable source compiles against the DLL Unity built for it.
-          const assemblyName = referenced?.assemblyName ?? reference.slice(0, -'.csproj'.length);
-          const consumerDll = path.join(consumerRoot, 'Library', 'ScriptAssemblies', `${assemblyName}.dll`);
-          const hintPath = await this.options.fileSystem.getModifiedTime(consumerDll) !== null ? consumerDll : path.join(project.sourceRoot, 'Library', 'ScriptAssemblies', `${assemblyName}.dll`);
-          text = replaceItemBlock(text, 'ProjectReference', reference, (indent) => dllReferenceXml(assemblyName, hintPath, indent));
-        }
-      }
-      outputs.set(generatedPathOf(project), swapSourceDlls(project.text, text));
+      const text = addCompileItems(absolutizeProjectPaths(project.text, project.directory), missingSources);
+      outputs.set(generatedPathOf(project), await rewriteReferences(project, project.sourceRoot, text));
     }
     outputs.set(generatedSolutionPath, buildSolutionText(solutionProjects));
 
