@@ -49,7 +49,7 @@ type ProjectFile = {
 type SourceProject = ProjectFile & { sourceRoot: string };
 
 // Bumped whenever the generated output changes shape, so existing caches are rewritten.
-const GENERATOR_VERSION = '2';
+const GENERATOR_VERSION = '3';
 const CSHARP_PROJECT_TYPE_GUID = '{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}';
 const STAMP_FILE_NAME = '.cloudcli-stamp';
 
@@ -148,6 +148,26 @@ function addCompileItems(text: string, files: string[]): string {
   return text.replace(/<\/Project>\s*$/, `  <ItemGroup>\n${items}\n  </ItemGroup>\n</Project>\n`);
 }
 
+/** The `.csproj` paths a Visual Studio solution lists, relative to its folder. */
+export function listSolutionProjects(solutionText: string): string[] {
+  return [...solutionText.matchAll(/^Project\("[^"]*"\)\s*=\s*"[^"]*",\s*"([^"]+\.csproj)"/gim)].map((match) => match[1]);
+}
+
+/**
+ * Picks a folder's solution from its entries: a `.sln` (a `.slnx` only when there is none), preferring the one named
+ * after the folder, as Unity names it. Null when the folder has none.
+ */
+export function pickSolutionFile(directory: string, entries: string[]): string | null {
+  for (const extension of ['.sln', '.slnx']) {
+    const solutions = entries.filter((entry) => entry.toLowerCase().endsWith(extension)).sort();
+    if (solutions.length > 0) {
+      const folderSolution = solutions.find((entry) => entry.slice(0, -extension.length).toLowerCase() === path.basename(directory).toLowerCase());
+      return path.join(directory, folderSolution ?? solutions[0]);
+    }
+  }
+  return null;
+}
+
 /** Writes a Visual Studio solution listing the given projects, all in the Debug|Any CPU configuration. */
 export function buildSolutionText(projects: { name: string; projectPath: string; guid: string }[]): string {
   const lines = ['Microsoft Visual Studio Solution File, Format Version 12.00', '# Visual Studio 15'];
@@ -184,12 +204,20 @@ export class SourceSolutionGenerator {
     return result;
   }
 
-  private async readProjects(directory: string): Promise<ProjectFile[]> {
+  /**
+   * The projects a solution lists. Unity writes a csproj but never deletes one it stops generating, so the folder
+   * keeps stale ones (such as package projects from when "Generate .csproj files for git packages" was on).
+   */
+  private async readProjects(solutionPath: string): Promise<ProjectFile[]> {
     const { fileSystem } = this.options;
-    const fileNames = (await fileSystem.listDirectory(directory)).filter((entry) => entry.toLowerCase().endsWith('.csproj')).sort();
-    return Promise.all(fileNames.map(async (fileName) => {
-      const text = await fileSystem.readTextFile(path.join(directory, fileName));
-      return { directory, fileName, text, assemblyName: readElement(text, 'AssemblyName') ?? fileName.slice(0, -'.csproj'.length), guid: readElement(text, 'ProjectGuid') ?? '' };
+    const solutionDirectory = path.dirname(solutionPath);
+    const projectPaths = solutionPath.toLowerCase().endsWith('.sln')
+      ? listSolutionProjects(await fileSystem.readTextFile(solutionPath)).map((projectPath) => path.join(solutionDirectory, projectPath))
+      : (await fileSystem.listDirectory(solutionDirectory)).filter((entry) => entry.toLowerCase().endsWith('.csproj')).sort().map((entry) => path.join(solutionDirectory, entry));
+    return Promise.all(projectPaths.map(async (projectPath) => {
+      const text = await fileSystem.readTextFile(projectPath);
+      const fileName = path.basename(projectPath);
+      return { directory: path.dirname(projectPath), fileName, text, assemblyName: readElement(text, 'AssemblyName') ?? fileName.slice(0, -'.csproj'.length), guid: readElement(text, 'ProjectGuid') ?? '' };
     }));
   }
 
@@ -206,10 +234,14 @@ export class SourceSolutionGenerator {
     const sourceRoots = this.options.sourceProjectRoots.filter((root) => !samePath(root, consumerRoot));
     if (sourceRoots.length === 0) return unchanged;
 
-    const consumerProjects = await this.readProjects(consumerRoot);
+    const consumerProjects = await this.readProjects(unitySolutionPath);
     const sourceProjects: SourceProject[] = [];
+    const sourceSolutions: string[] = [];
     for (const sourceRoot of sourceRoots) {
-      for (const project of await this.readProjects(sourceRoot)) sourceProjects.push({ ...project, sourceRoot });
+      const sourceSolution = pickSolutionFile(sourceRoot, await this.options.fileSystem.listDirectory(sourceRoot));
+      if (!sourceSolution) continue;
+      sourceSolutions.push(sourceSolution);
+      for (const project of await this.readProjects(sourceSolution)) sourceProjects.push({ ...project, sourceRoot });
     }
 
     // Only assemblies compiled from a project's own Assets folder are editable source worth navigating to.
@@ -277,7 +309,7 @@ export class SourceSolutionGenerator {
       fingerprint: createHash('sha256').update(solutionProjects.map((project) => project.projectPath).join('\n')).digest('hex'),
     };
 
-    const inputFiles = [unitySolutionPath, ...[...consumerProjects, ...sourceProjects].map((project) => path.join(project.directory, project.fileName))];
+    const inputFiles = [unitySolutionPath, ...sourceSolutions, ...[...consumerProjects, ...sourceProjects].map((project) => path.join(project.directory, project.fileName))];
     const stamp = await this.computeStamp(inputFiles);
     const stampPath = path.join(outputDirectory, STAMP_FILE_NAME);
     if (await this.options.fileSystem.readTextFileIfExists(stampPath) === stamp) return result;
