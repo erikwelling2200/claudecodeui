@@ -26,6 +26,9 @@ type PendingRequest = {
 const REQUEST_TIMEOUT_MS = 120_000;
 // Operatie-OV loads in about a minute; a solution Roslyn cannot load never reports completion at all.
 const LOAD_TIMEOUT_MS = 10 * 60_000;
+const HEADER_NAME = 'Content-Length:';
+// Enough of what Roslyn prints outside the protocol, such as its usage text after a bad argument, to tell why.
+const STRAY_OUTPUT_MAX_LENGTH = 600;
 
 /**
  * Runs `Microsoft.CodeAnalysis.LanguageServer` over stdio for one solution. Created by the csharp-language
@@ -42,6 +45,7 @@ export class RoslynLanguageServer implements ICsharpLanguageServer {
   private receiveBuffer = Buffer.alloc(0);
   private nextRequestId = 1;
   private lastErrorLog: string | null = null;
+  private strayOutput = '';
   private semanticRevision = 0;
   private loadTimeout: NodeJS.Timeout | null = null;
 
@@ -56,15 +60,16 @@ export class RoslynLanguageServer implements ICsharpLanguageServer {
       '--logLevel', 'Warning',
       '--telemetryLevel', 'off',
       '--extensionLogDirectory', logDirectory,
-      // Roslyn exits on its own when this server process dies, so a crash never leaves it running.
-      '--clientProcessId', String(process.pid),
+      // No `--clientProcessId`: Roslyn 5.x rejects it, and Roslyn already exits when its stdin closes with this process.
     ], { windowsHide: true });
 
     this.child.stdout.on('data', (chunk: Buffer) => this.receive(chunk));
     // Roslyn writes its own diagnostics to stderr; the protocol log messages carry what matters.
     this.child.stderr.on('data', () => undefined);
     this.child.on('error', (error) => this.fail(`Could not start the Roslyn language server: ${error.message}`));
-    this.child.on('exit', (code) => this.fail(`The Roslyn language server exited with code ${code ?? 'unknown'}${this.lastErrorLog ? `: ${this.lastErrorLog}` : ''}`));
+    this.child.on('exit', (code) => this.fail(
+      `The Roslyn language server exited with code ${code ?? 'unknown'}${this.lastErrorLog ? `: ${this.lastErrorLog}` : this.describeStrayOutput()}`,
+    ));
 
     void this.initialize();
   }
@@ -169,20 +174,34 @@ export class RoslynLanguageServer implements ICsharpLanguageServer {
     this.send({ method, params });
   }
 
-  // Splits the stdout byte stream into `Content-Length`-framed JSON-RPC messages.
+  // Splits the stdout byte stream into `Content-Length`-framed JSON-RPC messages. Text Roslyn or the .NET host
+  // prints outside a message, such as a console log line, is skipped and kept for the error a broken stream reports.
   private receive(chunk: Buffer): void {
     this.receiveBuffer = Buffer.concat([this.receiveBuffer, chunk]);
     for (;;) {
+      const headerStart = this.receiveBuffer.indexOf(HEADER_NAME);
+      if (headerStart < 0) {
+        // The tail may be the start of a header split across chunks, so only what precedes it is stray.
+        const strayEnd = Math.max(0, this.receiveBuffer.length - HEADER_NAME.length);
+        this.recordStrayOutput(this.receiveBuffer.subarray(0, strayEnd));
+        this.receiveBuffer = this.receiveBuffer.subarray(strayEnd);
+        return;
+      }
+      if (headerStart > 0) {
+        this.recordStrayOutput(this.receiveBuffer.subarray(0, headerStart));
+        this.receiveBuffer = this.receiveBuffer.subarray(headerStart);
+      }
+
       const headerEnd = this.receiveBuffer.indexOf('\r\n\r\n');
       if (headerEnd < 0) return;
-      const lengthMatch = /Content-Length: *(\d+)/i.exec(this.receiveBuffer.subarray(0, headerEnd).toString('ascii'));
+      const lengthMatch = /^Content-Length: *(\d+)/i.exec(this.receiveBuffer.subarray(0, headerEnd).toString('ascii'));
       const bodyStart = headerEnd + 4;
       const bodyEnd = bodyStart + Number(lengthMatch?.[1]);
       if (lengthMatch && this.receiveBuffer.length < bodyEnd) return;
 
       // A broken stream must fail this one server, never throw out of the event handler and take the app down.
       try {
-        if (!lengthMatch) throw new Error('a message arrived without a Content-Length header');
+        if (!lengthMatch) throw new Error(`a message arrived without a Content-Length header${this.describeStrayOutput()}`);
         const message = JSON.parse(this.receiveBuffer.subarray(bodyStart, bodyEnd).toString('utf8')) as JsonRpcMessage;
         this.receiveBuffer = this.receiveBuffer.subarray(bodyEnd);
         this.handleMessage(message);
@@ -192,6 +211,15 @@ export class RoslynLanguageServer implements ICsharpLanguageServer {
         return;
       }
     }
+  }
+
+  private recordStrayOutput(output: Buffer): void {
+    this.strayOutput = (this.strayOutput + output.toString('utf8')).slice(-STRAY_OUTPUT_MAX_LENGTH);
+  }
+
+  private describeStrayOutput(): string {
+    const output = this.strayOutput.replace(/\s+/g, ' ').trim();
+    return output ? `. It printed: ${output}` : '';
   }
 
   private handleMessage(message: JsonRpcMessage): void {
