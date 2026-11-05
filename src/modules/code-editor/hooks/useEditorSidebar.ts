@@ -30,6 +30,8 @@ export const useEditorSidebar = ({
   const [dirtyTabKeys, setDirtyTabKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [editorWidth, setEditorWidth] = useState(initialWidth);
   const [editorExpanded, setEditorExpanded] = useState(false);
+  // Hidden keeps every tab mounted, so the buffers survive until the panel is shown again.
+  const [editorHidden, setEditorHidden] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const resizeHandleRef = useRef<HTMLDivElement | null>(null);
   // The tabs and their dirtiness, mirrored so `handleFileOpen` can read them without re-creating itself on
@@ -111,6 +113,7 @@ export const useEditorSidebar = ({
       activeTabKeyRef.current = key;
       setTabs(nextTabs);
       setActiveTabKey(key);
+      setEditorHidden(false);
       return true;
     },
     [selectedProject?.projectId, selectedProject?.path, t],
@@ -136,11 +139,20 @@ export const useEditorSidebar = ({
       activeTabKeyRef.current = nextActiveKey;
       setActiveTabKey(nextActiveKey);
     }
-    if (nextTabs.length === 0) setEditorExpanded(false);
+    if (nextTabs.length === 0) {
+      setEditorExpanded(false);
+      setEditorHidden(false);
+    }
   }, []);
 
   const handleToggleEditorExpand = useCallback(() => {
     setEditorExpanded((previous) => !previous);
+  }, []);
+
+  // The expanded editor hides the main view, so hiding the editor leaves the expanded layout too.
+  const handleToggleEditorHidden = useCallback(() => {
+    setEditorHidden((previous) => !previous);
+    setEditorExpanded(false);
   }, []);
 
   const handleResizeStart = useCallback(
@@ -228,11 +240,13 @@ export const useEditorSidebar = ({
     editingFile,
     editorWidth,
     editorExpanded,
+    editorHidden,
     resizeHandleRef,
     handleFileOpen,
     handleActivateTab,
     handleCloseTab,
     handleToggleEditorExpand,
+    handleToggleEditorHidden,
     handleResizeStart,
     handleUnsavedChangesChange,
   };

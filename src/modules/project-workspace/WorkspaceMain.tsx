@@ -88,11 +88,13 @@ function WorkspaceMain({
     dirtyTabKeys: dirtyEditorTabKeys,
     editorWidth,
     editorExpanded,
+    editorHidden,
     resizeHandleRef,
     handleFileOpen,
     handleActivateTab: handleActivateEditorTab,
     handleCloseTab: handleCloseEditorTab,
     handleToggleEditorExpand,
+    handleToggleEditorHidden,
     handleResizeStart,
     handleUnsavedChangesChange,
   } = useEditorSidebar({
@@ -262,12 +264,14 @@ function WorkspaceMain({
           dirtyTabKeys={dirtyEditorTabKeys}
           isMobile={isMobile}
           editorExpanded={editorExpanded}
+          editorHidden={editorHidden}
           editorWidth={editorWidth}
           resizeHandleRef={resizeHandleRef}
           onResizeStart={handleResizeStart}
           onActivateTab={handleActivateEditorTab}
           onCloseTab={handleCloseEditorTab}
           onToggleEditorExpand={handleToggleEditorExpand}
+          onToggleEditorHidden={handleToggleEditorHidden}
           onUnsavedChangesChange={handleUnsavedChangesChange}
           projectPath={selectedProject.path}
           onOpenLocation={handleOpenLocation}

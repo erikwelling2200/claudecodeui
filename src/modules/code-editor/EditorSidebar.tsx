@@ -1,6 +1,7 @@
 import { memo, useCallback, useState, useEffect, useRef } from 'react';
 import type { MouseEvent, MutableRefObject, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { PanelRightOpen } from 'lucide-react';
 
 import type { CodeEditorLookup, CodeEditorTab, CsharpLocation } from '@/shared/types';
 import CodeEditor from '@/modules/code-editor/CodeEditor';
@@ -13,6 +14,8 @@ type EditorSidebarProps = {
   dirtyTabKeys: ReadonlySet<string>;
   isMobile: boolean;
   editorExpanded: boolean;
+  // Docked only: the panel shrinks to a rail with a show button, its tabs kept mounted.
+  editorHidden: boolean;
   editorWidth: number;
   resizeHandleRef: MutableRefObject<HTMLDivElement | null>;
   onResizeStart: (event: MouseEvent<HTMLDivElement>) => void;
@@ -20,6 +23,7 @@ type EditorSidebarProps = {
   // Closes without asking; this component confirms a dirty tab first.
   onCloseTab: (tabKey: string) => void;
   onToggleEditorExpand: () => void;
+  onToggleEditorHidden: () => void;
   // Reported per tab, so the tab strip can mark dirty files and closing one can ask first.
   onUnsavedChangesChange: (tabKey: string, hasUnsavedChanges: boolean) => void;
   projectPath?: string;
@@ -105,12 +109,14 @@ export default function EditorSidebar({
   dirtyTabKeys,
   isMobile,
   editorExpanded,
+  editorHidden,
   editorWidth,
   resizeHandleRef,
   onResizeStart,
   onActivateTab,
   onCloseTab,
   onToggleEditorExpand,
+  onToggleEditorHidden,
   onUnsavedChangesChange,
   projectPath,
   onOpenLocation,
@@ -129,7 +135,7 @@ export default function EditorSidebar({
   // Track how much room the container can spare so the left content keeps at
   // least MIN_LEFT_CONTENT_WIDTH as the window resizes.
   useEffect(() => {
-    if (!hasTabs || isMobile || poppedOut) return;
+    if (!hasTabs || isMobile || poppedOut || editorHidden) return;
 
     const updateAvailableWidth = () => {
       if (!containerRef.current) return;
@@ -161,7 +167,7 @@ export default function EditorSidebar({
       window.removeEventListener('resize', updateAvailableWidth);
       resizeObserver.disconnect();
     };
-  }, [hasTabs, isMobile, poppedOut]);
+  }, [hasTabs, isMobile, poppedOut, editorHidden]);
 
   const effectiveWidth = maxEditorWidth === null
     ? editorWidth
@@ -187,7 +193,7 @@ export default function EditorSidebar({
     onCloseTab(tabKey);
   }, [onCloseTab]);
 
-  // The tab strip's close asks here, for any tab; the editor's own close button and Escape ask in CodeEditor.
+  // The tab strip's close asks here, for any tab; the editor's own close button asks in CodeEditor.
   const handleRequestCloseTab = useCallback((tabKey: string) => {
     // No inline fallback here on purpose: CodeEditor's `requestClose` owns the one for this key.
     if (dirtyTabKeysRef.current.has(tabKey) && !window.confirm(t('unsavedChanges.confirmClose'))) return;
@@ -213,6 +219,7 @@ export default function EditorSidebar({
   // One CodeEditor element per tab, each in one position for every layout; only the wrappers
   // change, so switching layouts never remounts it and drops the buffer.
   const isFloating = isMobile || poppedOut;
+  const isHidden = editorHidden && !isFloating;
 
   const tabStrip = (
     <CodeEditorTabs
@@ -221,6 +228,7 @@ export default function EditorSidebar({
       dirtyTabKeys={dirtyTabKeys}
       onActivateTab={onActivateTab}
       onRequestCloseTab={handleRequestCloseTab}
+      onHide={isFloating ? null : onToggleEditorHidden}
     />
   );
 
@@ -241,7 +249,21 @@ export default function EditorSidebar({
       ref={containerRef}
       className={isFloating ? 'contents' : `flex h-full min-w-0 ${editorExpanded ? 'flex-1' : ''}`}
     >
-      {!isFloating && !editorExpanded && (
+      {isHidden && (
+        <div className="flex h-full w-12 flex-shrink-0 flex-col items-center border-l border-border/50 bg-background/80 py-3">
+          <button
+            type="button"
+            onClick={onToggleEditorHidden}
+            className="group flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-accent/80"
+            aria-label={t('tabs.showEditor')}
+            title={t('tabs.showEditor')}
+          >
+            <PanelRightOpen className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
+          </button>
+        </div>
+      )}
+
+      {!isFloating && !isHidden && !editorExpanded && (
         <div
           ref={resizeHandleRef}
           onMouseDown={onResizeStart}
@@ -255,7 +277,9 @@ export default function EditorSidebar({
       <div
         className={isFloating
           ? 'contents'
-          : `h-full overflow-hidden border-l border-gray-200 dark:border-gray-700 ${useFlexLayout ? 'min-w-0 flex-1' : ''}`}
+          : isHidden
+            ? 'hidden'
+            : `h-full overflow-hidden border-l border-gray-200 dark:border-gray-700 ${useFlexLayout ? 'min-w-0 flex-1' : ''}`}
         style={isFloating || useFlexLayout ? undefined : { width: `${effectiveWidth}px`, minWidth: `${MIN_EDITOR_WIDTH}px` }}
       >
         {tabs.map((tab) => (
