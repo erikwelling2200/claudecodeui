@@ -34,6 +34,10 @@ const DEFAULT_SETTINGS: ChatToolsSettings = {
 const APPEND_MODES: ChatToolsAppendMode[] = ['off', 'first', 'every'];
 
 type McpRuntime = Pick<typeof providerRuntimeService, 'listMcpServers' | 'reconnectMcpServer'>;
+type ActivityRuntime = Pick<ProviderRuntimeGateway, 'hasBackgroundWork'>;
+
+/** One chat as `get_chat_threads` reports it. */
+type RelatedChat = { sessionId: string; name: string; running: boolean; archived: boolean };
 
 function readSettings(): ChatToolsSettings {
   const raw = appConfigDb.get(SETTINGS_KEY);
@@ -171,6 +175,38 @@ function getSessionProvider(sessionId: string): LLMProvider {
   return session.provider as LLMProvider;
 }
 
+function describeChat(sessionId: string, runtime: ActivityRuntime): RelatedChat {
+  const session = sessionsDb.getSessionById(sessionId);
+  if (!session) {
+    throw new AppError(`Session "${sessionId}" was not found.`, { code: 'SESSION_NOT_FOUND', statusCode: 404 });
+  }
+  return {
+    sessionId,
+    name: session.custom_name?.trim() || '',
+    running: chatRunRegistry.isProcessing(sessionId) || runtime.hasBackgroundWork(sessionId),
+    archived: session.isArchived === 1,
+  };
+}
+
+/**
+ * The first turn of a thread names its parent chat, so the thread's agent knows
+ * whom it works for without having to ask.
+ */
+function threadNote(parentSessionId: string): string {
+  const parentName = sessionsDb.getSessionById(parentSessionId)?.custom_name?.trim();
+  return `This chat is a thread of the CloudCLI chat ${parentSessionId}${parentName ? ` ("${parentName}")` : ''}. `
+    + 'Call `get_chat_threads` (MCP server `cloudcli-chat`) to see that chat and its other threads.';
+}
+
+/** The text appended to a turn's prompt: the thread note on a thread's first turn, then the configured text the append mode covers. */
+function appendedTextFor(isFirstMessage: boolean, parentSessionId: string | null): string {
+  const { appendMode, appendText } = readSettings();
+  const parts: string[] = [];
+  if (isFirstMessage && parentSessionId) parts.push(threadNote(parentSessionId));
+  if (appendMode === 'every' || (appendMode === 'first' && isFirstMessage)) parts.push(appendText.trim());
+  return parts.filter(Boolean).join('\n\n');
+}
+
 /** The runtime keeps no process for the chat, or cannot report its MCP servers (only Claude can). */
 function noLiveProcessError(sessionId: string): AppError {
   return new AppError(`Chat "${sessionId}" has no live process whose MCP servers can be managed.`, { code: 'NO_LIVE_PROCESS', statusCode: 409 });
@@ -226,25 +262,25 @@ export const chatToolsService = {
   /**
    * Returns the prompt with the configured text appended, when the append mode
    * covers this message. `isFirstMessage` is true for the turn that starts a
-   * chat's conversation. Slash commands are left alone, because the CLI would
-   * read the appended text as the command's arguments; see {@link followUpForSlashCommand}.
+   * chat's conversation; on a thread's first turn (`parentSessionId` set) a note
+   * naming its parent chat is appended too, whatever the mode. Slash commands are
+   * left alone, because the CLI would read the appended text as the command's
+   * arguments; see {@link followUpForSlashCommand}.
    */
-  appendToPrompt(prompt: string, isFirstMessage: boolean): string {
-    const { appendMode, appendText } = readSettings();
-    if (appendMode === 'off' || (appendMode === 'first' && !isFirstMessage)) return prompt;
+  appendToPrompt(prompt: string, isFirstMessage: boolean, parentSessionId: string | null = null): string {
     if (prompt.trimStart().startsWith('/')) return prompt;
-    return appendPromptText(prompt, appendText);
+    return appendPromptText(prompt, appendedTextFor(isFirstMessage, parentSessionId));
   },
 
   /**
-   * The configured text for a slash command the append mode covers, worded to be
+   * The text {@link appendToPrompt} would append, for a slash command, worded to be
    * steered into the command's turn once it runs; null when nothing is due.
    */
-  followUpForSlashCommand(prompt: string, isFirstMessage: boolean): string | null {
-    const { appendMode, appendText } = readSettings();
-    if (appendMode === 'off' || (appendMode === 'first' && !isFirstMessage)) return null;
-    if (!prompt.trimStart().startsWith('/') || !appendText.trim()) return null;
-    return `This note comes from the app, not from the user. ${appendText.trim()} `
+  followUpForSlashCommand(prompt: string, isFirstMessage: boolean, parentSessionId: string | null = null): string | null {
+    if (!prompt.trimStart().startsWith('/')) return null;
+    const text = appendedTextFor(isFirstMessage, parentSessionId);
+    if (!text) return null;
+    return `This note comes from the app, not from the user. ${text} `
       + 'Then go on with the command you are running from where you left off: this is not a new request.';
   },
 
@@ -265,6 +301,20 @@ export const chatToolsService = {
     const result = sessionsService.renameSessionById(sessionId, summary);
     await broadcastSessionUpserted(sessionId);
     return result;
+  },
+
+  /**
+   * The calling chat, the chat it is a thread of (null for a top-level chat) and
+   * the threads of the top-level chat. For a thread that list holds its sibling
+   * threads and itself, since threads are one level deep.
+   */
+  getChatThreads(sessionId: string, runtime: ActivityRuntime = providerRuntimeService): { chat: RelatedChat; parent: RelatedChat | null; threads: RelatedChat[] } {
+    const chat = describeChat(sessionId, runtime);
+    const parentSessionId = sessionsDb.getSessionById(sessionId)?.parent_session_id ?? null;
+    const parent = parentSessionId ? describeChat(parentSessionId, runtime) : null;
+    const rootSessionId = parentSessionId ?? sessionId;
+    const threadIds = [...sessionsDb.getThreadSessionIds(rootSessionId, false), ...sessionsDb.getThreadSessionIds(rootSessionId, true)];
+    return { chat, parent, threads: threadIds.map((id) => describeChat(id, runtime)) };
   },
 
   /** The MCP servers of the calling chat's live process, with their connection state. */

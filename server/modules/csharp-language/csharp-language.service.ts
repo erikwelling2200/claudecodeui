@@ -131,9 +131,9 @@ export function createCsharpLanguageService(dependencies: CsharpLanguageServiceD
         return {
           server: null,
           status: {
-            state: 'unavailable',
+            state: 'notInstalled',
             solutionPath,
-            message: 'Roslyn language server not found. Install the C# extension for VS Code or set ROSLYN_LANGUAGE_SERVER_PATH.',
+            message: 'C# language server not installed. Install it in Settings, or set ROSLYN_LANGUAGE_SERVER_PATH.',
             semanticRevision: 0,
           },
         };

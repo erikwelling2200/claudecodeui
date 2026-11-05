@@ -7,6 +7,7 @@ import test from 'node:test';
 import { chatToolsService } from '@/modules/chat-tools/index.js';
 import { closeConnection, initializeDatabase, sessionsDb, userDb } from '@/modules/database/index.js';
 import { chatRunRegistry } from '@/modules/websocket/index.js';
+import { stripAppendedPromptText } from '@/shared/utils.js';
 
 const CALLER_SESSION_ID = 'caller-session';
 
@@ -71,7 +72,9 @@ test('start_chat creates a session in the caller project and runs the message in
     // The new chat's turn keeps running after startChat returned.
     assert.equal(chatRunRegistry.isProcessing(result.sessionId), true);
     assert.equal(runs.length, 1);
-    assert.equal(runs[0].command, 'Fix the build');
+    // A thread's first turn names its parent chat even with the append mode off.
+    assert.equal(stripAppendedPromptText(runs[0].command), 'Fix the build');
+    assert.match(runs[0].command, /thread of the CloudCLI chat caller-session/);
     assert.equal(runs[0].options.permissionMode, 'auto');
     assert.equal(runs[0].options.model, 'opus');
     assert.equal(runs[0].options.effort, 'high');

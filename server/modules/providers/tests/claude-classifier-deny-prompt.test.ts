@@ -31,15 +31,22 @@ type Scripted = {
   options: () => AnyRecord;
   started: () => boolean;
   sent: Sent[];
+  prompted: AnyRecord[];
 };
 
 function createScriptedQuery(sent: Sent[]) {
   let finish: (() => void) | null = null;
   const ended = new Promise<void>((resolve) => { finish = resolve; });
   let capturedOptions: AnyRecord | null = null;
+  const prompted: AnyRecord[] = [];
 
-  const createQuery: NonNullable<ProviderRuntimeContext['createQuery']> = ({ options }) => {
+  const createQuery: NonNullable<ProviderRuntimeContext['createQuery']> = ({ prompt, options }) => {
     capturedOptions = options;
+    void (async () => {
+      for await (const message of prompt as AsyncIterable<AnyRecord>) {
+        prompted.push(message);
+      }
+    })();
     const iterator = (async function* () {
       yield { type: 'system', subtype: 'init', session_id: 'native-classifier-session' };
       await ended;
@@ -57,6 +64,7 @@ function createScriptedQuery(sent: Sent[]) {
       options: () => capturedOptions ?? {},
       started: () => capturedOptions !== null,
       sent,
+      prompted,
     } satisfies Scripted,
   };
 }
@@ -211,6 +219,26 @@ test('a grant covers only the command the user saw', async () => {
   });
 });
 
+const promptTexts = (script: Scripted) => script.prompted.map((message) => JSON.stringify(message.message?.content ?? ''));
+
+test('an approval tells the model to re-send the exact call, quoting its command', async () => {
+  await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
+    // The CLI's own note only says the model "may retry", beside a refusal that
+    // invites a workaround, so on its own the model often rewrites or drops the call.
+    const input = { command: 'x/LanguageServer.exe --version' };
+    const hookDone = runHook(script.options(), 'PermissionDenied', denied('Bash', input));
+    await answerPrompt(script, { allow: true });
+    await hookDone;
+
+    await waitFor(() => promptTexts(script).some((text) => text.includes('user approved')), 'the approval reached the model');
+    const steer = script.prompted.find((message) => JSON.stringify(message.message?.content).includes('user approved'))!;
+    assert.equal(steer.priority, 'next');
+    assert.ok(JSON.stringify(steer.message.content).includes(input.command));
+    // Steered by the server, so the client never shows it as the user's message.
+    assert.equal(script.sent.some((message) => message.kind === 'steer_pending'), false);
+  });
+});
+
 test('when the user refuses too, the classifier refusal stands', async () => {
   await withRun({ permissionMode: 'auto', toolsSettings: { ...noRules } }, async (script) => {
     const input = { command: 'git push --force origin main' };
@@ -219,6 +247,7 @@ test('when the user refuses too, the classifier refusal stands', async () => {
 
     assert.deepEqual(await hookDone, {});
     assert.equal(verdict(await runHook(script.options(), 'PreToolUse', preToolUse('Bash', input, 'tool-2'))), undefined, 'no grant');
+    assert.equal(promptTexts(script).some((text) => text.includes('user approved')), false, 'the model is not told to retry');
   });
 });
 

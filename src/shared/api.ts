@@ -338,6 +338,8 @@ export const api = {
       post('/api/csharp-language/definition', { filePath, text, line, character }),
     references: (filePath: string, text: string, line: number, character: number) =>
       post('/api/csharp-language/references', { filePath, text, line, character }),
+    serverInstallStatus: () => get('/api/csharp-language/server-install'),
+    installServer: () => post('/api/csharp-language/server-install', {}),
   },
 
   // File operations

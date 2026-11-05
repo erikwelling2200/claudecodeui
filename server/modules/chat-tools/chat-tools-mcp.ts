@@ -61,6 +61,13 @@ const tools = [
     },
   },
   {
+    name: 'get_chat_threads',
+    description: 'Show how this chat relates to other CloudCLI chats: its own session id and name, the chat it is a thread of (if any), '
+      + 'and the threads of the top-level chat (for a thread: its sibling threads and itself), each with whether it is running. '
+      + 'Message a running chat with SendMessage and one that is not running with resume_chat.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'list_worktree_locks',
     description: 'List the worktree locks this chat holds: per locked worktree its unit key, suffix and checkout paths. '
       + 'The unit key and suffix are what release_worktree_locks takes.',
@@ -109,6 +116,26 @@ type McpServerStatus = { name: string; status: string; error?: string; transport
 function describeMcpServer(server: McpServerStatus): string {
   const where = [server.transport, server.target].filter(Boolean).join(' ');
   return `- ${server.name}: ${server.status}, ${server.toolCount} tool(s)${where ? ` (${where})` : ''}${server.error ? ` - ${server.error}` : ''}`;
+}
+
+type RelatedChat = { sessionId: string; name: string; running: boolean; archived: boolean };
+
+function describeRelatedChat(chat: RelatedChat): string {
+  const state = [chat.running ? 'running' : 'not running', chat.archived ? 'archived' : ''].filter(Boolean).join(', ');
+  return `${chat.sessionId}${chat.name ? ` "${chat.name}"` : ''} (${state})`;
+}
+
+function formatChatThreads(result: { chat: RelatedChat; parent: RelatedChat | null; threads: RelatedChat[] }): string {
+  const lines = [`This chat: ${describeRelatedChat(result.chat)}`];
+  lines.push(result.parent ? `Thread of: ${describeRelatedChat(result.parent)}` : 'This is a top-level chat, not a thread of another chat.');
+  const heading = result.parent ? 'Threads of that chat' : 'Threads of this chat';
+  if (!result.threads.length) {
+    lines.push(`${heading}: none.`);
+  } else {
+    const threadLines = result.threads.map((thread) => `- ${describeRelatedChat(thread)}${thread.sessionId === result.chat.sessionId ? ' (this chat)' : ''}`);
+    lines.push(`${heading} (${result.threads.length}):`, ...threadLines);
+  }
+  return lines.join('\n');
 }
 
 type WorktreeClaim = { unit: string; unitName?: string; suffix: string; repos: { path: string }[] };
@@ -175,6 +202,10 @@ async function callTool(name: string, args: Record<string, unknown>) {
       case 'resume_chat': {
         const result = await callChatToolsApi(name, { targetSessionId: args.sessionId, message: args.message }) as { sessionId: string };
         return { content: [{ type: 'text', text: `Resumed chat ${result.sessionId} with the message.` }] };
+      }
+      case 'get_chat_threads': {
+        const result = await callChatToolsApi(name, {}) as { chat: RelatedChat; parent: RelatedChat | null; threads: RelatedChat[] };
+        return { content: [{ type: 'text', text: formatChatThreads(result) }] };
       }
       case 'list_worktree_locks': {
         const result = await callChatToolsApi(name, {}) as { claims: WorktreeClaim[] };

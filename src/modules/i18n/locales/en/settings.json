@@ -132,6 +132,7 @@
     "voice": "Voice",
     "tasks": "Tasks",
     "browser": "Browser",
+    "languages": "Languages",
     "notifications": "Notifications",
     "plugins": "Plugins",
     "about": "About"
@@ -827,6 +828,21 @@
     "statusStoppedSession": "stopped",
     "statusUnavailableSession": "unavailable",
     "installFailed": "Failed to install browser runtime"
+  },
+  "languagesSettings": {
+    "csharp": {
+      "title": "C#",
+      "serverLabel": "C# language server",
+      "checking": "Checking",
+      "sourceCloudcli": "Installed ({{version}})",
+      "sourceEditorExtension": "From the VS Code C# extension",
+      "sourceEnvironment": "From ROSLYN_LANGUAGE_SERVER_PATH",
+      "notInstalled": "Not installed",
+      "install": "Install",
+      "update": "Update",
+      "installing": "Installing",
+      "missingRuntime": "Needs the {{runtime}} runtime, which is not installed. Get it from dotnet.microsoft.com."
+    }
   },
   "browserUseSettings": {
     "sectionTitle": "Browser",
