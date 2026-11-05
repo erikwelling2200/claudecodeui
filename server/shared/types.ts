@@ -392,6 +392,8 @@ export type NormalizedMessage = {
     content?: string;
     isError?: boolean;
     toolUseResult?: unknown;
+    /** When the result was recorded, so the transcript can show how long the call took. */
+    timestamp?: string;
   };
   isError?: boolean;
   text?: string;

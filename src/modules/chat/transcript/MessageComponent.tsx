@@ -319,6 +319,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                       showRawParameters={showRawParameters}
                       rawToolInput={typeof message.toolInput === 'string' ? message.toolInput : undefined}
                       toolStatus={message.toolStatus}
+                      startedAt={message.timestamp}
                     />
                   </div>
                 )}

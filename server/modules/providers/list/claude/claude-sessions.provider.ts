@@ -70,6 +70,7 @@ type ClaudeToolResult = {
   subagent?: SubagentInfo;
   workflow?: WorkflowInfo;
   toolUseResult?: unknown;
+  timestamp?: string;
 };
 
 type ClaudeHistoryResult =
@@ -1899,6 +1900,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
               subagent: raw.subagent,
               workflow: raw.workflow,
               toolUseResult: raw.toolUseResult,
+              timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : undefined,
             });
           }
         }
@@ -1923,6 +1925,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
             : JSON.stringify(toolResult.content),
           isError: toolResult.isError,
           toolUseResult: toolResult.toolUseResult,
+          timestamp: toolResult.timestamp,
         };
         msg.subagentTools = toolResult.subagentTools;
         msg.subagent = toolResult.subagent;

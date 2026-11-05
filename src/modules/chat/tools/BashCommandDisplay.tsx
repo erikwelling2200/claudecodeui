@@ -5,6 +5,7 @@ import { ChevronRight, Copy, Check } from 'lucide-react';
 import { cn,copyTextToClipboard } from '@/shared/utils';
 import { ToolStatusBadge } from '@/modules/chat/tools/ToolStatusBadge';
 import { useIsExportingTranscript } from '@/modules/chat/context/TranscriptRenderContext';
+import { formatTaskDuration } from '@/modules/chat/utils/backgroundTasks';
 import type { ToolStatus } from '@/shared/types';
 
 type BashCommandDisplayProps = {
@@ -15,7 +16,32 @@ type BashCommandDisplayProps = {
   isError?: boolean;
   status?: ToolStatus;
   defaultOpen?: boolean;
+  /** When the command was issued; with `finishedAt` it gives the run time, without it the time running so far. */
+  startedAt?: string | number | Date;
+  finishedAt?: string | number | Date;
 };
+
+function toMillis(value: string | number | Date | undefined): number | null {
+  if (value === undefined) return null;
+  const millis = new Date(value).getTime();
+  return Number.isFinite(millis) ? millis : null;
+}
+
+function formatCommandDuration(durationMs: number): string {
+  if (durationMs < 10_000) return `${(Math.max(0, durationMs) / 1_000).toFixed(1)}s`;
+  return formatTaskDuration(durationMs);
+}
+
+/** Elapsed time while the command runs, re-rendered every second; null when the start is unknown. */
+function useElapsedMs(startMs: number | null, isRunning: boolean): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isRunning || startMs === null) return;
+    const interval = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(interval);
+  }, [isRunning, startMs]);
+  return isRunning && startMs !== null ? now - startMs : null;
+}
 
 /**
  * Codex-in-VSCode style command row: a compact, single-line command with a
@@ -33,12 +59,21 @@ export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
   isError = false,
   status,
   defaultOpen = false,
+  startedAt,
+  finishedAt,
 }) => {
   const { t } = useTranslation();
   const trimmedOutput = (output || '').replace(/\s+$/, '');
   const hasOutput = trimmedOutput.length > 0;
   const outputLineCount = hasOutput ? trimmedOutput.split('\n').length : 0;
   const isRunning = status === 'running';
+  const startMs = toMillis(startedAt);
+  const finishMs = toMillis(finishedAt);
+  const elapsedMs = useElapsedMs(startMs, isRunning);
+  const durationMs = isRunning ? elapsedMs : startMs !== null && finishMs !== null ? finishMs - startMs : null;
+  const durationText = durationMs !== null
+    ? isRunning ? formatTaskDuration(durationMs) : formatCommandDuration(durationMs)
+    : null;
   // `open` is raised by an effect once output arrives (below). A document is
   // rendered without effects, so it would show every command and no output.
   const isExporting = useIsExportingTranscript();
@@ -121,12 +156,22 @@ export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
           {command}
         </span>
 
+        {durationText && (
+          <span
+            className={cn(
+              'flex-shrink-0 text-[10px] tabular-nums',
+              isRunning ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground/70',
+            )}
+          >
+            {durationText}
+          </span>
+        )}
         {isRunning && (
           <span className="h-2.5 w-2.5 flex-shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/30 border-t-emerald-400" />
         )}
         {status && status !== 'running' && <ToolStatusBadge status={status} className="flex-shrink-0" />}
         {!open && hasOutput && !isRunning && (
-          <span className="flex-shrink-0 text-[10px] tabular-nums text-muted-foreground/70 transition-opacity group-hover/cmd:opacity-0">
+          <span className="flex-shrink-0 text-[10px] tabular-nums text-muted-foreground/50 transition-opacity group-hover/cmd:opacity-0">
             {outputLineCount} {outputLineCount === 1 ? 'line' : 'lines'}
           </span>
         )}
