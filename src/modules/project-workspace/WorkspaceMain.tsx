@@ -88,7 +88,6 @@ function WorkspaceMain({
     dirtyTabKeys: dirtyEditorTabKeys,
     editorWidth,
     editorExpanded,
-    hasManualWidth,
     resizeHandleRef,
     handleFileOpen,
     handleActivateTab: handleActivateEditorTab,
@@ -264,7 +263,6 @@ function WorkspaceMain({
           isMobile={isMobile}
           editorExpanded={editorExpanded}
           editorWidth={editorWidth}
-          hasManualWidth={hasManualWidth}
           resizeHandleRef={resizeHandleRef}
           onResizeStart={handleResizeStart}
           onActivateTab={handleActivateEditorTab}
@@ -272,7 +270,6 @@ function WorkspaceMain({
           onToggleEditorExpand={handleToggleEditorExpand}
           onUnsavedChangesChange={handleUnsavedChangesChange}
           projectPath={selectedProject.path}
-          fillSpace={activeTab === 'files'}
           onOpenLocation={handleOpenLocation}
         />
       </div>
