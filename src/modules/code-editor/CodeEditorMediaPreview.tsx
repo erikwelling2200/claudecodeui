@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { api } from '@/shared/api';
+import { ZoomableImage } from '@/shared/ui';
 import type { CodeEditorFile,PreviewKind } from '@/shared/types';
 import { getPreviewMimeType } from '@/modules/code-editor/utils/previewableFile';
 
@@ -158,11 +159,7 @@ export default function CodeEditorMediaPreview({
     switch (kind) {
       case 'image':
         return (
-          <img
-            src={currentUrl}
-            alt={file.name}
-            className="max-h-full max-w-full object-contain"
-          />
+          <ZoomableImage src={currentUrl} alt={file.name} className="h-full w-full" />
         );
       case 'pdf':
         // Not sandboxed on purpose: the browser's built-in PDF viewer refuses to

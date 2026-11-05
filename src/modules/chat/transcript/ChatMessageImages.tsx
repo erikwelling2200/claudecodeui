@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 import { api } from '@/shared/api';
+import { ZoomableImage } from '@/shared/ui';
 import type { ChatImage } from '@/shared/types';
 
 type ChatMessageImagesProps = {
@@ -84,7 +85,8 @@ function useChatImageSrc(image: ChatImage, projectId?: string | null): { src: st
 
 /**
  * Fullscreen image overlay in the claude.ai style: dark backdrop, centered
- * image, closes on backdrop click, close button, or Escape.
+ * image that zooms on scroll and pans by dragging, closes on backdrop click,
+ * close button, or Escape.
  *
  * Used by chat's ChatMessageImages and ComposerAttachment to expand a
  * thumbnail to full size.
@@ -118,11 +120,12 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt: string;
       >
         <X className="h-5 w-5" />
       </button>
-      <img
+      <ZoomableImage
         src={src}
         alt={alt}
-        onClick={(event) => event.stopPropagation()}
-        className="max-h-[90vh] max-w-[92vw] rounded-lg object-contain shadow-2xl"
+        onImageClick={(event) => event.stopPropagation()}
+        className="h-[90vh] w-[92vw]"
+        imageClassName="rounded-lg shadow-2xl"
       />
     </div>,
     document.body,

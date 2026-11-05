@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 
-import { Button } from '@/shared/ui';
+import { Button, ZoomableImage } from '@/shared/ui';
 import { api } from '@/shared/api';
 import type { FileTreeImageSelection } from '@/shared/types';
 
@@ -75,10 +75,11 @@ export default function ImageViewer({ file, onClose }: ImageViewerProps) {
             </div>
           )}
           {!loading && imageUrl && (
-            <img
+            <ZoomableImage
               src={imageUrl}
               alt={file.name}
-              className="max-h-[70vh] max-w-full rounded-lg object-contain shadow-md"
+              className="h-[70vh] w-full"
+              imageClassName="rounded-lg shadow-md"
             />
           )}
           {!loading && !imageUrl && (
