@@ -1857,9 +1857,9 @@ export type ChatToolsSettings = {
 /**
  * Load state of the Roslyn language server behind one `.sln`, as the code editor shows it.
  * `starting` and `loading` both mean the semantic layer is not there yet; `unavailable` means no
- * solution or no Roslyn install was found, so the editor keeps only its syntactic coloring.
+ * solution was found and `notInstalled` no Roslyn install, so the editor keeps only its syntactic coloring.
  */
-export type CsharpLanguageServerState = 'starting' | 'loading' | 'ready' | 'failed' | 'unavailable';
+export type CsharpLanguageServerState = 'starting' | 'loading' | 'ready' | 'failed' | 'unavailable' | 'notInstalled';
 
 /**
  * Where the language server for a `.cs` file stands. `solutionPath` is null when no `.sln` was found
@@ -1937,4 +1937,25 @@ export type CsharpLanguageServices = {
   getSemanticTokens(request: CsharpDocumentRequest): Promise<CsharpSemanticResult<CsharpSemanticToken[]>>;
   findDefinition(request: CsharpPositionRequest): Promise<CsharpSemanticResult<CsharpLocation[]>>;
   findReferences(request: CsharpPositionRequest): Promise<CsharpSemanticResult<CsharpLocation[]>>;
+};
+
+/**
+ * Which Roslyn language server the code editor uses, and the state of CloudCLI's own copy of it.
+ * `source` is `environment` for `ROSLYN_LANGUAGE_SERVER_PATH`, `cloudcli` for the copy installed from settings,
+ * `editorExtension` for one bundled with the C# extension of VS Code or Cursor, and null when there is none.
+ * `missingRuntime` names the .NET runtime the installed copy needs when no such runtime is on this machine.
+ */
+export type CsharpServerInstallStatus = {
+  source: 'environment' | 'cloudcli' | 'editorExtension' | null;
+  executablePath: string | null;
+  installedVersion: string | null;
+  missingRuntime: string | null;
+  installing: boolean;
+  error: string | null;
+};
+
+export type CsharpServerInstallServices = {
+  getInstallStatus(): Promise<CsharpServerInstallStatus>;
+  /** Starts downloading the newest Roslyn language server; resolves once the download has started, not finished. */
+  startInstall(): Promise<CsharpServerInstallStatus>;
 };

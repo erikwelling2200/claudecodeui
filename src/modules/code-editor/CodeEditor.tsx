@@ -209,6 +209,7 @@ export default function CodeEditor({
       onOpenLocation,
       onLookup,
       onCloseLookup,
+      onOpenSettings: () => paletteOps.openSettings('languages'),
       labels: {
         loading: (solutionName) => t('csharp.loading', 'Loading {{solutionName}}', { solutionName }),
         findingDefinition: t('csharp.findingDefinition', 'Finding definition'),
@@ -217,9 +218,10 @@ export default function CodeEditor({
         noReferences: t('csharp.noReferences', 'No references found'),
         definitions: (count) => t('csharp.definitions', '{{count}} definitions', { count }),
         references: (count) => t('csharp.references', '{{count}} references', { count }),
+        openSettings: t('csharp.openSettings', 'Install in Settings'),
       },
     });
-  }, [file.name, file.path, onCloseLookup, onLookup, onOpenLocation, projectPath, t]);
+  }, [file.name, file.path, onCloseLookup, onLookup, onOpenLocation, paletteOps, projectPath, t]);
 
   const extensions = useMemo(() => {
     const allExtensions: Extension[] = [

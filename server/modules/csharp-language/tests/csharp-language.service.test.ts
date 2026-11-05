@@ -140,7 +140,7 @@ test('maps definitions to files with a preview line, using the editor text for t
   ]);
 });
 
-test('reports unavailable when no Roslyn install is found', async () => {
+test('reports notInstalled when no Roslyn install is found', async () => {
   const service = createCsharpLanguageService({
     locateServerExecutable: async () => null,
     listDirectory: async () => ['repo.sln'],
@@ -155,7 +155,7 @@ test('reports unavailable when no Roslyn install is found', async () => {
 
   const status = await service.getStatus(filePath);
 
-  assert.equal(status.state, 'unavailable');
+  assert.equal(status.state, 'notInstalled');
   assert.match(status.message ?? '', /ROSLYN_LANGUAGE_SERVER_PATH/);
 });
 
