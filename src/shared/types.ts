@@ -976,16 +976,40 @@ export type CodeEditorFile = {
   // URLs for reading and saving content.
   projectId?: string;
   diffInfo?: CodeEditorDiffInfo | null;
-  // 1-based line to reveal when the file opens (from a `path:line` reference).
-  line?: number | null;
   [key: string]: unknown;
 };
 
-/** One request to reveal a line in the editor. The code editor builds a new object per opened file so the surface can tell a fresh request apart from a re-render, and jump only once per request. */
+/** One request to reveal a line in the editor. The editor tab state builds a new object per request so the surface can tell a fresh request apart from a re-render, and jump only once per request. */
 export type CodeEditorGotoTarget = {
   // 1-based, clamped to the document by the editor surface.
   line: number;
+  // 0-based column on that line, clamped to its length; the line start when absent.
+  character?: number;
 };
+
+/** One open file in the code editor's tab strip, owned by `useEditorSidebar` and rendered by `EditorSidebar`. */
+export type CodeEditorTab = {
+  // Identifies the file across opens: its project plus its normalised path.
+  key: string;
+  file: CodeEditorFile;
+  // The latest line this tab was asked to reveal; replaced, never mutated, so each request jumps once.
+  gotoTarget: CodeEditorGotoTarget | null;
+};
+
+/** A C# definition or reference location as the csharp-language API returns it. Line and character are 0-based; `access` is null for definitions and for references Roslyn classifies as neither. */
+export type CsharpLocation = {
+  filePath: string;
+  line: number;
+  character: number;
+  preview: string;
+  access: 'read' | 'write' | null;
+};
+
+/** What the code editor's lookup panel shows: a running lookup, its locations, or a one-line outcome. Raised by the C# layer of one tab and shown under whichever tab is active, so it survives opening a result. */
+export type CodeEditorLookup =
+  | { kind: 'searching'; text: string }
+  | { kind: 'locations'; text: string; locations: CsharpLocation[]; showsAccess: boolean }
+  | { kind: 'message'; text: string };
 
 /** The category of browser-renderable media a file maps to, used by the code editor to decide whether to show an inline image, PDF, video or audio preview instead of a text buffer. */
 export type PreviewKind = 'image' | 'pdf' | 'video' | 'audio';

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 
 import { api } from '@/shared/api';
 import type { CodeEditorFile,PreviewKind } from '@/shared/types';
@@ -12,6 +13,8 @@ type CodeEditorMediaPreviewProps = {
   projectId?: string;
   isSidebar: boolean;
   isFullscreen: boolean;
+  // The open-file tabs, drawn above the header.
+  tabStrip?: ReactNode;
   onClose: () => void;
   onToggleFullscreen: () => void;
   labels: {
@@ -41,6 +44,7 @@ export default function CodeEditorMediaPreview({
   projectId,
   isSidebar,
   isFullscreen,
+  tabStrip = null,
   onClose,
   onToggleFullscreen,
   labels,
@@ -264,6 +268,7 @@ export default function CodeEditorMediaPreview({
   if (isSidebar) {
     return (
       <div className="flex h-full w-full flex-col bg-background">
+        {tabStrip}
         {header}
         {previewBody}
       </div>
@@ -281,6 +286,7 @@ export default function CodeEditorMediaPreview({
   return (
     <div className={containerClassName}>
       <div className={innerClassName}>
+        {tabStrip}
         {header}
         {previewBody}
       </div>

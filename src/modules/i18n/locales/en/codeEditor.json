@@ -52,5 +52,16 @@
     "noReferences": "No references found",
     "definitions": "{{count}} definitions",
     "references": "{{count}} references"
+  },
+  "tabs": {
+    "close": "Close tab"
+  },
+  "lookup": {
+    "file": "File",
+    "line": "Line",
+    "kind": "Kind",
+    "code": "Code",
+    "read": "Read",
+    "write": "Write"
   }
 }

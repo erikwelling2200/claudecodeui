@@ -8,14 +8,19 @@ type UseEditorKeyboardShortcutsParams = {
   onSave: () => void;
   onClose: () => void;
   dependency: string;
+  // False for an editor tab that is mounted but hidden, so only the visible one saves or closes.
+  enabled?: boolean;
 };
 
 export const useEditorKeyboardShortcuts = ({
   onSave,
   onClose,
   dependency,
+  enabled = true,
 }: UseEditorKeyboardShortcutsParams) => {
   useEffect(() => {
+    if (!enabled) return undefined;
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         // Leave Escapes another handler consumed or a layer above the editor owns.
@@ -42,5 +47,5 @@ export const useEditorKeyboardShortcuts = ({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [dependency, onClose, onSave]);
+  }, [dependency, enabled, onClose, onSave]);
 };

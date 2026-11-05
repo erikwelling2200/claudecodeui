@@ -2,6 +2,7 @@ import { EditorView } from '@codemirror/view';
 import { unifiedMergeView } from '@codemirror/merge';
 import type { Extension } from '@codemirror/state';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { usePaletteOps } from '@/modules/command-palette';
@@ -9,7 +10,7 @@ import { useTheme } from '@/shared/context/ThemeContext';
 import { useCodeEditorDocument } from '@/modules/code-editor/hooks/useCodeEditorDocument';
 import { useCodeEditorSettings } from '@/modules/code-editor/hooks/useCodeEditorSettings';
 import { useEditorKeyboardShortcuts } from '@/modules/code-editor/hooks/useEditorKeyboardShortcuts';
-import type { CodeEditorFile, CodeEditorGotoTarget } from '@/shared/types';
+import type { CodeEditorFile, CodeEditorGotoTarget, CodeEditorLookup } from '@/shared/types';
 import { createMinimapExtension, createScrollToFirstChunkExtension, getLanguageExtensions } from '@/modules/code-editor/utils/editorExtensions';
 import { createCsharpSemanticExtension } from '@/modules/code-editor/utils/csharpSemanticLayer';
 import { getEditorStyles } from '@/modules/code-editor/utils/editorStyles';
@@ -32,8 +33,18 @@ type CodeEditorProps = {
   isExpanded?: boolean;
   onToggleExpand?: (() => void) | null;
   onPopOut?: (() => void) | null;
-  // Opens another file at a 1-based line; go to definition and find references use it to leave this file.
-  onOpenLocation?: (filePath: string, line: number) => void;
+  // Opens another file at a 1-based line and 0-based character; go to definition and find references use it to leave this file.
+  onOpenLocation?: (filePath: string, line: number, character: number) => void;
+  // The line to reveal; a new object per request, so the same line can be asked for twice.
+  gotoTarget?: CodeEditorGotoTarget | null;
+  // Only the visible tab answers the document-wide shortcuts (Ctrl+S, Escape); hidden tabs stay mounted to keep their buffers.
+  isActive?: boolean;
+  // The open-file tabs, drawn above this file's header in every layout.
+  tabStrip?: ReactNode;
+  // The C# lookup panel, drawn under the text; owned by EditorSidebar so it outlasts switching files.
+  lookupPanel?: ReactNode;
+  onLookup?: (lookup: CodeEditorLookup | null) => void;
+  onCloseLookup?: () => boolean;
 };
 
 /** Rendered by the code-editor module's own EditorSidebar, and re-exported on the module barrel, as the full CodeMirror editor for one open file. */
@@ -47,6 +58,12 @@ export default function CodeEditor({
   onToggleExpand = null,
   onPopOut = null,
   onOpenLocation,
+  gotoTarget = null,
+  isActive = true,
+  tabStrip = null,
+  lookupPanel = null,
+  onLookup,
+  onCloseLookup,
 }: CodeEditorProps) {
   const { t } = useTranslation('codeEditor');
   const paletteOps = usePaletteOps();
@@ -112,14 +129,6 @@ export default function CodeEditor({
     window.addEventListener('beforeunload', warnBeforeUnload);
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
   }, [hasUnsavedChanges]);
-
-  // Keyed on the file object rather than on the line number: `useEditorSidebar`
-  // builds a new one per open, so clicking the same `path:line` reference again
-  // jumps again, while editing the open file never re-triggers the jump.
-  const gotoTarget = useMemo<CodeEditorGotoTarget | null>(
-    () => (file.line ? { line: file.line } : null),
-    [file],
-  );
 
   const isMarkdownFile = useMemo(() => {
     const extension = file.name.split('.').pop()?.toLowerCase();
@@ -192,12 +201,14 @@ export default function CodeEditor({
 
   // The Roslyn-backed layer for C#: semantic colors, F12 and Shift+F12. It needs an absolute path to find the solution.
   const csharpSemanticExtension = useMemo(() => {
-    if (!onOpenLocation || file.name.split('.').pop()?.toLowerCase() !== 'cs') return null;
+    if (!onOpenLocation || !onLookup || !onCloseLookup || file.name.split('.').pop()?.toLowerCase() !== 'cs') return null;
     const isAbsolutePath = /^([a-zA-Z]:[\\/]|[\\/])/.test(file.path);
     const absolutePath = isAbsolutePath || !projectPath ? file.path : `${projectPath.replace(/[\\/]+$/, '')}/${file.path}`;
     return createCsharpSemanticExtension({
       filePath: absolutePath,
       onOpenLocation,
+      onLookup,
+      onCloseLookup,
       labels: {
         loading: (solutionName) => t('csharp.loading', 'Loading {{solutionName}}', { solutionName }),
         findingDefinition: t('csharp.findingDefinition', 'Finding definition'),
@@ -206,10 +217,9 @@ export default function CodeEditor({
         noReferences: t('csharp.noReferences', 'No references found'),
         definitions: (count) => t('csharp.definitions', '{{count}} definitions', { count }),
         references: (count) => t('csharp.references', '{{count}} references', { count }),
-        close: t('actions.close', 'Close'),
       },
     });
-  }, [file.name, file.path, onOpenLocation, projectPath, t]);
+  }, [file.name, file.path, onCloseLookup, onLookup, onOpenLocation, projectPath, t]);
 
   const extensions = useMemo(() => {
     const allExtensions: Extension[] = [
@@ -255,16 +265,24 @@ export default function CodeEditor({
     onSave: handleSave,
     onClose: requestClose,
     dependency: content,
+    enabled: isActive,
   });
 
   if (loading) {
-    return (
+    const loadingState = (
       <CodeEditorLoadingState
         isDarkMode={isDarkMode}
         isSidebar={isSidebar}
         loadingText={t('loading', { fileName: file.name })}
       />
     );
+    // Docked, the tabs stay in place while a file loads; floating, the loading box stands alone for that moment.
+    return isSidebar && tabStrip ? (
+      <div className="flex h-full w-full flex-col">
+        {tabStrip}
+        <div className="min-h-0 flex-1">{loadingState}</div>
+      </div>
+    ) : loadingState;
   }
 
   // Natively previewable media (image/pdf/audio/video) is rendered inline
@@ -275,6 +293,7 @@ export default function CodeEditor({
         file={file}
         kind={previewKind}
         projectId={fileProjectId}
+        tabStrip={tabStrip}
         isSidebar={isSidebar}
         isFullscreen={isFullscreen}
         onClose={requestClose}
@@ -296,6 +315,7 @@ export default function CodeEditor({
     return (
       <CodeEditorBinaryFile
         file={file}
+        tabStrip={tabStrip}
         isSidebar={isSidebar}
         isFullscreen={isFullscreen}
         onClose={requestClose}
@@ -321,6 +341,7 @@ export default function CodeEditor({
       <style>{getEditorStyles(isDarkMode)}</style>
       <div className={outerContainerClassName}>
         <div className={innerContainerClassName}>
+          {tabStrip}
           <CodeEditorHeader
             file={file}
             isSidebar={isSidebar}
@@ -363,7 +384,7 @@ export default function CodeEditor({
             </div>
           )}
 
-          <div className="flex-1 overflow-hidden">
+          <div className="min-h-0 flex-1 overflow-hidden">
             <CodeEditorSurface
               content={content}
               onChange={setContent}
@@ -376,6 +397,8 @@ export default function CodeEditor({
               gotoTarget={gotoTarget}
             />
           </div>
+
+          {lookupPanel}
 
           <CodeEditorFooter
             content={content}

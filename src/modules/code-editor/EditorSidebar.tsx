@@ -1,27 +1,99 @@
-import { useCallback, useState, useEffect, useRef } from 'react';
-import type { MouseEvent, MutableRefObject } from 'react';
+import { memo, useCallback, useState, useEffect, useRef } from 'react';
+import type { MouseEvent, MutableRefObject, ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 
-import type { CodeEditorFile } from '@/shared/types';
+import type { CodeEditorLookup, CodeEditorTab, CsharpLocation } from '@/shared/types';
 import CodeEditor from '@/modules/code-editor/CodeEditor';
+import CodeEditorLookupPanel from '@/modules/code-editor/CodeEditorLookupPanel';
+import CodeEditorTabs from '@/modules/code-editor/CodeEditorTabs';
 
 type EditorSidebarProps = {
-  editingFile: CodeEditorFile | null;
+  tabs: CodeEditorTab[];
+  activeTabKey: string | null;
+  dirtyTabKeys: ReadonlySet<string>;
   isMobile: boolean;
   editorExpanded: boolean;
   editorWidth: number;
   hasManualWidth: boolean;
   resizeHandleRef: MutableRefObject<HTMLDivElement | null>;
   onResizeStart: (event: MouseEvent<HTMLDivElement>) => void;
-  onCloseEditor: () => void;
+  onActivateTab: (tabKey: string) => void;
+  // Closes without asking; this component confirms a dirty tab first.
+  onCloseTab: (tabKey: string) => void;
   onToggleEditorExpand: () => void;
-  // Forwarded to CodeEditor so useEditorSidebar can refuse to swap a dirty
-  // buffer for another file without asking.
-  onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
+  // Reported per tab, so the tab strip can mark dirty files and closing one can ask first.
+  onUnsavedChangesChange: (tabKey: string, hasUnsavedChanges: boolean) => void;
   projectPath?: string;
   fillSpace?: boolean;
-  // Forwarded to CodeEditor so go to definition and find references can open another file at a line.
-  onOpenLocation?: (filePath: string, line: number) => void;
+  // Forwarded to CodeEditor so go to definition and find references can open a file at a line and character.
+  onOpenLocation?: (filePath: string, line: number, character: number) => void;
 };
+
+type EditorTabPaneProps = {
+  tab: CodeEditorTab;
+  isActive: boolean;
+  isFloating: boolean;
+  editorExpanded: boolean;
+  // Only the active tab gets these; null for the rest keeps their memoised props unchanged.
+  tabStrip: ReactNode;
+  lookupPanel: ReactNode;
+  projectPath?: string;
+  onCloseTab: (tabKey: string) => void;
+  onUnsavedChangesChange: (tabKey: string, hasUnsavedChanges: boolean) => void;
+  onToggleEditorExpand: () => void;
+  onPopOut: () => void;
+  onOpenLocation?: (filePath: string, line: number, character: number) => void;
+  onLookup: (lookup: CodeEditorLookup | null) => void;
+  onCloseLookup: () => boolean;
+};
+
+// One mounted editor per tab. Hidden tabs stay mounted so their buffers, undo history and scroll position
+// survive switching; memoised so typing in one tab does not re-render the others.
+const EditorTabPane = memo(function EditorTabPane({
+  tab,
+  isActive,
+  isFloating,
+  editorExpanded,
+  tabStrip,
+  lookupPanel,
+  projectPath,
+  onCloseTab,
+  onUnsavedChangesChange,
+  onToggleEditorExpand,
+  onPopOut,
+  onOpenLocation,
+  onLookup,
+  onCloseLookup,
+}: EditorTabPaneProps) {
+  const { key } = tab;
+  const handleClose = useCallback(() => onCloseTab(key), [key, onCloseTab]);
+  const handleUnsavedChangesChange = useCallback(
+    (hasUnsavedChanges: boolean) => onUnsavedChangesChange(key, hasUnsavedChanges),
+    [key, onUnsavedChangesChange],
+  );
+
+  return (
+    <div className={isActive ? 'contents' : 'hidden'}>
+      <CodeEditor
+        file={tab.file}
+        gotoTarget={tab.gotoTarget}
+        isActive={isActive}
+        onClose={handleClose}
+        onUnsavedChangesChange={handleUnsavedChangesChange}
+        projectPath={projectPath}
+        isSidebar={!isFloating}
+        isExpanded={!isFloating && editorExpanded}
+        onToggleExpand={isFloating ? null : onToggleEditorExpand}
+        onPopOut={isFloating ? null : onPopOut}
+        onOpenLocation={onOpenLocation}
+        onLookup={onLookup}
+        onCloseLookup={onCloseLookup}
+        tabStrip={tabStrip}
+        lookupPanel={lookupPanel}
+      />
+    </div>
+  );
+});
 
 // Minimum width for the left content (file tree, chat, etc.)
 const MIN_LEFT_CONTENT_WIDTH = 200;
@@ -30,21 +102,27 @@ const MIN_EDITOR_WIDTH = 280;
 
 /** Used by the project-workspace module to dock the code editor beside the workspace content, with drag-to-resize and pop-out behaviour. */
 export default function EditorSidebar({
-  editingFile,
+  tabs,
+  activeTabKey,
+  dirtyTabKeys,
   isMobile,
   editorExpanded,
   editorWidth,
   hasManualWidth,
   resizeHandleRef,
   onResizeStart,
-  onCloseEditor,
+  onActivateTab,
+  onCloseTab,
   onToggleEditorExpand,
   onUnsavedChangesChange,
   projectPath,
   fillSpace,
   onOpenLocation,
 }: EditorSidebarProps) {
+  const { t } = useTranslation('codeEditor');
   const [poppedOut, setPoppedOut] = useState(false);
+  const [lookup, setLookup] = useState<CodeEditorLookup | null>(null);
+  const hasTabs = tabs.length > 0;
   const containerRef = useRef<HTMLDivElement>(null);
   // Only the ceiling is state; the applied width is derived below. Holding a
   // second copy of the width meant every drag frame rendered twice, and keeping
@@ -55,7 +133,7 @@ export default function EditorSidebar({
   // Track how much room the container can spare so the left content keeps at
   // least MIN_LEFT_CONTENT_WIDTH as the window resizes.
   useEffect(() => {
-    if (!editingFile || isMobile || poppedOut) return;
+    if (!hasTabs || isMobile || poppedOut) return;
 
     const updateAvailableWidth = () => {
       if (!containerRef.current) return;
@@ -87,29 +165,72 @@ export default function EditorSidebar({
       window.removeEventListener('resize', updateAvailableWidth);
       resizeObserver.disconnect();
     };
-  }, [editingFile, isMobile, poppedOut]);
+  }, [hasTabs, isMobile, poppedOut]);
 
   const effectiveWidth = maxEditorWidth === null
     ? editorWidth
     : Math.min(editorWidth, maxEditorWidth);
 
-  // Closing always leaves the floating layout behind so the next file opens
-  // docked again; stable identities keep the editor's keyboard shortcuts and
-  // toolbar extension from being rebuilt on every render.
-  const handleClose = useCallback(() => {
-    setPoppedOut(false);
-    onCloseEditor();
-  }, [onCloseEditor]);
+  // Closing the last tab leaves the floating layout and the lookup behind, so the next file opens docked again.
+  // Stable identities keep the editors' keyboard shortcuts and C# layers from being rebuilt on every render.
+  // Mirrors read by the stable callbacks below without re-creating them on every change.
+  const tabCountRef = useRef(tabs.length);
+  const dirtyTabKeysRef = useRef(dirtyTabKeys);
+  const lookupRef = useRef(lookup);
+  useEffect(() => {
+    tabCountRef.current = tabs.length;
+    dirtyTabKeysRef.current = dirtyTabKeys;
+    lookupRef.current = lookup;
+  }, [tabs.length, dirtyTabKeys, lookup]);
+
+  const handleCloseTab = useCallback((tabKey: string) => {
+    if (tabCountRef.current === 1) {
+      setPoppedOut(false);
+      setLookup(null);
+    }
+    onCloseTab(tabKey);
+  }, [onCloseTab]);
+
+  // The tab strip's close asks here, for any tab; the editor's own close button and Escape ask in CodeEditor.
+  const handleRequestCloseTab = useCallback((tabKey: string) => {
+    // No inline fallback here on purpose: CodeEditor's `requestClose` owns the one for this key.
+    if (dirtyTabKeysRef.current.has(tabKey) && !window.confirm(t('unsavedChanges.confirmClose'))) return;
+    handleCloseTab(tabKey);
+  }, [handleCloseTab, t]);
 
   const handlePopOut = useCallback(() => setPoppedOut(true), []);
 
-  if (!editingFile) {
+  const handleCloseLookup = useCallback(() => {
+    if (!lookupRef.current) return false;
+    setLookup(null);
+    return true;
+  }, []);
+
+  const handleOpenLookupLocation = useCallback((location: CsharpLocation) => {
+    onOpenLocation?.(location.filePath, location.line + 1, location.character);
+  }, [onOpenLocation]);
+
+  if (!hasTabs) {
     return null;
   }
 
-  // One CodeEditor element in one position for every layout; only the wrappers
+  // One CodeEditor element per tab, each in one position for every layout; only the wrappers
   // change, so switching layouts never remounts it and drops the buffer.
   const isFloating = isMobile || poppedOut;
+
+  const tabStrip = (
+    <CodeEditorTabs
+      tabs={tabs}
+      activeTabKey={activeTabKey}
+      dirtyTabKeys={dirtyTabKeys}
+      onActivateTab={onActivateTab}
+      onRequestCloseTab={handleRequestCloseTab}
+    />
+  );
+
+  const lookupPanel = lookup && (
+    <CodeEditorLookupPanel lookup={lookup} onOpenLocation={handleOpenLookupLocation} onClose={handleCloseLookup} />
+  );
 
   // In files tab, fill the remaining width unless user has dragged manually.
   const useFlexLayout = editorExpanded || (fillSpace && !hasManualWidth);
@@ -139,17 +260,25 @@ export default function EditorSidebar({
           : `h-full overflow-hidden border-l border-gray-200 dark:border-gray-700 ${useFlexLayout ? 'min-w-0 flex-1' : ''}`}
         style={isFloating || useFlexLayout ? undefined : { width: `${effectiveWidth}px`, minWidth: `${MIN_EDITOR_WIDTH}px` }}
       >
-        <CodeEditor
-          file={editingFile}
-          onClose={handleClose}
-          onUnsavedChangesChange={onUnsavedChangesChange}
-          projectPath={projectPath}
-          isSidebar={!isFloating}
-          isExpanded={!isFloating && editorExpanded}
-          onToggleExpand={isFloating ? null : onToggleEditorExpand}
-          onPopOut={isFloating ? null : handlePopOut}
-          onOpenLocation={onOpenLocation}
-        />
+        {tabs.map((tab) => (
+          <EditorTabPane
+            key={tab.key}
+            tab={tab}
+            isActive={tab.key === activeTabKey}
+            isFloating={isFloating}
+            editorExpanded={editorExpanded}
+            tabStrip={tab.key === activeTabKey ? tabStrip : null}
+            lookupPanel={tab.key === activeTabKey ? lookupPanel : null}
+            projectPath={projectPath}
+            onCloseTab={handleCloseTab}
+            onUnsavedChangesChange={onUnsavedChangesChange}
+            onToggleEditorExpand={onToggleEditorExpand}
+            onPopOut={handlePopOut}
+            onOpenLocation={onOpenLocation}
+            onLookup={setLookup}
+            onCloseLookup={handleCloseLookup}
+          />
+        ))}
       </div>
     </div>
   );

@@ -8,6 +8,7 @@ import type {
   CsharpLanguageStatus,
   CsharpLocation,
   CsharpPositionRequest,
+  CsharpReferenceAccess,
   CsharpSemanticResult,
   CsharpSemanticToken,
 } from '@/shared/types.js';
@@ -30,10 +31,17 @@ type CsharpLanguageServiceDependencies = {
 
 type ProtocolRange = { start: { line: number; character: number } };
 type ProtocolLocation = { uri?: string; range?: ProtocolRange; targetUri?: string; targetSelectionRange?: ProtocolRange };
+type ProtocolDocumentHighlight = { range?: ProtocolRange; kind?: number };
 
 // A failed server is kept, and reported, this long before a request may start a fresh one.
 const FAILED_SERVER_RETRY_MS = 60_000;
 const PREVIEW_MAX_LENGTH = 200;
+// DocumentHighlightKind from the protocol; 1 (Text) is neither and stays unclassified.
+const HIGHLIGHT_KIND_ACCESS: Record<number, CsharpReferenceAccess> = { 2: 'read', 3: 'write' };
+
+function locationKey(filePath: string, line: number, character: number): string {
+  return `${path.resolve(filePath).toLowerCase()}|${line}|${character}`;
+}
 
 /** Picks the solution Roslyn should load for a file: that of the nearest folder above it holding one. */
 async function findSolutionPath(filePath: string, listDirectory: (directoryPath: string) => Promise<string[]>): Promise<string | null> {
@@ -159,7 +167,11 @@ export function createCsharpLanguageService(dependencies: CsharpLanguageServiceD
     });
   }
 
-  async function toLocations(rawResult: unknown, document: CsharpDocumentRequest): Promise<CsharpLocation[]> {
+  async function toLocations(
+    rawResult: unknown,
+    document: CsharpDocumentRequest,
+    accesses: Map<string, CsharpReferenceAccess> = new Map(),
+  ): Promise<CsharpLocation[]> {
     const rawLocations = (Array.isArray(rawResult) ? rawResult : rawResult ? [rawResult] : []) as ProtocolLocation[];
     const fileLines = new Map<string, Promise<string[]>>();
     const readLines = (filePath: string): Promise<string[]> => {
@@ -177,15 +189,44 @@ export function createCsharpLanguageService(dependencies: CsharpLanguageServiceD
       if (!uri?.startsWith('file:') || !start) return null;
       const filePath = fileURLToPath(uri);
       const lines = await readLines(filePath);
-      return { filePath, line: start.line, character: start.character, preview: (lines[start.line] ?? '').trim().slice(0, PREVIEW_MAX_LENGTH) };
+      const preview = (lines[start.line] ?? '').trim().slice(0, PREVIEW_MAX_LENGTH);
+      return { filePath, line: start.line, character: start.character, preview, access: accesses.get(locationKey(filePath, start.line, start.character)) ?? null };
     }));
 
     const unique = new Map<string, CsharpLocation>();
     for (const location of locations) {
-      if (location) unique.set(`${path.resolve(location.filePath).toLowerCase()}|${location.line}|${location.character}`, location);
+      if (location) unique.set(locationKey(location.filePath, location.line, location.character), location);
     }
     return [...unique.values()]
       .sort((left, right) => left.filePath.localeCompare(right.filePath) || left.line - right.line || left.character - right.character);
+  }
+
+  // References carry no read/write kind, so each file's document highlights for the symbol supply it: one
+  // request per file, at the first reference found there.
+  async function classifyAccesses(server: ICsharpLanguageServer, rawLocations: ProtocolLocation[]): Promise<Map<string, CsharpReferenceAccess>> {
+    const firstPerFile = new Map<string, ProtocolRange['start']>();
+    for (const rawLocation of rawLocations) {
+      const start = rawLocation.range?.start;
+      if (rawLocation.uri?.startsWith('file:') && start && !firstPerFile.has(rawLocation.uri)) firstPerFile.set(rawLocation.uri, start);
+    }
+
+    const accesses = new Map<string, CsharpReferenceAccess>();
+    await Promise.all([...firstPerFile].map(async ([uri, position]) => {
+      let highlights: unknown;
+      try {
+        highlights = await server.request('textDocument/documentHighlight', { textDocument: { uri }, position });
+      } catch {
+        // The kind is a detail; a file Roslyn cannot highlight still lists its references, just unclassified.
+        return;
+      }
+      const filePath = fileURLToPath(uri);
+      for (const highlight of (Array.isArray(highlights) ? highlights : []) as ProtocolDocumentHighlight[]) {
+        const start = highlight.range?.start;
+        const access = HIGHLIGHT_KIND_ACCESS[highlight.kind ?? 0];
+        if (start && access) accesses.set(locationKey(filePath, start.line, start.character), access);
+      }
+    }));
+    return accesses;
   }
 
   return {
@@ -215,12 +256,15 @@ export function createCsharpLanguageService(dependencies: CsharpLanguageServiceD
           context: { includeDeclaration: true },
         };
         const askers = [server, ...otherServersCompiling(request.filePath, server)];
-        const results = await Promise.all(askers.map((asker) => {
+        const results = await Promise.all(askers.map(async (asker) => {
           keepAlive(asker);
           asker.syncDocument(request);
-          return asker.request('textDocument/references', params);
+          const result = await asker.request('textDocument/references', params);
+          const rawLocations = (Array.isArray(result) ? result : []) as ProtocolLocation[];
+          return { rawLocations, accesses: await classifyAccesses(asker, rawLocations) };
         }));
-        return toLocations(results.flatMap((result) => (Array.isArray(result) ? result : [])), request);
+        const accesses = new Map(results.flatMap((result) => [...result.accesses]));
+        return toLocations(results.flatMap((result) => result.rawLocations), request, accesses);
       });
     },
   };
