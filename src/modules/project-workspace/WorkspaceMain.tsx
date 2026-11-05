@@ -171,6 +171,7 @@ function WorkspaceMain({
         isMobile={isMobile}
         onMenuClick={onMenuClick}
         onRenameSession={onRenameSession}
+        editorToggle={editorTabs.length > 0 ? { hidden: editorHidden, onToggle: handleToggleEditorHidden } : null}
       />
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -271,7 +272,6 @@ function WorkspaceMain({
           onActivateTab={handleActivateEditorTab}
           onCloseTab={handleCloseEditorTab}
           onToggleEditorExpand={handleToggleEditorExpand}
-          onToggleEditorHidden={handleToggleEditorHidden}
           onUnsavedChangesChange={handleUnsavedChangesChange}
           projectPath={selectedProject.path}
           onOpenLocation={handleOpenLocation}

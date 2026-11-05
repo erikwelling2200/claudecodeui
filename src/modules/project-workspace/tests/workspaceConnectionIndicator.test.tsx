@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, test, vi } from 'vitest';
 
 import '@/modules/i18n';
@@ -74,7 +74,9 @@ const PROJECT: Project = {
   sessionMeta: { hasMore: false, total: 0 },
 };
 
-const header = (activeTab: AppTab) => (
+type EditorToggle = { hidden: boolean; onToggle: () => void } | null;
+
+const header = (activeTab: AppTab, editorToggle: EditorToggle = null) => (
   <WebSocketProvider>
     <WorkspaceHeader
       activeTab={activeTab}
@@ -86,6 +88,7 @@ const header = (activeTab: AppTab) => (
       isMobile={false}
       onMenuClick={() => undefined}
       onRenameSession={async () => true}
+      editorToggle={editorToggle}
     />
   </WebSocketProvider>
 );
@@ -151,4 +154,17 @@ test('a first connection that fails is shown too', () => {
   render(header('chat'));
   act(() => latestSocket().serverDrops());
   assert.equal(isIndicatorShown(), true);
+});
+
+test('the editor toggle sits in the header only while a file is open, and names what it will do', () => {
+  const { rerender } = render(header('chat'));
+  assert.equal(screen.queryByTitle('Hide editor') !== null, false);
+
+  const onToggle = vi.fn();
+  rerender(header('chat', { hidden: false, onToggle }));
+  fireEvent.click(screen.getByTitle('Hide editor'));
+  assert.equal(onToggle.mock.calls.length, 1);
+
+  rerender(header('chat', { hidden: true, onToggle }));
+  assert.ok(screen.getByTitle('Show editor'));
 });

@@ -82,7 +82,6 @@ globalThis.ResizeObserver = class {
 } as unknown as typeof ResizeObserver;
 
 const onUnsavedChangesChange = vi.fn();
-const onToggleEditorHidden = vi.fn();
 
 const sidebar = (isMobile: boolean, editorHidden = false) => (
   <div>
@@ -99,7 +98,6 @@ const sidebar = (isMobile: boolean, editorHidden = false) => (
       onActivateTab={() => undefined}
       onCloseTab={() => undefined}
       onToggleEditorExpand={() => undefined}
-      onToggleEditorHidden={onToggleEditorHidden}
       onUnsavedChangesChange={onUnsavedChangesChange}
       projectPath="/repo"
     />
@@ -233,7 +231,6 @@ test('the docked panel keeps one width whichever tab is active', async () => {
         onActivateTab={() => undefined}
         onCloseTab={() => undefined}
         onToggleEditorExpand={() => undefined}
-        onToggleEditorHidden={() => undefined}
         onUnsavedChangesChange={() => undefined}
         projectPath="/repo"
       />
@@ -248,19 +245,14 @@ test('the docked panel keeps one width whichever tab is active', async () => {
   assert.equal(panelWidth(container), '600px');
 });
 
-test('hiding the docked editor leaves a show button and keeps the unsaved buffer', async () => {
+test('hiding the docked editor takes it off screen and keeps the unsaved buffer', async () => {
   vi.spyOn(window, 'confirm').mockReturnValue(false);
-  const { editor, rerender } = await renderSidebar();
+  const { container, editor, rerender } = await renderSidebar();
   typeInto(editor, 'hello edited');
-
-  // No i18n instance is initialised here, so the labels render as their key.
-  fireEvent.click(screen.getByTitle('tabs.hideEditor'));
-  assert.equal(onToggleEditorHidden.mock.calls.length, 1);
 
   rerender(sidebar(false, true));
   assert.equal(isDocked(), false, 'no drag handle beside a hidden panel');
-  fireEvent.click(screen.getByTitle('tabs.showEditor'));
-  assert.equal(onToggleEditorHidden.mock.calls.length, 2);
+  assert.ok(container.querySelector('.hidden [data-testid="editor"]'), 'the editor is still mounted, only hidden');
 
   rerender(sidebar(false, false));
   assert.ok(isDocked());

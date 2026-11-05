@@ -1,7 +1,6 @@
 import { memo, useCallback, useState, useEffect, useRef } from 'react';
 import type { MouseEvent, MutableRefObject, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { PanelRightOpen } from 'lucide-react';
 
 import type { CodeEditorLookup, CodeEditorTab, CsharpLocation } from '@/shared/types';
 import CodeEditor from '@/modules/code-editor/CodeEditor';
@@ -14,7 +13,7 @@ type EditorSidebarProps = {
   dirtyTabKeys: ReadonlySet<string>;
   isMobile: boolean;
   editorExpanded: boolean;
-  // Docked only: the panel shrinks to a rail with a show button, its tabs kept mounted.
+  // The panel takes no room while hidden, but its tabs stay mounted so their buffers survive.
   editorHidden: boolean;
   editorWidth: number;
   resizeHandleRef: MutableRefObject<HTMLDivElement | null>;
@@ -23,7 +22,6 @@ type EditorSidebarProps = {
   // Closes without asking; this component confirms a dirty tab first.
   onCloseTab: (tabKey: string) => void;
   onToggleEditorExpand: () => void;
-  onToggleEditorHidden: () => void;
   // Reported per tab, so the tab strip can mark dirty files and closing one can ask first.
   onUnsavedChangesChange: (tabKey: string, hasUnsavedChanges: boolean) => void;
   projectPath?: string;
@@ -116,7 +114,6 @@ export default function EditorSidebar({
   onActivateTab,
   onCloseTab,
   onToggleEditorExpand,
-  onToggleEditorHidden,
   onUnsavedChangesChange,
   projectPath,
   onOpenLocation,
@@ -202,6 +199,11 @@ export default function EditorSidebar({
 
   const handlePopOut = useCallback(() => setPoppedOut(true), []);
 
+  // The toggle lives in the workspace header; hiding a floating editor sends it back to the docked layout, hidden.
+  useEffect(() => {
+    if (editorHidden) setPoppedOut(false);
+  }, [editorHidden]);
+
   const handleCloseLookup = useCallback(() => {
     if (!lookupRef.current) return false;
     setLookup(null);
@@ -228,7 +230,6 @@ export default function EditorSidebar({
       dirtyTabKeys={dirtyTabKeys}
       onActivateTab={onActivateTab}
       onRequestCloseTab={handleRequestCloseTab}
-      onHide={isFloating ? null : onToggleEditorHidden}
     />
   );
 
@@ -249,20 +250,6 @@ export default function EditorSidebar({
       ref={containerRef}
       className={isFloating ? 'contents' : `flex h-full min-w-0 ${editorExpanded ? 'flex-1' : ''}`}
     >
-      {isHidden && (
-        <div className="flex h-full w-12 flex-shrink-0 flex-col items-center border-l border-border/50 bg-background/80 py-3">
-          <button
-            type="button"
-            onClick={onToggleEditorHidden}
-            className="group flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-accent/80"
-            aria-label={t('tabs.showEditor')}
-            title={t('tabs.showEditor')}
-          >
-            <PanelRightOpen className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
-          </button>
-        </div>
-      )}
-
       {!isFloating && !isHidden && !editorExpanded && (
         <div
           ref={resizeHandleRef}

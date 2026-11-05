@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -20,6 +20,8 @@ type WorkspaceHeaderProps = {
   onMenuClick: () => void;
   /** Persists a new title for a session; resolves false when the backend refuses it. */
   onRenameSession: (sessionId: string, summary: string) => Promise<boolean>;
+  /** Hides or shows the code editor panel; null while no file is open. */
+  editorToggle: { hidden: boolean; onToggle: () => void } | null;
 };
 
 /** Rendered by WorkspaceMain to show the workspace title and chat connection status alongside the scrollable tab bar. */
@@ -33,6 +35,7 @@ export default function WorkspaceHeader({
   isMobile,
   onMenuClick,
   onRenameSession,
+  editorToggle,
 }: WorkspaceHeaderProps) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -156,6 +159,18 @@ export default function WorkspaceHeader({
             )}
           </div>
         </div>
+
+        {editorToggle && !isMobile && (
+          <button
+            type="button"
+            onClick={editorToggle.onToggle}
+            className="hidden h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent/80 hover:text-foreground sm:flex"
+            aria-label={t(editorToggle.hidden ? 'tabs.showEditor' : 'tabs.hideEditor', { ns: 'codeEditor' })}
+            title={t(editorToggle.hidden ? 'tabs.showEditor' : 'tabs.hideEditor', { ns: 'codeEditor' })}
+          >
+            {editorToggle.hidden ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
+          </button>
+        )}
       </div>
     </header>
   );
