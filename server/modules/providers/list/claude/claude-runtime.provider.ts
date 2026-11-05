@@ -290,6 +290,20 @@ function grantKey(toolName: string, input: unknown): string {
   }
 }
 
+/**
+ * Tells the model that the call the classifier refused was approved by the
+ * user. The CLI's own note after a `retry` only says the model "may retry",
+ * next to a refusal that invites it to work around the call instead, and a
+ * reworded retry misses the grant and goes back to the classifier.
+ */
+function approvedRetryInstruction(toolName: string, input: unknown): string {
+  const command = (input as AnyRecord | null)?.command;
+  const quoted = typeof command === 'string' ? `\n\n\`\`\`\n${command}\n\`\`\`` : '';
+  return `The user approved the ${toolName} call the auto mode classifier just refused. Run that call again now with exactly the`
+    + ` same input${quoted ? ', this command' : ''}, and do not work around it. Only the identical call is approved: a changed one`
+    + ` goes back to the classifier.${quoted}`;
+}
+
 // Ultracode is a session-scoped setting rather than an SDK effort level: it pairs xhigh
 // effort with standing dynamic-workflow orchestration, and the CLI only honours it when
 // Workflows are enabled. The catalog offers it as an effort choice for the picker, so the
@@ -1687,6 +1701,7 @@ async function queryClaudeSDK(
       // Both halves were observed end to end. It still rests on the model
       // taking the retry up and re-sending the same command; the grant ignores
       // the free-text description it may reword, but not the command itself.
+      // A hidden steered message tells the model both, with the command quoted.
       //
       // A call this run has already shown a dialog for is not asked about twice.
       PermissionDenied: [{
@@ -1723,6 +1738,7 @@ async function queryClaudeSDK(
           // narrower than the call anyway (`Bash(cd:*)` for `cd x && git push`).
           // The grant is spent by the retry or expires after a short while.
           oneShotGrants.set(grantKey(toolName, toolInput), Date.now());
+          steerHiddenPrompt(approvedRetryInstruction(toolName, toolInput));
           return { hookSpecificOutput: { hookEventName: 'PermissionDenied', retry: true } };
         }]
       }],
