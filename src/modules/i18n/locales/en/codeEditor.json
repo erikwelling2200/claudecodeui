@@ -51,7 +51,8 @@
     "noDefinition": "No definition found",
     "noReferences": "No references found",
     "definitions": "{{count}} definitions",
-    "references": "{{count}} references"
+    "references": "{{count}} references",
+    "openSettings": "Install in Settings"
   },
   "tabs": {
     "close": "Close tab",

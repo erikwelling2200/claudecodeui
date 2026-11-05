@@ -7,7 +7,7 @@ import { api, readApiJson } from '@/shared/api';
 import type { CodeEditorLookup, CsharpLocation } from '@/shared/types';
 
 type CsharpStatus = {
-  state: 'starting' | 'loading' | 'ready' | 'failed' | 'unavailable';
+  state: 'starting' | 'loading' | 'ready' | 'failed' | 'unavailable' | 'notInstalled';
   solutionPath: string | null;
   message: string | null;
   // Goes up when Roslyn says earlier tokens are out of date, such as when analysis still partial at load completes.
@@ -26,6 +26,7 @@ type CsharpSemanticLabels = {
   noReferences: string;
   definitions: (count: number) => string;
   references: (count: number) => string;
+  openSettings: string;
 };
 
 type CsharpSemanticOptions = {
@@ -36,12 +37,16 @@ type CsharpSemanticOptions = {
   onLookup: (lookup: CodeEditorLookup | null) => void;
   // Closes the lookup panel; returns whether one was open, so Escape falls through to the editor otherwise.
   onCloseLookup: () => boolean;
+  // Opens the settings tab that installs the language server.
+  onOpenSettings: () => void;
   labels: CsharpSemanticLabels;
 };
 
 const STATUS_POLL_INTERVAL_MS = 2000;
 // Once loaded, the status is still polled now and then, to notice Roslyn asking for fresh tokens.
 const READY_POLL_INTERVAL_MS = 4000;
+// Without a server the status is still polled now and then, so installing one from settings takes effect by itself.
+const NOT_INSTALLED_POLL_INTERVAL_MS = 5000;
 const TOKEN_REFRESH_DELAY_MS = 600;
 
 // Visual Studio 2022 colors per Roslyn token type, dark then light. Keywords, strings, comments and numbers
@@ -111,7 +116,7 @@ function createSpinner(): HTMLElement {
  * colors, F12 / Ctrl+click for go to definition and Shift+F12 for find all references. Used by CodeEditor,
  * which adds it only for C# files. A spinning status bar under the file shows while the solution loads.
  */
-export function createCsharpSemanticExtension({ filePath, onOpenLocation, onLookup, onCloseLookup, labels }: CsharpSemanticOptions): Extension {
+export function createCsharpSemanticExtension({ filePath, onOpenLocation, onLookup, onCloseLookup, onOpenSettings, labels }: CsharpSemanticOptions): Extension {
   const semanticDecorations = StateField.define<DecorationSet>({
     create: () => Decoration.none,
     update(decorations, transaction) {
@@ -131,7 +136,7 @@ export function createCsharpSemanticExtension({ filePath, onOpenLocation, onLook
       if (!status) return null;
       const isLoading = status.state === 'starting' || status.state === 'loading';
       // A file outside any solution simply has no semantic layer; that needs no bar.
-      const showsMessage = status.state === 'failed' || (status.state === 'unavailable' && status.solutionPath !== null);
+      const showsMessage = status.state === 'failed' || status.state === 'notInstalled' || (status.state === 'unavailable' && status.solutionPath !== null);
       if (!isLoading && !showsMessage) return null;
       return () => createStatusPanel(status, isLoading);
     }),
@@ -144,6 +149,14 @@ export function createCsharpSemanticExtension({ filePath, onOpenLocation, onLook
       dom.append(createSpinner(), labels.loading(fileName(status.solutionPath ?? '')));
     } else {
       dom.textContent = status.message ?? status.state;
+      if (status.state === 'notInstalled') {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'cm-csharp-status-action';
+        button.textContent = labels.openSettings;
+        button.addEventListener('click', onOpenSettings);
+        dom.append(button);
+      }
     }
     return { dom, top: false };
   }
@@ -235,6 +248,8 @@ export function createCsharpSemanticExtension({ filePath, onOpenLocation, onLook
       } else if (status.state === 'ready') {
         if (status.semanticRevision !== this.paintedRevision) void this.refreshTokens(status.semanticRevision);
         this.pollTimer = setTimeout(() => void this.pollStatus(), READY_POLL_INTERVAL_MS);
+      } else if (status.state === 'notInstalled') {
+        this.pollTimer = setTimeout(() => void this.pollStatus(), NOT_INSTALLED_POLL_INTERVAL_MS);
       }
     }
 
@@ -327,4 +342,16 @@ const csharpSemanticTheme = EditorView.baseTheme({
   '&light .cm-csharp-status': { color: '#4b5563' },
   '&dark .cm-csharp-status-error': { color: '#f87171' },
   '&light .cm-csharp-status-error': { color: '#b91c1c' },
+  '.cm-csharp-status-action': {
+    marginLeft: '10px',
+    padding: '1px 8px',
+    border: '1px solid currentColor',
+    borderRadius: '4px',
+    background: 'transparent',
+    color: 'inherit',
+    font: 'inherit',
+    cursor: 'pointer',
+    flexShrink: '0',
+  },
+  '.cm-csharp-status-action:hover': { backgroundColor: 'rgba(127, 127, 127, 0.15)' },
 });

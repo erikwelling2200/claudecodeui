@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import express from 'express';
 
-import type { CsharpDocumentRequest, CsharpLanguageServices, CsharpPositionRequest } from '@/shared/types.js';
+import type { CsharpDocumentRequest, CsharpLanguageServices, CsharpPositionRequest, CsharpServerInstallServices } from '@/shared/types.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
 
 function readBody(request: express.Request): Record<string, unknown> {
@@ -35,8 +35,16 @@ function readPosition(body: Record<string, unknown>): CsharpPositionRequest {
  * Builds the C# language HTTP router for the server entrypoint and route tests: language server status,
  * semantic tokens, go to definition and find references for one `.cs` file.
  */
-export function createCsharpLanguageRouter(services: CsharpLanguageServices): express.Router {
+export function createCsharpLanguageRouter(services: CsharpLanguageServices, installer: CsharpServerInstallServices): express.Router {
   const router = express.Router();
+
+  router.get('/server-install', asyncHandler(async (_request, response) => {
+    response.json(createApiSuccessResponse(await installer.getInstallStatus()));
+  }));
+
+  router.post('/server-install', asyncHandler(async (_request, response) => {
+    response.json(createApiSuccessResponse(await installer.startInstall()));
+  }));
 
   router.post('/status', asyncHandler(async (request, response) => {
     response.json(createApiSuccessResponse(await services.getStatus(readCsharpFilePath(readBody(request).filePath))));
