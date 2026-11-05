@@ -37,7 +37,7 @@ type CodeEditorProps = {
   onOpenLocation?: (filePath: string, line: number, character: number) => void;
   // The line to reveal; a new object per request, so the same line can be asked for twice.
   gotoTarget?: CodeEditorGotoTarget | null;
-  // Only the visible tab answers the document-wide shortcuts (Ctrl+S, Escape); hidden tabs stay mounted to keep their buffers.
+  // Only the visible tab answers the document-wide Ctrl+S; hidden tabs stay mounted to keep their buffers.
   isActive?: boolean;
   // The open-file tabs, drawn above this file's header in every layout.
   tabStrip?: ReactNode;
@@ -99,7 +99,7 @@ export default function CodeEditor({
     projectPath,
   });
 
-  // Every way of closing (Escape, the header X, the binary and media views)
+  // Every way of closing (the header X, the binary and media views)
   // goes through here: a dirty buffer asks first, a clean one closes at once.
   const requestClose = useCallback(() => {
     if (
@@ -263,7 +263,6 @@ export default function CodeEditor({
 
   useEditorKeyboardShortcuts({
     onSave: handleSave,
-    onClose: requestClose,
     dependency: content,
     enabled: isActive,
   });

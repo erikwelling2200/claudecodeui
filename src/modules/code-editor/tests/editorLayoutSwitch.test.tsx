@@ -82,8 +82,9 @@ globalThis.ResizeObserver = class {
 } as unknown as typeof ResizeObserver;
 
 const onUnsavedChangesChange = vi.fn();
+const onToggleEditorHidden = vi.fn();
 
-const sidebar = (isMobile: boolean) => (
+const sidebar = (isMobile: boolean, editorHidden = false) => (
   <div>
     <EditorSidebar
       tabs={[{ key: 'p1|/repo/a.txt', file, gotoTarget: null }]}
@@ -91,12 +92,14 @@ const sidebar = (isMobile: boolean) => (
       dirtyTabKeys={new Set()}
       isMobile={isMobile}
       editorExpanded={false}
+      editorHidden={editorHidden}
       editorWidth={600}
       resizeHandleRef={{ current: null }}
       onResizeStart={() => undefined}
       onActivateTab={() => undefined}
       onCloseTab={() => undefined}
       onToggleEditorExpand={() => undefined}
+      onToggleEditorHidden={onToggleEditorHidden}
       onUnsavedChangesChange={onUnsavedChangesChange}
       projectPath="/repo"
     />
@@ -223,12 +226,14 @@ test('the docked panel keeps one width whichever tab is active', async () => {
         dirtyTabKeys={new Set()}
         isMobile={false}
         editorExpanded={false}
+        editorHidden={false}
         editorWidth={600}
         resizeHandleRef={{ current: null }}
         onResizeStart={() => undefined}
         onActivateTab={() => undefined}
         onCloseTab={() => undefined}
         onToggleEditorExpand={() => undefined}
+        onToggleEditorHidden={() => undefined}
         onUnsavedChangesChange={() => undefined}
         projectPath="/repo"
       />
@@ -241,4 +246,23 @@ test('the docked panel keeps one width whichever tab is active', async () => {
 
   rerender(renderWithActive('p1|/repo/b.txt'));
   assert.equal(panelWidth(container), '600px');
+});
+
+test('hiding the docked editor leaves a show button and keeps the unsaved buffer', async () => {
+  vi.spyOn(window, 'confirm').mockReturnValue(false);
+  const { editor, rerender } = await renderSidebar();
+  typeInto(editor, 'hello edited');
+
+  // No i18n instance is initialised here, so the labels render as their key.
+  fireEvent.click(screen.getByTitle('tabs.hideEditor'));
+  assert.equal(onToggleEditorHidden.mock.calls.length, 1);
+
+  rerender(sidebar(false, true));
+  assert.equal(isDocked(), false, 'no drag handle beside a hidden panel');
+  fireEvent.click(screen.getByTitle('tabs.showEditor'));
+  assert.equal(onToggleEditorHidden.mock.calls.length, 2);
+
+  rerender(sidebar(false, false));
+  assert.ok(isDocked());
+  assertBufferSurvived();
 });

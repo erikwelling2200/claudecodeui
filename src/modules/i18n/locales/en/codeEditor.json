@@ -54,7 +54,9 @@
     "references": "{{count}} references"
   },
   "tabs": {
-    "close": "Close tab"
+    "close": "Close tab",
+    "hideEditor": "Hide editor",
+    "showEditor": "Show editor"
   },
   "lookup": {
     "file": "File",

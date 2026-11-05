@@ -6,7 +6,7 @@ import { test, vi } from 'vitest';
 import type { CodeEditorFile, Project } from '@/shared/types';
 
 /**
- * Regression guard for #870: the editor closed on Escape, the header X, or a
+ * Regression guard for #870: the editor closed on the header X or a
  * click on another file and silently threw away whatever had been typed. A
  * dirty buffer now asks first; a clean one — including right after a save —
  * still closes without a word.
@@ -58,8 +58,9 @@ const typeInto = (editor: HTMLTextAreaElement, value: string) => {
   fireEvent.change(editor, { target: { value } });
 };
 
-const pressEscape = () => {
-  fireEvent.keyDown(document, { key: 'Escape' });
+// No i18n instance is initialised here, so labels without a default render as their key.
+const pressClose = () => {
+  fireEvent.click(screen.getByTitle('actions.close'));
 };
 
 // Compared as a boolean rather than against the element: a failed
@@ -67,12 +68,12 @@ const pressEscape = () => {
 // test runner down with it.
 const isDirtyDotShown = () => screen.queryByLabelText('Unsaved changes') !== null;
 
-test('Escape with unsaved edits asks first and stays open when declined', async () => {
+test('closing with unsaved edits asks first and stays open when declined', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   const { onClose, editor } = await renderEditor();
 
   typeInto(editor, 'hello edited');
-  pressEscape();
+  pressClose();
 
   assert.equal(confirm.mock.calls.length, 1);
   assert.match(String(confirm.mock.calls[0][0]), /unsaved changes/i);
@@ -81,102 +82,34 @@ test('Escape with unsaved edits asks first and stays open when declined', async 
   assert.equal(screen.getByTestId<HTMLTextAreaElement>('editor').value, 'hello edited');
 });
 
-test('Escape with unsaved edits closes once the user accepts', async () => {
+test('closing with unsaved edits closes once the user accepts', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
   const { onClose, editor } = await renderEditor();
 
   typeInto(editor, 'hello edited');
-  pressEscape();
+  pressClose();
 
   assert.equal(confirm.mock.calls.length, 1);
   assert.equal(onClose.mock.calls.length, 1);
 });
 
-test('Escape with a clean buffer closes without asking', async () => {
+test('closing a clean buffer does not ask', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   const { onClose } = await renderEditor();
 
-  pressEscape();
+  pressClose();
 
   assert.equal(confirm.mock.calls.length, 0);
   assert.equal(onClose.mock.calls.length, 1);
 });
 
-test('an Escape already handled elsewhere in the page is left alone', async () => {
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-  // Stands in for the chat aborting a run or a composer menu closing: they also
-  // listen on the document and call preventDefault(). Registered before the
-  // editor mounts and in the capture phase so it runs first, as they do.
-  const handledElsewhere = (event: KeyboardEvent) => event.preventDefault();
-  document.addEventListener('keydown', handledElsewhere, true);
-
-  try {
-    const { onClose, editor } = await renderEditor();
-    typeInto(editor, 'hello edited');
-
-    fireEvent.keyDown(document.body, { key: 'Escape' });
-
-    assert.equal(confirm.mock.calls.length, 0);
-    assert.equal(onClose.mock.calls.length, 0);
-
-    // The next Escape nobody else claims still reaches the editor.
-    document.removeEventListener('keydown', handledElsewhere, true);
-    fireEvent.keyDown(document.body, { key: 'Escape' });
-    assert.equal(confirm.mock.calls.length, 1);
-  } finally {
-    document.removeEventListener('keydown', handledElsewhere, true);
-  }
-});
-
-const openLayer = (attributes: Record<string, string>) => {
-  const layer = document.createElement('div');
-  Object.entries(attributes).forEach(([name, value]) => layer.setAttribute(name, value));
-  document.body.appendChild(layer);
-  return layer;
-};
-
-test('Escape that closes Settings over a dirty editor does not ask to discard it', async () => {
+test('Escape never closes the editor', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   const { onClose, editor } = await renderEditor();
+
+  fireEvent.keyDown(document, { key: 'Escape' });
   typeInto(editor, 'hello edited');
-
-  // Shaped like Settings: a modal dialog closing on a window-level Escape that
-  // it does not consume, opened from the editor's own gear so focus stays there.
-  const settings = openLayer({ role: 'dialog', 'aria-modal': 'true' });
-  const closeSettings = vi.fn(() => settings.remove());
-  const closeSettingsOnEscape = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') closeSettings();
-  };
-  window.addEventListener('keydown', closeSettingsOnEscape);
-  try {
-    fireEvent.keyDown(editor, { key: 'Escape' });
-  } finally {
-    window.removeEventListener('keydown', closeSettingsOnEscape);
-    settings.remove();
-  }
-
-  assert.equal(closeSettings.mock.calls.length, 1);
-  assert.equal(confirm.mock.calls.length, 0);
-  assert.equal(onClose.mock.calls.length, 0);
-
-  // With Settings gone the next Escape is the editor's again.
-  pressEscape();
-  assert.equal(confirm.mock.calls.length, 1);
-});
-
-test('Escape is left to an open menu or marked escape layer', async () => {
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-  const { onClose, editor } = await renderEditor();
-  typeInto(editor, 'hello edited');
-
-  // The file tree's context menu and the shared ActionMenu close on Escape
-  // without consuming it.
-  const layers: Record<string, string>[] = [{ role: 'menu' }, { 'data-escape-layer': '' }];
-  for (const attributes of layers) {
-    const layer = openLayer(attributes);
-    fireEvent.keyDown(layer, { key: 'Escape' });
-    layer.remove();
-  }
+  fireEvent.keyDown(editor, { key: 'Escape' });
 
   assert.equal(confirm.mock.calls.length, 0);
   assert.equal(onClose.mock.calls.length, 0);
@@ -200,7 +133,7 @@ test('a CRLF file is not dirty just because CodeMirror reports LF', async () => 
   typeInto(editor, 'first\nsecond');
 
   assert.equal(isDirtyDotShown(), false);
-  pressEscape();
+  pressClose();
   assert.equal(confirm.mock.calls.length, 0);
   assert.equal(onClose.mock.calls.length, 1);
 });
@@ -236,7 +169,7 @@ test('a save still in flight when another file opens leaves that file clean', as
   await waitFor(() => assert.ok(screen.getByTitle('actions.save')));
 
   assert.equal(isDirtyDotShown(), false);
-  pressEscape();
+  pressClose();
   assert.equal(confirm.mock.calls.length, 0);
   assert.equal(onClose.mock.calls.length, 1);
 });
@@ -267,7 +200,7 @@ test('a slow read of the previous file never replaces the one open now', async (
 
   assert.equal(screen.getByTestId<HTMLTextAreaElement>('editor').value, 'other file edited');
   assert.equal(isDirtyDotShown(), true);
-  pressEscape();
+  pressClose();
   assert.equal(confirm.mock.calls.length, 1);
   assert.equal(onClose.mock.calls.length, 0);
 });
@@ -302,18 +235,6 @@ test('a failed save of the previous file is not reported on the one open now', a
   assert.equal(screen.getByTitle('actions.save').hasAttribute('disabled'), false);
 });
 
-test('the header close button is guarded the same way', async () => {
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-  const { onClose, editor } = await renderEditor();
-
-  typeInto(editor, 'hello edited');
-  // No i18n instance is initialised here, so labels without a default render as their key.
-  fireEvent.click(screen.getByTitle('actions.close'));
-
-  assert.equal(confirm.mock.calls.length, 1);
-  assert.equal(onClose.mock.calls.length, 0);
-});
-
 test('a successful save clears the dirty state', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   const { onClose, editor } = await renderEditor();
@@ -324,7 +245,7 @@ test('a successful save clears the dirty state', async () => {
   // The dot in the header goes away once the write has landed.
   await waitFor(() => assert.equal(isDirtyDotShown(), false));
 
-  pressEscape();
+  pressClose();
 
   assert.equal(confirm.mock.calls.length, 0);
   assert.equal(onClose.mock.calls.length, 1);
