@@ -106,9 +106,8 @@ function QuickSettingsPanelView({ selectedProject, onInsertCommand }: QuickSetti
   );
 
   // Escape dismisses an open overlay. The overlay is the topmost layer, so it
-  // must see the key before the handlers underneath it — the chat's
-  // capture-phase abort-on-Escape and the editor's close-on-Escape — and
-  // consume it; window capture runs ahead of both. Keys another layer already
+  // must see the key before the handlers underneath it, such as the editor's
+  // close-on-Escape, and consume it; window capture runs ahead of them. Keys another layer already
   // consumed (e.g. the composer's own `/` menu closing) are left alone.
   useEffect(() => {
     if (!isOpen || isPinned) {
