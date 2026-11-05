@@ -51,6 +51,18 @@ export interface IProviderRuntime {
    */
   listBackgroundWork?(): Array<{ sessionId: string; tasks: BackgroundTaskSummary[]; liveTurn?: LiveTurnTerms }>;
   /**
+   * Sessions whose kept process is in a turn the CLI started on its own after
+   * the last turn ended (background work reporting back). No chat run exists
+   * for such a turn, so the running-sessions list learns of it only here.
+   */
+  listSelfStartedTurns?(): Array<{ sessionId: string; startedAt: number }>;
+  /**
+   * Interrupts a turn listed by `listSelfStartedTurns`, leaving the process and
+   * its background work running. Resolves false when the session has no such
+   * turn in flight or the interrupt was not acknowledged.
+   */
+  interruptSelfStartedTurn?(sessionId: string): Promise<boolean>;
+  /**
    * Whether a turn with these `chat.send` options would be delivered into the
    * process the session keeps between turns, instead of replacing that process
    * (and stopping any background work). Only a runtime that can take a new

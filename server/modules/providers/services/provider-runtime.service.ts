@@ -159,6 +159,13 @@ export function createProviderRuntimeService(
         (provider.runtime.listBackgroundWork?.() ?? []).some((entry) => entry.sessionId === sessionId));
     },
 
+    async interruptSelfStartedTurn(sessionId: string): Promise<boolean> {
+      // A turn the CLI started itself has no chat run naming its provider.
+      const results = await Promise.all(dependencies.listProviders().map((provider) =>
+        provider.runtime.interruptSelfStartedTurn?.(sessionId) ?? false));
+      return results.some(Boolean);
+    },
+
     resolveToolApproval(requestId: string, decision: ProviderPermissionDecision): void {
       for (const provider of dependencies.listProviders()) {
         provider.runtime.permissions?.resolve(requestId, decision);

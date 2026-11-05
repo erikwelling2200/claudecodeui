@@ -15,6 +15,8 @@ import {
   queryClaudeSDK,
   releaseClaudeSDKIdleProcess,
   interruptClaudeSDKTurnForSteer,
+  interruptClaudeSDKSelfStartedTurn,
+  listClaudeSDKSelfStartedTurns,
   cancelClaudeSDKSteer,
   steerClaudeSDKTurn,
 } from '@/modules/providers/list/claude/claude-runtime.provider.js';
@@ -385,6 +387,27 @@ test('a stopped turn the CLI does not end is killed, without a second complete o
     script.end();
     await third.run;
     assert.equal(third.writer.completes().length, 1);
+  });
+});
+
+test('a turn the CLI starts itself is listed and interrupted in place, keeping the process', async () => {
+  await withHeldSession('app-self-started', async ({ script }) => {
+    const listed = () => listClaudeSDKSelfStartedTurns().filter((turn) => turn.sessionId === 'app-self-started');
+    assert.equal(await interruptClaudeSDKSelfStartedTurn('app-self-started'), false, 'nothing to stop between turns');
+
+    // The agent finishes and the CLI starts a turn to report it.
+    script.emit(taskNotification('a1', 'toolu_agent', 'completed'));
+    await settle();
+    assert.deepEqual(listed(), [], 'a task event alone is not a turn');
+    script.emit(text('The agent finished.'));
+    await waitFor(() => listed().length === 1);
+
+    assert.equal(await interruptClaudeSDKSelfStartedTurn('app-self-started'), true);
+    assert.deepEqual(script.calls, ['interrupt']);
+    script.emit({ ...result(), subtype: 'error_during_execution' });
+    await waitFor(() => listed().length === 0);
+    assert.equal(script.released(), false, 'the process stays up');
+    assert.equal(acceptsClaudeSDKLiveTurn('app-self-started', {}), true);
   });
 });
 
