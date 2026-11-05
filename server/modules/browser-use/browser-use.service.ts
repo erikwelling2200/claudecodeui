@@ -9,7 +9,7 @@ import spawn from 'cross-spawn';
 
 import { appConfigDb } from '@/modules/database/index.js';
 import { providerMcpService } from '@/modules/providers/index.js';
-import { getModuleDirectory } from '@/shared/utils.js';
+import { getModuleDirectory, mayRegisterUserMcp } from '@/shared/utils.js';
 
 import { getBrowserUseRuntime } from './browser-use-runtime.js';
 
@@ -428,9 +428,9 @@ export const browserUseService = {
 
     const next = writeSettings(nextSettings);
     if (next.enabled) {
-      await this.registerAgentMcp();
+      if (mayRegisterUserMcp()) await this.registerAgentMcp();
     } else if (current.enabled) {
-      await this.unregisterAgentMcp();
+      if (mayRegisterUserMcp()) await this.unregisterAgentMcp();
       await this.stopAllSessions();
     }
     return next;

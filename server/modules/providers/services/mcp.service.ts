@@ -82,6 +82,26 @@ export const providerMcpService = {
   },
 
   /**
+   * Looks one MCP server up in every provider, as each provider's own config has it now. `server` is null where
+   * the provider has no entry by that name; `error` is set where its config could not be read.
+   */
+  async findMcpServerInAllProviders(
+    input: { name: string; scope: McpScope },
+  ): Promise<Array<{ provider: LLMProvider; server: ProviderMcpServer | null; error?: string }>> {
+    const results: Array<{ provider: LLMProvider; server: ProviderMcpServer | null; error?: string }> = [];
+    for (const provider of providerRegistry.listProviders()) {
+      try {
+        const servers = await provider.mcp.listServersForScope(input.scope);
+        results.push({ provider: provider.id, server: servers.find((server) => server.name === input.name) ?? null });
+      } catch (error) {
+        results.push({ provider: provider.id, server: null, error: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    }
+
+    return results;
+  },
+
+  /**
    * Removes one MCP server from every provider. Mirrors `addMcpServerToAllProviders`
    * by iterating the live provider registry, so callers stay in sync with which
    * providers exist instead of maintaining their own provider list.
