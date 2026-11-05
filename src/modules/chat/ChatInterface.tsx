@@ -586,6 +586,7 @@ function ChatInterface({
           handleGrantToolPermission={handleGrantToolPermission}
           activity={sessionActivity}
           isLoading={isProcessing}
+          canAbortSession={canAbortSession}
           onAbortSession={handleAbortSession}
           permissionMode={permissionMode}
           availablePermissionModes={availablePermissionModes}

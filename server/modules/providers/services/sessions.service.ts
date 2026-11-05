@@ -211,6 +211,23 @@ export const sessionsService = {
     const entries: RunningSessionEntry[] = chatRunRegistry.listRunningRuns();
     const runningById = new Map(entries.map((entry) => [entry.sessionId, entry]));
 
+    // A turn the CLI started itself in a process CloudCLI keeps is a response
+    // in flight like any run, and `chat.abort` interrupts it.
+    for (const provider of providerRegistry.listProviders()) {
+      for (const { sessionId, startedAt } of provider.runtime.listSelfStartedTurns?.() ?? []) {
+        if (runningById.has(sessionId)) {
+          continue;
+        }
+        entries.push({
+          sessionId,
+          provider: provider.id,
+          startedAt,
+          lastSeq: chatRunRegistry.getRun(sessionId)?.lastSeq ?? 0,
+        });
+        runningById.set(sessionId, entries[entries.length - 1]);
+      }
+    }
+
     for (const provider of providerRegistry.listProviders()) {
       for (const { sessionId, tasks, liveTurn } of provider.runtime.listBackgroundWork?.() ?? []) {
         const running = runningById.get(sessionId);
