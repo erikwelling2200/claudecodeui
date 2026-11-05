@@ -31,7 +31,6 @@ export const useEditorSidebar = ({
   const [editorWidth, setEditorWidth] = useState(initialWidth);
   const [editorExpanded, setEditorExpanded] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
-  const [hasManualWidth, setHasManualWidth] = useState(false);
   const resizeHandleRef = useRef<HTMLDivElement | null>(null);
   // The tabs and their dirtiness, mirrored so `handleFileOpen` can read them without re-creating itself on
   // every change, which keeps it stable for the memoised chat and tree consumers.
@@ -150,8 +149,6 @@ export const useEditorSidebar = ({
         return;
       }
 
-      // After first drag interaction, the editor width is user-controlled.
-      setHasManualWidth(true);
       setIsResizing(true);
       event.preventDefault();
     },
@@ -231,7 +228,6 @@ export const useEditorSidebar = ({
     editingFile,
     editorWidth,
     editorExpanded,
-    hasManualWidth,
     resizeHandleRef,
     handleFileOpen,
     handleActivateTab,

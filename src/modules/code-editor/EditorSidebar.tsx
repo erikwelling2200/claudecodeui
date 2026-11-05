@@ -14,7 +14,6 @@ type EditorSidebarProps = {
   isMobile: boolean;
   editorExpanded: boolean;
   editorWidth: number;
-  hasManualWidth: boolean;
   resizeHandleRef: MutableRefObject<HTMLDivElement | null>;
   onResizeStart: (event: MouseEvent<HTMLDivElement>) => void;
   onActivateTab: (tabKey: string) => void;
@@ -24,7 +23,6 @@ type EditorSidebarProps = {
   // Reported per tab, so the tab strip can mark dirty files and closing one can ask first.
   onUnsavedChangesChange: (tabKey: string, hasUnsavedChanges: boolean) => void;
   projectPath?: string;
-  fillSpace?: boolean;
   // Forwarded to CodeEditor so go to definition and find references can open a file at a line and character.
   onOpenLocation?: (filePath: string, line: number, character: number) => void;
 };
@@ -108,7 +106,6 @@ export default function EditorSidebar({
   isMobile,
   editorExpanded,
   editorWidth,
-  hasManualWidth,
   resizeHandleRef,
   onResizeStart,
   onActivateTab,
@@ -116,7 +113,6 @@ export default function EditorSidebar({
   onToggleEditorExpand,
   onUnsavedChangesChange,
   projectPath,
-  fillSpace,
   onOpenLocation,
 }: EditorSidebarProps) {
   const { t } = useTranslation('codeEditor');
@@ -232,8 +228,10 @@ export default function EditorSidebar({
     <CodeEditorLookupPanel lookup={lookup} onOpenLocation={handleOpenLookupLocation} onClose={handleCloseLookup} />
   );
 
-  // In files tab, fill the remaining width unless user has dragged manually.
-  const useFlexLayout = editorExpanded || (fillSpace && !hasManualWidth);
+  // Docked, the panel always has the one width the divider sets, whatever the main view or the open tab; a
+  // flexible width would be sized partly by the active tab's content and change from tab to tab. Only the
+  // expanded editor, which hides the main view, takes the whole row.
+  const useFlexLayout = editorExpanded;
 
   // The resize handle sits in a fixed child slot, so dropping it never shifts
   // the editor's position and remounts it. `contents` makes the wrappers give

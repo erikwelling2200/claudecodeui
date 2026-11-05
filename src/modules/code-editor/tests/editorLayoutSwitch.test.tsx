@@ -92,7 +92,6 @@ const sidebar = (isMobile: boolean) => (
       isMobile={isMobile}
       editorExpanded={false}
       editorWidth={600}
-      hasManualWidth={false}
       resizeHandleRef={{ current: null }}
       onResizeStart={() => undefined}
       onActivateTab={() => undefined}
@@ -207,4 +206,39 @@ test('an editor opened on mobile is floating from the start', async () => {
   assert.ok(isFloating(container));
   assert.equal(isDocked(), false);
   assert.equal(toolbarPanels.at(-1)?.isSidebar, false);
+});
+
+test('the docked panel keeps one width whichever tab is active', async () => {
+  containerWidth = 1400;
+  const otherFile: CodeEditorFile = { name: 'b.txt', path: '/repo/b.txt', projectId: 'p1' };
+  const tabs = [
+    { key: 'p1|/repo/a.txt', file, gotoTarget: null },
+    { key: 'p1|/repo/b.txt', file: otherFile, gotoTarget: null },
+  ];
+  const renderWithActive = (activeTabKey: string) => (
+    <div>
+      <EditorSidebar
+        tabs={tabs}
+        activeTabKey={activeTabKey}
+        dirtyTabKeys={new Set()}
+        isMobile={false}
+        editorExpanded={false}
+        editorWidth={600}
+        resizeHandleRef={{ current: null }}
+        onResizeStart={() => undefined}
+        onActivateTab={() => undefined}
+        onCloseTab={() => undefined}
+        onToggleEditorExpand={() => undefined}
+        onUnsavedChangesChange={() => undefined}
+        projectPath="/repo"
+      />
+    </div>
+  );
+  const panelWidth = (container: HTMLElement) => container.querySelector<HTMLElement>('.border-l')?.style.width;
+
+  const { container, rerender } = render(renderWithActive('p1|/repo/a.txt'));
+  assert.equal(panelWidth(container), '600px');
+
+  rerender(renderWithActive('p1|/repo/b.txt'));
+  assert.equal(panelWidth(container), '600px');
 });
