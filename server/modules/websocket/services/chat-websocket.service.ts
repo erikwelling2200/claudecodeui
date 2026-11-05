@@ -381,8 +381,8 @@ async function dispatchRun(
   // first message also restarts from scratch, but the chat already had its first turn.
   const isFirstMessage = !session.provider_session_id && !extraRuntimeOptions.resumeFromScratch;
   const content = typeof data.content === 'string' ? data.content : '';
-  const command = chatToolsService.appendToPrompt(content, isFirstMessage);
-  const followUpInstruction = chatToolsService.followUpForSlashCommand(content, isFirstMessage);
+  const command = chatToolsService.appendToPrompt(content, isFirstMessage, session.parent_session_id);
+  const followUpInstruction = chatToolsService.followUpForSlashCommand(content, isFirstMessage, session.parent_session_id);
 
   // Record what this turn runs with so reopening the session later restores the
   // same model and reasoning effort, and so the resume path has a

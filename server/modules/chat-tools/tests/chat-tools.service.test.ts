@@ -114,3 +114,46 @@ test('followUpForSlashCommand carries the appended text for slash commands only'
     assert.equal(chatToolsService.followUpForSlashCommand('/changefied:timesheet', true), null);
   });
 });
+
+test('getChatThreads shows a chat its threads, and a thread its parent and siblings', async () => {
+  await withIsolatedDatabase(async () => {
+    const projectPath = path.join(tmpdir(), 'chat-threads-project');
+    sessionsDb.createAppSession('parent', 'claude', projectPath, 'Release prep');
+    sessionsDb.createAppSession('thread-a', 'claude', projectPath, 'Changelog', 'parent');
+    sessionsDb.createAppSession('thread-b', 'claude', projectPath, 'Build', 'parent');
+    sessionsDb.updateSessionIsArchived('thread-b', true);
+    sessionsDb.createAppSession('loner', 'claude', projectPath, 'Unrelated');
+    const runtime = { hasBackgroundWork: (sessionId: string) => sessionId === 'thread-a' };
+
+    const fromParent = chatToolsService.getChatThreads('parent', runtime);
+    assert.equal(fromParent.parent, null);
+    assert.deepEqual(fromParent.chat, { sessionId: 'parent', name: 'Release prep', running: false, archived: false });
+    assert.deepEqual(fromParent.threads.map((thread) => [thread.sessionId, thread.running, thread.archived]).sort(), [['thread-a', true, false], ['thread-b', false, true]]);
+
+    const fromThread = chatToolsService.getChatThreads('thread-a', runtime);
+    assert.equal(fromThread.parent?.sessionId, 'parent');
+    assert.equal(fromThread.parent?.name, 'Release prep');
+    assert.deepEqual(fromThread.threads.map((thread) => thread.sessionId).sort(), ['thread-a', 'thread-b']);
+
+    assert.deepEqual(chatToolsService.getChatThreads('loner', runtime).threads, []);
+    assert.throws(() => chatToolsService.getChatThreads('missing', runtime), /was not found/);
+  });
+});
+
+test('a thread first turn names its parent chat, whatever the append mode', async () => {
+  await withIsolatedDatabase(async () => {
+    sessionsDb.createAppSession('parent', 'claude', path.join(tmpdir(), 'chat-threads-project'), 'Release prep');
+    await chatToolsService.updateSettings({ appendMode: 'off' });
+
+    const sent = chatToolsService.appendToPrompt('Write the changelog', true, 'parent');
+    assert.match(sent, /thread of the CloudCLI chat parent \("Release prep"\)/);
+    assert.match(sent, /get_chat_threads/);
+    assert.equal(stripAppendedPromptText(sent), 'Write the changelog');
+    assert.equal(chatToolsService.appendToPrompt('Next step', false, 'parent'), 'Next step', 'only the first turn carries the note');
+    assert.match(chatToolsService.followUpForSlashCommand('/changefied:changelog', true, 'parent') ?? '', /thread of the CloudCLI chat parent/);
+
+    await chatToolsService.updateSettings({ appendMode: 'first', appendText: 'Name this chat.' });
+    const both = chatToolsService.appendToPrompt('Write the changelog', true, 'parent');
+    assert.match(both, /thread of the CloudCLI chat parent[\s\S]*Name this chat\./);
+  });
+});
