@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { chatToolsService } from '@/modules/chat-tools/chat-tools.service.js';
+import { chatToolsService, isSameMcpRegistration } from '@/modules/chat-tools/chat-tools.service.js';
 import { closeConnection, initializeDatabase, sessionsDb } from '@/modules/database/index.js';
 import { parseFilesInputTag } from '@/shared/image-attachments.js';
 import { appendPromptText, normalizeSessionName, stripAppendedPromptText } from '@/shared/utils.js';
@@ -83,6 +83,25 @@ test('the registered MCP command answers the handshake when started outside the 
     // process carries the relative TSX_TSCONFIG_PATH an agent CLI would pass on.
     assert.equal(await chatToolsService.checkMcpStarts(), null);
   });
+});
+
+test('a provider entry left by another CloudCLI instance does not count as registered', () => {
+  const input = {
+    name: 'cloudcli-chat',
+    scope: 'user' as const,
+    transport: 'stdio' as const,
+    command: 'node',
+    args: ['C:\\Tools\\claudecodeui\\chat-tools-mcp.ts'],
+    env: { CLOUDCLI_CHAT_TOOLS_MCP_TOKEN: 'main-token', CLOUDCLI_CHAT_TOOLS_API_URL: 'http://127.0.0.1:3001/api/chat-tools-mcp' },
+    envVars: ['CLOUDCLI_SESSION_ID'],
+  };
+  const entry = { provider: 'claude' as const, name: 'cloudcli-chat', scope: 'user' as const, transport: 'stdio' as const, command: 'node', args: [...input.args], env: { ...input.env } };
+
+  assert.equal(isSameMcpRegistration(entry, input), true);
+  assert.equal(isSameMcpRegistration(null, input), false, 'a missing entry');
+  assert.equal(isSameMcpRegistration({ ...entry, env: { ...entry.env, CLOUDCLI_CHAT_TOOLS_API_URL: 'http://127.0.0.1:3012/api/chat-tools-mcp' } }, input), false, 'another port');
+  assert.equal(isSameMcpRegistration({ ...entry, env: { ...entry.env, CLOUDCLI_CHAT_TOOLS_MCP_TOKEN: 'alt-token' } }, input), false, 'another token');
+  assert.equal(isSameMcpRegistration({ ...entry, args: ['C:\\Tools\\claudecodeui-alt1\\chat-tools-mcp.ts'] }, input), false, 'another checkout');
 });
 
 test('followUpForSlashCommand carries the appended text for slash commands only', async () => {

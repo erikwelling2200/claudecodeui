@@ -1597,6 +1597,15 @@ export function buildAgentSessionEnv(sessionId: unknown): Record<string, string>
   return typeof sessionId === 'string' && sessionId ? { [AGENT_SESSION_ID_ENV]: sessionId } : {};
 }
 
+/**
+ * False for an instance started with `CLOUDCLI_REGISTER_USER_MCP=false`, such as a test copy running beside the
+ * main one. The user-scope MCP entries (`cloudcli-chat`, `cloudcli-browser`) are shared by every instance on the
+ * machine, so a copy that writes them points every chat at itself, and at nothing once it stops.
+ */
+export function mayRegisterUserMcp(): boolean {
+  return process.env.CLOUDCLI_REGISTER_USER_MCP !== 'false';
+}
+
 // ---------------------------
 //----------------- APPENDED PROMPT TEXT UTILITIES ------------
 const APPENDED_PROMPT_TEXT_PATTERN = /\s*<cloudcli_appended>[\s\S]*?<\/cloudcli_appended>\s*/g;

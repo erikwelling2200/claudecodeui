@@ -10,16 +10,14 @@ import { appConfigDb, sessionsDb, userDb } from '@/modules/database/index.js';
 import { providerMcpService, providerRuntimeService, sessionsService } from '@/modules/providers/index.js';
 import { broadcastRemoteControl, broadcastSessionUpserted, chatRunRegistry, runDetachedChatTurn } from '@/modules/websocket/index.js';
 import type { ProviderRuntimeGateway } from '@/modules/websocket/index.js';
-import type { ChatToolsAppendMode, ChatToolsSettings, LiveMcpServerStatus, LLMProvider } from '@/shared/types.js';
-import { AGENT_SESSION_ID_ENV, AppError, appendPromptText, findServerRoot, getModuleDirectory } from '@/shared/utils.js';
+import type { ChatToolsAppendMode, ChatToolsSettings, LiveMcpServerStatus, LLMProvider, ProviderMcpServer } from '@/shared/types.js';
+import { AGENT_SESSION_ID_ENV, AppError, appendPromptText, findServerRoot, getModuleDirectory, mayRegisterUserMcp } from '@/shared/utils.js';
 
 const require = createRequire(import.meta.url);
 const moduleDirectory = getModuleDirectory(import.meta.url);
 
 const SETTINGS_KEY = 'chat_tools_settings';
 const MCP_TOKEN_KEY = 'chat_tools_mcp_token';
-// The MCP config last written to the providers, so startup only rewrites their config files when it changed.
-const MCP_REGISTRATION_KEY = 'chat_tools_mcp_registration';
 const MCP_SERVER_NAME = 'cloudcli-chat';
 const MCP_START_TIMEOUT_MS = 15000;
 const MAX_CHAT_NAME_LENGTH = 80;
@@ -99,12 +97,28 @@ function buildMcpServerInput() {
 }
 
 async function registerMcp(): Promise<void> {
-  const input = buildMcpServerInput();
-  const results = await providerMcpService.addMcpServerToAllProviders(input);
+  const results = await providerMcpService.addMcpServerToAllProviders(buildMcpServerInput());
   for (const failed of results.filter((result) => !result.created)) {
     console.warn(`[ChatTools] Could not register the ${MCP_SERVER_NAME} MCP server with ${failed.provider}: ${failed.error}`);
   }
-  appConfigDb.set(MCP_REGISTRATION_KEY, JSON.stringify(input));
+}
+
+/** True when a provider's entry starts this instance's MCP server: same command and arguments, and every env value it sets. */
+export function isSameMcpRegistration(server: ProviderMcpServer | null, input: ReturnType<typeof buildMcpServerInput>): boolean {
+  if (!server || server.command !== input.command) return false;
+  if (JSON.stringify(server.args ?? []) !== JSON.stringify(input.args)) return false;
+  return Object.entries(input.env).every(([key, value]) => server.env?.[key] === value);
+}
+
+/**
+ * Reads the providers' own configs rather than a record of the last write, because another CloudCLI instance on
+ * this machine may have overwritten the shared entry since. A provider whose config cannot be read is skipped:
+ * registering would fail there too.
+ */
+async function isRegisteredInEveryProvider(): Promise<boolean> {
+  const input = buildMcpServerInput();
+  const found = await providerMcpService.findMcpServerInAllProviders({ name: MCP_SERVER_NAME, scope: 'user' });
+  return found.every(({ server, error }) => error !== undefined || isSameMcpRegistration(server, input));
 }
 
 /**
@@ -140,7 +154,6 @@ function checkMcpStarts(input: ReturnType<typeof buildMcpServerInput>): Promise<
 
 async function unregisterMcp(): Promise<void> {
   await providerMcpService.removeMcpServerFromAllProviders({ name: MCP_SERVER_NAME, scope: 'user' });
-  appConfigDb.set(MCP_REGISTRATION_KEY, '');
 }
 
 function parseAppendMode(value: unknown): ChatToolsAppendMode {
@@ -181,19 +194,25 @@ export const chatToolsService = {
     };
     appConfigDb.set(SETTINGS_KEY, JSON.stringify(next));
 
-    if (next.renameToolEnabled && !current.renameToolEnabled) await registerMcp();
-    if (!next.renameToolEnabled && current.renameToolEnabled) await unregisterMcp();
+    if (mayRegisterUserMcp()) {
+      if (next.renameToolEnabled && !current.renameToolEnabled) await registerMcp();
+      if (!next.renameToolEnabled && current.renameToolEnabled) await unregisterMcp();
+    }
     return this.getSettings();
   },
 
   /**
    * Registers the MCP server with every provider when the rename tool is on and
-   * the registered config is missing or out of date (another port, or a move
-   * between source and compiled builds).
+   * a provider's entry is missing or starts something else (another port, a move
+   * between source and compiled builds, or another CloudCLI instance's server).
    */
   async ensureMcpRegistered(): Promise<void> {
     if (!readSettings().renameToolEnabled) return;
-    if (appConfigDb.get(MCP_REGISTRATION_KEY) !== JSON.stringify(buildMcpServerInput())) await registerMcp();
+    if (!mayRegisterUserMcp()) {
+      console.log(`[ChatTools] CLOUDCLI_REGISTER_USER_MCP=false: leaving the ${MCP_SERVER_NAME} MCP entry to the main instance.`);
+      return;
+    }
+    if (!(await isRegisteredInEveryProvider())) await registerMcp();
 
     const failure = await this.checkMcpStarts();
     if (failure) console.error(`[ChatTools] The ${MCP_SERVER_NAME} MCP server does not start, so agents cannot use set_chat_name: ${failure}`);
