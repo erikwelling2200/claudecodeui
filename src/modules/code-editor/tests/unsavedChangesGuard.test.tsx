@@ -373,63 +373,73 @@ test('dirtiness is reported upward and reset when the editor unmounts', async ()
 
 const project: Project = { projectId: 'p1', displayName: 'repo', fullPath: '/repo', path: '/repo' };
 
-test('switching to another file while dirty asks first and keeps the current one when declined', () => {
+test('opening another file while one is dirty opens it in a new tab and keeps both', () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   const { result } = renderHook(() => useEditorSidebar({ selectedProject: project, isMobile: false }));
 
   act(() => result.current.handleFileOpen('/repo/a.txt'));
-  act(() => result.current.handleUnsavedChangesChange(true));
+  act(() => result.current.handleUnsavedChangesChange(result.current.activeTabKey!, true));
   let opened: boolean | null = null;
   act(() => { opened = result.current.handleFileOpen('/repo/b.txt'); });
 
-  assert.equal(confirm.mock.calls.length, 1);
-  // Reported so the command palette does not switch tabs for a declined open.
-  assert.equal(opened, false);
-  assert.equal(result.current.editingFile?.path, '/repo/a.txt');
-
-  confirm.mockReturnValue(true);
-  act(() => { opened = result.current.handleFileOpen('/repo/b.txt'); });
-
-  assert.equal(confirm.mock.calls.length, 2);
+  assert.equal(confirm.mock.calls.length, 0);
   assert.equal(opened, true);
+  assert.deepEqual(result.current.tabs.map((tab) => tab.file.path), ['/repo/a.txt', '/repo/b.txt']);
   assert.equal(result.current.editingFile?.path, '/repo/b.txt');
+  assert.equal(result.current.dirtyTabKeys.size, 1);
 });
 
-test('re-opening the open file, or opening while clean, never asks', () => {
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+test('re-opening an open file switches to its tab and keeps its buffer', () => {
   const { result } = renderHook(() => useEditorSidebar({ selectedProject: project, isMobile: false }));
 
-  // Nothing open yet: the first open can have nothing to lose.
-  act(() => result.current.handleUnsavedChangesChange(true));
   act(() => result.current.handleFileOpen('/repo/a.txt'));
-  assert.equal(confirm.mock.calls.length, 0);
-
-  // Same path again reuses the buffer, so there is nothing to confirm.
-  act(() => result.current.handleFileOpen('/repo/a.txt'));
-  assert.equal(confirm.mock.calls.length, 0);
-  assert.equal(result.current.editingFile?.path, '/repo/a.txt');
-
-  // Clean buffer: another file opens straight away.
-  act(() => result.current.handleUnsavedChangesChange(false));
+  const firstFile = result.current.editingFile;
   act(() => result.current.handleFileOpen('/repo/b.txt'));
-  assert.equal(confirm.mock.calls.length, 0);
-  assert.equal(result.current.editingFile?.path, '/repo/b.txt');
+  // Another spelling of the same path still finds the tab.
+  act(() => result.current.handleFileOpen('a.txt', null, 12, 4));
+
+  assert.equal(result.current.tabs.length, 2);
+  assert.equal(result.current.editingFile, firstFile, 'the file object is kept, so the buffer is not reloaded');
+  assert.deepEqual(result.current.tabs[0].gotoTarget, { line: 12, character: 4 });
 });
 
-test('re-opening the open path with a diff payload reloads the buffer, so it asks first', () => {
+test('a new tab opens right of the active one, and closing the active tab activates its right neighbour', () => {
+  const { result } = renderHook(() => useEditorSidebar({ selectedProject: project, isMobile: false }));
+
+  act(() => result.current.handleFileOpen('/repo/a.txt'));
+  act(() => result.current.handleFileOpen('/repo/c.txt'));
+  act(() => result.current.handleActivateTab(result.current.tabs[0].key));
+  act(() => result.current.handleFileOpen('/repo/b.txt'));
+  assert.deepEqual(result.current.tabs.map((tab) => tab.file.name), ['a.txt', 'b.txt', 'c.txt']);
+
+  act(() => result.current.handleCloseTab(result.current.activeTabKey!));
+  assert.equal(result.current.editingFile?.name, 'c.txt');
+
+  act(() => result.current.handleCloseTab(result.current.activeTabKey!));
+  assert.equal(result.current.editingFile?.name, 'a.txt');
+
+  act(() => result.current.handleCloseTab(result.current.activeTabKey!));
+  assert.equal(result.current.editingFile, null);
+});
+
+test('re-opening a dirty tab with a diff payload reloads the buffer, so it asks first', () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   const { result } = renderHook(() => useEditorSidebar({ selectedProject: project, isMobile: false }));
 
   act(() => result.current.handleFileOpen('/repo/a.txt'));
-  act(() => result.current.handleUnsavedChangesChange(true));
+  act(() => result.current.handleUnsavedChangesChange(result.current.activeTabKey!, true));
   act(() => result.current.handleFileOpen('/repo/a.txt', { old_string: 'a', new_string: 'b' }));
 
   assert.equal(confirm.mock.calls.length, 1);
   assert.equal(result.current.editingFile?.diffInfo, null);
+
+  confirm.mockReturnValue(true);
+  act(() => result.current.handleFileOpen('/repo/a.txt', { old_string: 'a', new_string: 'b' }));
+  assert.deepEqual(result.current.editingFile?.diffInfo, { old_string: 'a', new_string: 'b' });
+  assert.equal(result.current.tabs.length, 1);
 });
 
-test('the same path in another project is a different file, so it asks first', () => {
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+test('the same path in another project is a different file, so it gets its own tab', () => {
   // Nested projects list the same absolute paths, and the editor re-reads the
   // file whenever its project changes.
   const nestedProject: Project = { projectId: 'p2', displayName: 'sub', fullPath: '/repo/sub', path: '/repo/sub' };
@@ -439,14 +449,8 @@ test('the same path in another project is a different file, so it asks first', (
   );
 
   act(() => result.current.handleFileOpen('/repo/sub/a.txt'));
-  act(() => result.current.handleUnsavedChangesChange(true));
   rerender({ selectedProject: nestedProject });
   act(() => result.current.handleFileOpen('/repo/sub/a.txt'));
 
-  assert.equal(confirm.mock.calls.length, 1);
-  assert.equal(result.current.editingFile?.projectId, 'p1');
-
-  confirm.mockReturnValue(true);
-  act(() => result.current.handleFileOpen('/repo/sub/a.txt'));
-  assert.equal(result.current.editingFile?.projectId, 'p2');
+  assert.deepEqual(result.current.tabs.map((tab) => tab.file.projectId), ['p1', 'p2']);
 });

@@ -4,6 +4,7 @@ import { Decoration, EditorView, ViewPlugin, keymap, showPanel } from '@codemirr
 import type { DecorationSet, Panel, ViewUpdate } from '@codemirror/view';
 
 import { api, readApiJson } from '@/shared/api';
+import type { CodeEditorLookup, CsharpLocation } from '@/shared/types';
 
 type CsharpStatus = {
   state: 'starting' | 'loading' | 'ready' | 'failed' | 'unavailable';
@@ -15,16 +16,7 @@ type CsharpStatus = {
 
 type CsharpSemanticToken = { line: number; character: number; length: number; type: string };
 
-// Line and character are 0-based, as the language server reports them.
-type CsharpLocation = { filePath: string; line: number; character: number; preview: string };
-
 type CsharpSemanticResult<TValue> = { status: CsharpStatus; result: TValue | null };
-
-// What the lookup panel under the editor shows: a running lookup, its locations, or a one-line outcome.
-type LookupPanelContent =
-  | { kind: 'searching'; text: string }
-  | { kind: 'locations'; text: string; locations: CsharpLocation[] }
-  | { kind: 'message'; text: string };
 
 type CsharpSemanticLabels = {
   loading: (solutionName: string) => string;
@@ -34,13 +26,16 @@ type CsharpSemanticLabels = {
   noReferences: string;
   definitions: (count: number) => string;
   references: (count: number) => string;
-  close: string;
 };
 
 type CsharpSemanticOptions = {
   filePath: string;
-  // Opens another file at a 1-based line. A location in the open file moves the cursor instead.
-  onOpenLocation: (filePath: string, line: number) => void;
+  // Opens another file at a 1-based line and 0-based character. A location in the open file moves the cursor instead.
+  onOpenLocation: (filePath: string, line: number, character: number) => void;
+  // Shows a lookup in the editor's lookup panel, which lives outside this file's view so it outlasts opening a result.
+  onLookup: (lookup: CodeEditorLookup | null) => void;
+  // Closes the lookup panel; returns whether one was open, so Escape falls through to the editor otherwise.
+  onCloseLookup: () => boolean;
   labels: CsharpSemanticLabels;
 };
 
@@ -81,7 +76,6 @@ const semanticMarks = Object.fromEntries(
 
 const setSemanticDecorations = StateEffect.define<DecorationSet>();
 const setStatus = StateEffect.define<CsharpStatus>();
-const setLookupPanel = StateEffect.define<LookupPanelContent | null>();
 
 function tokensToDecorations(doc: Text, tokens: CsharpSemanticToken[]): DecorationSet {
   const ranges = [];
@@ -117,7 +111,7 @@ function createSpinner(): HTMLElement {
  * colors, F12 / Ctrl+click for go to definition and Shift+F12 for find all references. Used by CodeEditor,
  * which adds it only for C# files. A spinning status bar under the file shows while the solution loads.
  */
-export function createCsharpSemanticExtension({ filePath, onOpenLocation, labels }: CsharpSemanticOptions): Extension {
+export function createCsharpSemanticExtension({ filePath, onOpenLocation, onLookup, onCloseLookup, labels }: CsharpSemanticOptions): Extension {
   const semanticDecorations = StateField.define<DecorationSet>({
     create: () => Decoration.none,
     update(decorations, transaction) {
@@ -143,15 +137,6 @@ export function createCsharpSemanticExtension({ filePath, onOpenLocation, labels
     }),
   });
 
-  const lookupPanelField = StateField.define<LookupPanelContent | null>({
-    create: () => null,
-    update(content, transaction) {
-      for (const effect of transaction.effects) if (effect.is(setLookupPanel)) return effect.value;
-      return content;
-    },
-    provide: (field) => showPanel.from(field, (content) => (content ? (view) => createLookupPanel(view, content) : null)),
-  });
-
   function createStatusPanel(status: CsharpStatus, isLoading: boolean): Panel {
     const dom = document.createElement('div');
     dom.className = isLoading ? 'cm-csharp-status' : 'cm-csharp-status cm-csharp-status-error';
@@ -163,58 +148,9 @@ export function createCsharpSemanticExtension({ filePath, onOpenLocation, labels
     return { dom, top: false };
   }
 
-  function createLookupPanel(view: EditorView, content: LookupPanelContent): Panel {
-    const dom = document.createElement('div');
-    dom.className = 'cm-csharp-lookup';
-    // Marks this panel as the layer an Escape closes, so the editor's own Escape-to-close leaves the file open.
-    dom.setAttribute('data-escape-layer', '');
-
-    const header = document.createElement('div');
-    header.className = 'cm-csharp-lookup-header';
-    if (content.kind === 'searching') header.append(createSpinner());
-    header.append(content.text);
-    const closeButton = document.createElement('button');
-    closeButton.type = 'button';
-    closeButton.className = 'cm-csharp-lookup-close';
-    closeButton.textContent = '×';
-    closeButton.title = labels.close;
-    closeButton.addEventListener('click', () => closeLookupPanel(view));
-    header.append(closeButton);
-    dom.append(header);
-
-    if (content.kind === 'locations') {
-      const list = document.createElement('div');
-      list.className = 'cm-csharp-lookup-list';
-      for (const location of content.locations) {
-        const row = document.createElement('button');
-        row.type = 'button';
-        row.className = 'cm-csharp-lookup-row';
-        row.title = location.filePath;
-        const place = document.createElement('span');
-        place.className = 'cm-csharp-lookup-place';
-        place.textContent = `${fileName(location.filePath)}:${location.line + 1}`;
-        const preview = document.createElement('span');
-        preview.className = 'cm-csharp-lookup-preview';
-        preview.textContent = location.preview;
-        row.append(place, preview);
-        row.addEventListener('click', () => openLocation(view, location));
-        list.append(row);
-      }
-      dom.append(list);
-    }
-    return { dom, top: false };
-  }
-
-  function closeLookupPanel(view: EditorView): boolean {
-    if (!view.state.field(lookupPanelField)) return false;
-    view.dispatch({ effects: setLookupPanel.of(null) });
-    view.focus();
-    return true;
-  }
-
   function openLocation(view: EditorView, location: CsharpLocation): void {
     if (!isSameFile(location.filePath, filePath)) {
-      onOpenLocation(location.filePath, location.line + 1);
+      onOpenLocation(location.filePath, location.line + 1, location.character);
       return;
     }
     const line = view.state.doc.line(Math.min(location.line + 1, view.state.doc.lines));
@@ -232,7 +168,7 @@ export function createCsharpSemanticExtension({ filePath, onOpenLocation, labels
   async function runLookup(view: EditorView, kind: 'definition' | 'references'): Promise<void> {
     const { line, character } = caretPosition(view.state);
     const text = view.state.doc.toString();
-    view.dispatch({ effects: setLookupPanel.of({ kind: 'searching', text: kind === 'definition' ? labels.findingDefinition : labels.findingReferences }) });
+    onLookup({ kind: 'searching', text: kind === 'definition' ? labels.findingDefinition : labels.findingReferences });
 
     let lookup: CsharpSemanticResult<CsharpLocation[]>;
     try {
@@ -241,25 +177,26 @@ export function createCsharpSemanticExtension({ filePath, onOpenLocation, labels
         : await api.csharpLanguage.references(filePath, text, line, character);
       lookup = (await readApiJson<{ data: CsharpSemanticResult<CsharpLocation[]> }>(response)).data;
     } catch (error) {
-      view.dispatch({ effects: setLookupPanel.of({ kind: 'message', text: error instanceof Error ? error.message : String(error) }) });
+      onLookup({ kind: 'message', text: error instanceof Error ? error.message : String(error) });
       return;
     }
 
     // Still loading: the status bar already says so, and the lookup can be repeated once it is gone.
     if (!lookup.result) {
-      view.dispatch({ effects: [setStatus.of(lookup.status), setLookupPanel.of(null)] });
+      view.dispatch({ effects: setStatus.of(lookup.status) });
+      onLookup(null);
       return;
     }
 
     const locations = lookup.result;
     if (locations.length === 0) {
-      view.dispatch({ effects: setLookupPanel.of({ kind: 'message', text: kind === 'definition' ? labels.noDefinition : labels.noReferences }) });
+      onLookup({ kind: 'message', text: kind === 'definition' ? labels.noDefinition : labels.noReferences });
     } else if (kind === 'definition' && locations.length === 1) {
-      view.dispatch({ effects: setLookupPanel.of(null) });
+      onLookup(null);
       openLocation(view, locations[0]);
     } else {
       const title = kind === 'definition' ? labels.definitions(locations.length) : labels.references(locations.length);
-      view.dispatch({ effects: setLookupPanel.of({ kind: 'locations', text: title, locations }) });
+      onLookup({ kind: 'locations', text: title, locations, showsAccess: kind === 'references' });
     }
   }
 
@@ -339,12 +276,11 @@ export function createCsharpSemanticExtension({ filePath, onOpenLocation, labels
   return [
     semanticDecorations,
     statusField,
-    lookupPanelField,
     semanticLoader,
     keymap.of([
       { key: 'F12', run: (view) => { void runLookup(view, 'definition'); return true; } },
       { key: 'Shift-F12', run: (view) => { void runLookup(view, 'references'); return true; } },
-      { key: 'Escape', run: closeLookupPanel },
+      { key: 'Escape', run: () => onCloseLookup() },
     ]),
     EditorView.domEventHandlers({
       mousedown(event, view) {
@@ -380,42 +316,15 @@ const csharpSemanticTheme = EditorView.baseTheme({
     borderRadius: '50%',
     animation: 'cm-csharp-spin 0.8s linear infinite',
   },
-  '.cm-csharp-status, .cm-csharp-lookup-header': {
+  '.cm-csharp-status': {
     display: 'flex',
     alignItems: 'center',
     padding: '3px 10px',
     fontSize: '12px',
     fontFamily: 'ui-sans-serif, system-ui, sans-serif',
   },
-  '&dark .cm-csharp-status, &dark .cm-csharp-lookup-header': { color: '#9ca3af' },
-  '&light .cm-csharp-status, &light .cm-csharp-lookup-header': { color: '#4b5563' },
+  '&dark .cm-csharp-status': { color: '#9ca3af' },
+  '&light .cm-csharp-status': { color: '#4b5563' },
   '&dark .cm-csharp-status-error': { color: '#f87171' },
   '&light .cm-csharp-status-error': { color: '#b91c1c' },
-  '.cm-csharp-lookup-close': {
-    marginLeft: 'auto',
-    padding: '0 6px',
-    fontSize: '14px',
-    lineHeight: '1',
-    background: 'none',
-    border: 'none',
-    color: 'inherit',
-    cursor: 'pointer',
-  },
-  '.cm-csharp-lookup-list': { maxHeight: '35vh', overflowY: 'auto' },
-  '.cm-csharp-lookup-row': {
-    display: 'flex',
-    gap: '12px',
-    width: '100%',
-    padding: '2px 10px',
-    textAlign: 'left',
-    background: 'none',
-    border: 'none',
-    color: 'inherit',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-  },
-  '&dark .cm-csharp-lookup-row:hover': { backgroundColor: 'rgba(255, 255, 255, 0.07)' },
-  '&light .cm-csharp-lookup-row:hover': { backgroundColor: 'rgba(0, 0, 0, 0.05)' },
-  '.cm-csharp-lookup-place': { flexShrink: '0', minWidth: '180px', opacity: '0.75' },
-  '.cm-csharp-lookup-preview': { overflow: 'hidden', textOverflow: 'ellipsis' },
 });

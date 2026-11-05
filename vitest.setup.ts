@@ -25,3 +25,9 @@ if (typeof window.matchMedia !== 'function') {
     dispatchEvent: () => false,
   })) as typeof window.matchMedia;
 }
+
+// jsdom does not lay anything out, so it ships no `scrollIntoView`; the code
+// editor's tab strip calls it to reveal the active tab.
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => {};
+}

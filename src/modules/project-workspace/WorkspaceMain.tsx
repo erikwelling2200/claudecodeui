@@ -83,13 +83,16 @@ function WorkspaceMain({
   const shouldShowBrowserTab = browserUseEnabled;
 
   const {
-    editingFile,
+    tabs: editorTabs,
+    activeTabKey: activeEditorTabKey,
+    dirtyTabKeys: dirtyEditorTabKeys,
     editorWidth,
     editorExpanded,
     hasManualWidth,
     resizeHandleRef,
     handleFileOpen,
-    handleCloseEditor,
+    handleActivateTab: handleActivateEditorTab,
+    handleCloseTab: handleCloseEditorTab,
     handleToggleEditorExpand,
     handleResizeStart,
     handleUnsavedChangesChange,
@@ -128,8 +131,8 @@ function WorkspaceMain({
   }, [handleFileOpen, setActiveTab]);
 
   // Go to definition and find references in the editor; stable so the editor keeps its C# layer across renders.
-  const handleOpenLocation = useCallback((filePath: string, line: number) => {
-    handleFileOpen(filePath, null, line);
+  const handleOpenLocation = useCallback((filePath: string, line: number, character: number) => {
+    handleFileOpen(filePath, null, line, character);
   }, [handleFileOpen]);
 
   // Opens the editor side panel in place, keeping the current tab (e.g. chat).
@@ -255,14 +258,17 @@ function WorkspaceMain({
         </div>
 
         <EditorSidebar
-          editingFile={editingFile}
+          tabs={editorTabs}
+          activeTabKey={activeEditorTabKey}
+          dirtyTabKeys={dirtyEditorTabKeys}
           isMobile={isMobile}
           editorExpanded={editorExpanded}
           editorWidth={editorWidth}
           hasManualWidth={hasManualWidth}
           resizeHandleRef={resizeHandleRef}
           onResizeStart={handleResizeStart}
-          onCloseEditor={handleCloseEditor}
+          onActivateTab={handleActivateEditorTab}
+          onCloseTab={handleCloseEditorTab}
           onToggleEditorExpand={handleToggleEditorExpand}
           onUnsavedChangesChange={handleUnsavedChangesChange}
           projectPath={selectedProject.path}

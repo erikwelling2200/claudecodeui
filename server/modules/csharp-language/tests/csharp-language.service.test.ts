@@ -135,8 +135,8 @@ test('maps definitions to files with a preview line, using the editor text for t
   const definition = await service.findDefinition({ filePath, text: 'class Player { Health health; }', line: 0, character: 16 });
 
   assert.deepEqual(definition.result, [
-    { filePath: otherFile, line: 1, character: 17, preview: 'public class Health { }' },
-    { filePath, line: 0, character: 6, preview: 'class Player { Health health; }' },
+    { filePath: otherFile, line: 1, character: 17, preview: 'public class Health { }', access: null },
+    { filePath, line: 0, character: 6, preview: 'class Player { Health health; }', access: null },
   ]);
 });
 
@@ -218,6 +218,34 @@ test('lists references from every loaded solution that compiles a package file, 
     [consumerUsage, 0],
   ].sort((left, right) => String(left[0]).localeCompare(String(right[0]))));
   assert.equal(consumerServer.synced.at(-1)?.text, packageText);
+});
+
+test('marks each reference as a read or a write from the document highlights of its file', async () => {
+  const usage = path.join(root, 'Assets', 'Scripts', 'Spawner.cs');
+  const fileUri = pathToFileURL(filePath).href;
+  const usageUri = pathToFileURL(usage).href;
+  const at = (line: number, character: number) => ({ start: { line, character } });
+  const { service, servers } = createService({ [root]: ['repo.sln'] }, {}, { [usage]: 'health = 3;\nvar left = health;' });
+  await service.getStatus(filePath);
+  const [server] = servers;
+  server.request = async (method, params) => {
+    server.requests.push({ method, params });
+    if (method === 'textDocument/references') {
+      return [{ uri: fileUri, range: at(0, 4) }, { uri: usageUri, range: at(0, 0) }, { uri: usageUri, range: at(1, 11) }];
+    }
+    const { uri } = (params as { textDocument: { uri: string } }).textDocument;
+    // A declaration Roslyn calls a plain text highlight stays unclassified.
+    return uri === usageUri ? [{ range: at(0, 0), kind: 3 }, { range: at(1, 11), kind: 2 }] : [{ range: at(0, 4), kind: 1 }];
+  };
+
+  const references = await service.findReferences({ filePath, text: 'int health;', line: 0, character: 4 });
+
+  assert.deepEqual(references.result?.map((location) => [location.filePath, location.line, location.access]), [
+    [filePath, 0, null],
+    [usage, 0, 'write'],
+    [usage, 1, 'read'],
+  ].sort((left, right) => String(left[0]).localeCompare(String(right[0]))));
+  assert.equal(server.requests.filter((request) => request.method === 'textDocument/documentHighlight').length, 2);
 });
 
 test('does not ask a solution that does not compile the file', async () => {

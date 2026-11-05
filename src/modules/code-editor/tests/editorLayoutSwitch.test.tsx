@@ -86,14 +86,17 @@ const onUnsavedChangesChange = vi.fn();
 const sidebar = (isMobile: boolean) => (
   <div>
     <EditorSidebar
-      editingFile={file}
+      tabs={[{ key: 'p1|/repo/a.txt', file, gotoTarget: null }]}
+      activeTabKey="p1|/repo/a.txt"
+      dirtyTabKeys={new Set()}
       isMobile={isMobile}
       editorExpanded={false}
       editorWidth={600}
       hasManualWidth={false}
       resizeHandleRef={{ current: null }}
       onResizeStart={() => undefined}
-      onCloseEditor={() => undefined}
+      onActivateTab={() => undefined}
+      onCloseTab={() => undefined}
       onToggleEditorExpand={() => undefined}
       onUnsavedChangesChange={onUnsavedChangesChange}
       projectPath="/repo"
@@ -125,7 +128,7 @@ const assertBufferSurvived = () => {
   assert.equal(screen.getByTestId<HTMLTextAreaElement>('editor').value, 'hello edited');
   assert.ok(screen.getByLabelText('Unsaved changes'), 'the dirty dot is still shown');
   assert.equal(readFile.mock.calls.length, 1, 'the file was not re-read from disk');
-  assert.equal(onUnsavedChangesChange.mock.calls.at(-1)?.[0], true);
+  assert.deepEqual(onUnsavedChangesChange.mock.calls.at(-1), ['p1|/repo/a.txt', true]);
 };
 
 test('the pop-out button keeps the unsaved buffer and the dirty dot', async () => {

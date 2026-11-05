@@ -1,9 +1,13 @@
+import type { ReactNode } from 'react';
+
 import type { CodeEditorFile } from '@/shared/types';
 
 type CodeEditorBinaryFileProps = {
   file: CodeEditorFile;
   isSidebar: boolean;
   isFullscreen: boolean;
+  // The open-file tabs, drawn above the header.
+  tabStrip?: ReactNode;
   onClose: () => void;
   onToggleFullscreen: () => void;
   title: string;
@@ -15,6 +19,7 @@ export default function CodeEditorBinaryFile({
   file,
   isSidebar,
   isFullscreen,
+  tabStrip = null,
   onClose,
   onToggleFullscreen,
   title,
@@ -45,6 +50,7 @@ export default function CodeEditorBinaryFile({
   if (isSidebar) {
     return (
       <div className="flex h-full w-full flex-col bg-background">
+        {tabStrip}
         <div className="flex flex-shrink-0 items-center justify-between border-b border-border px-3 py-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <h3 className="truncate text-sm font-medium text-gray-900 dark:text-white">{file.name}</h3>
@@ -76,6 +82,7 @@ export default function CodeEditorBinaryFile({
   return (
     <div className={containerClassName}>
       <div className={innerClassName}>
+        {tabStrip}
         <div className="flex flex-shrink-0 items-center justify-between border-b border-border px-3 py-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <h3 className="truncate text-sm font-medium text-gray-900 dark:text-white">{file.name}</h3>

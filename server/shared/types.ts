@@ -1902,6 +1902,12 @@ export type CsharpSemanticToken = {
 };
 
 /**
+ * Whether a reference reads or writes the symbol, as Roslyn's document highlights classify it. A
+ * definition lookup, and a reference Roslyn calls neither (such as a type name), carries null.
+ */
+export type CsharpReferenceAccess = 'read' | 'write' | null;
+
+/**
  * One definition or reference location. `preview` is the trimmed source line, so a references list
  * can show context without reading every file. Line and character are 0-based.
  */
@@ -1910,6 +1916,7 @@ export type CsharpLocation = {
   line: number;
   character: number;
   preview: string;
+  access: CsharpReferenceAccess;
 };
 
 /**
