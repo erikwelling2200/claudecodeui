@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 
-import { findMissingSources, SourceSolutionGenerator } from '@/modules/csharp-language/source-solution.js';
+import { buildSolutionText, findMissingSources, listSolutionProjects, SourceSolutionGenerator } from '@/modules/csharp-language/source-solution.js';
 import type { SourceSolutionFileSystem } from '@/modules/csharp-language/source-solution.js';
 
 const consumerRoot = path.resolve('/unity/Game');
@@ -34,10 +34,14 @@ function projectReference(fileName: string, guid: string): string {
   return `    <ProjectReference Include="${fileName}">\n      <Project>${guid}</Project>\n      <Name>${fileName.replace('.csproj', '')}</Name>\n    </ProjectReference>`;
 }
 
+function solution(...projectNames: string[]): string {
+  return buildSolutionText(projectNames.map((name) => ({ name, projectPath: `${name}.csproj`, guid: `{${name}}` })));
+}
+
 /** A Unity consumer project referencing `misc.runtime` as a DLL, and a package project that builds it from source. */
 function createTree(): Map<string, string> {
   return new Map([
-    [unitySolution, 'Microsoft Visual Studio Solution File'],
+    [unitySolution, solution('Assembly-CSharp', 'Assembly-CSharp-firstpass')],
     [path.join(consumerRoot, 'Assembly-CSharp.csproj'), csproj('Assembly-CSharp', '{A}', [
       '    <Compile Include="Assets\\Scripts\\Announcement.cs" />',
       dllReference('UnityEngine.CoreModule', 'C:\\Unity\\Editor\\UnityEngine.CoreModule.dll'),
@@ -47,7 +51,7 @@ function createTree(): Map<string, string> {
     ].join('\n'))],
     [path.join(consumerRoot, 'Assembly-CSharp-firstpass.csproj'), csproj('Assembly-CSharp-firstpass', '{F}', '    <Compile Include="Assets\\Plugins\\Plugin.cs" />')],
     [path.join(consumerRoot, 'Library', 'ScriptAssemblies', 'vendor.cached.dll'), ''],
-    [path.join(sourceRoot, 'Packages.sln'), 'Microsoft Visual Studio Solution File'],
+    [path.join(sourceRoot, 'Packages.sln'), solution('misc.runtime', 'webp', 'vendor.cached', 'Assembly-CSharp')],
     [path.join(sourceRoot, 'misc.runtime.csproj'), csproj('misc.runtime', '{M}', [
       '    <Compile Include="Assets\\Misc\\Runtime\\PerformanceMonoBehaviour.cs" />',
       '    <None Include="Assets\\Misc\\Runtime\\misc.runtime.asmdef" />',
@@ -213,6 +217,7 @@ function solutionProjectNames(solutionText: string): string[] {
 test('replaces a consumer project that compiles a package folder with the editable source, keeping one project per assembly', async () => {
   const files = createTree();
   // Unity generates this when it is set to make projects for git packages, while other projects still reference the DLL.
+  files.set(unitySolution, solution('Assembly-CSharp', 'Assembly-CSharp-firstpass', 'misc.runtime'));
   files.set(path.join(consumerRoot, 'misc.runtime.csproj'), csproj('misc.runtime', '{M}', '    <Compile Include="Packages\\com.misc\\Runtime\\PerformanceMonoBehaviour.cs" />'));
   files.set(path.join(consumerRoot, 'Assembly-CSharp-firstpass.csproj'), csproj('Assembly-CSharp-firstpass', '{F}', [
     '    <Compile Include="Assets\\Plugins\\Plugin.cs" />',
@@ -232,10 +237,37 @@ test('replaces a consumer project that compiles a package folder with the editab
 
 test('loads the Unity solution as it is when the consumer builds the assembly from its own Assets folder', async () => {
   const files = createTree();
+  files.set(unitySolution, solution('Assembly-CSharp', 'Assembly-CSharp-firstpass', 'misc.runtime'));
   files.set(path.join(consumerRoot, 'misc.runtime.csproj'), csproj('misc.runtime', '{C}', '    <Compile Include="Assets\\Misc\\PerformanceMonoBehaviour.cs" />'));
   const { generator } = createGenerator(files);
 
   const prepared = await generator.prepare(unitySolution);
 
   assert.equal(prepared.solutionPath, unitySolution);
+});
+
+test('ignores a csproj Unity left behind that the solution no longer lists', async () => {
+  const files = createTree();
+  // Same shape as the package project above, but stale: Unity stopped generating it and never deleted it.
+  files.set(path.join(consumerRoot, 'misc.runtime.csproj'), csproj('misc.runtime', '{M}', '    <Compile Include="Packages\\com.misc\\Runtime\\PerformanceMonoBehaviour.cs" />'));
+  files.set(path.join(sourceRoot, 'stale.csproj'), csproj('stale', '{S}', '    <Compile Include="Assets\\Stale\\Stale.cs" />'));
+  const { generator } = createGenerator(files);
+
+  const prepared = await generator.prepare(unitySolution);
+
+  assert.deepEqual(solutionProjectNames(files.get(prepared.solutionPath)!), ['Assembly-CSharp', 'Assembly-CSharp-firstpass', 'misc.runtime', 'webp']);
+  assert.ok(generatedFile(files, prepared.solutionPath, 'sources', 'Packages', 'misc.runtime.csproj'));
+});
+
+test('reads the project paths a Visual Studio solution lists', () => {
+  const text = [
+    'Microsoft Visual Studio Solution File, Format Version 12.00',
+    'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Assembly-CSharp", "Assembly-CSharp.csproj", "{B5CFA4C0-F00F-FEC2-A3DC-235BE8CE765B}"',
+    'EndProject',
+    'Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{11111111-2222-3333-4444-555555555555}"',
+    'EndProject',
+    'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tools", "Tools\\Tools.csproj", "{C}"',
+  ].join('\r\n');
+
+  assert.deepEqual(listSolutionProjects(text), ['Assembly-CSharp.csproj', 'Tools\\Tools.csproj']);
 });

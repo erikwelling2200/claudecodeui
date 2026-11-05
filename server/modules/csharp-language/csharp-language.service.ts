@@ -12,7 +12,7 @@ import type {
   CsharpSemanticToken,
 } from '@/shared/types.js';
 
-import { isUnderAnyRoot } from './source-solution.js';
+import { isUnderAnyRoot, pickSolutionFile } from './source-solution.js';
 import type { PreparedSolution } from './source-solution.js';
 
 type CsharpLanguageServiceDependencies = {
@@ -35,21 +35,12 @@ type ProtocolLocation = { uri?: string; range?: ProtocolRange; targetUri?: strin
 const FAILED_SERVER_RETRY_MS = 60_000;
 const PREVIEW_MAX_LENGTH = 200;
 
-/**
- * Picks the solution Roslyn should load for a file: the nearest folder above it holding a `.sln`
- * (a `.slnx` only when there is no `.sln`), preferring the one named after its folder, as Unity names it.
- */
+/** Picks the solution Roslyn should load for a file: that of the nearest folder above it holding one. */
 async function findSolutionPath(filePath: string, listDirectory: (directoryPath: string) => Promise<string[]>): Promise<string | null> {
   let directory = path.dirname(path.resolve(filePath));
   for (;;) {
-    const entries = await listDirectory(directory);
-    for (const extension of ['.sln', '.slnx']) {
-      const solutions = entries.filter((entry) => entry.toLowerCase().endsWith(extension)).sort();
-      if (solutions.length > 0) {
-        const folderSolution = solutions.find((entry) => entry.slice(0, -extension.length).toLowerCase() === path.basename(directory).toLowerCase());
-        return path.join(directory, folderSolution ?? solutions[0]);
-      }
-    }
+    const solutionPath = pickSolutionFile(directory, await listDirectory(directory));
+    if (solutionPath) return solutionPath;
     const parent = path.dirname(directory);
     if (parent === directory) return null;
     directory = parent;
