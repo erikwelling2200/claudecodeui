@@ -86,3 +86,17 @@ test('inline code inside a link does not nest a second link', () => {
   const { container } = render(<Markdown>{'See [`src/foo.ts`](src/foo.ts).'}</Markdown>);
   assert.equal(container.querySelectorAll('a').length, 1);
 });
+
+test('a code block holding only an absolute path opens that file', () => {
+  const filePath = 'C:\Users\erikw\AppData\Local\Temp\claude\scratchpad\investigation-impact.md';
+  clickReference(`Saved to:\n\n\`\`\`\n${filePath}\n\`\`\``, filePath);
+  assert.deepEqual(openFileInEditor.mock.calls[0], [filePath, null]);
+});
+
+test('a code block holding a command or several lines stays highlighted code', () => {
+  for (const block of ['git add src/foo.ts', 'src/foo.ts\nsrc/bar.ts']) {
+    const { container, unmount } = render(<Markdown>{`\`\`\`\n${block}\n\`\`\``}</Markdown>);
+    assert.equal(container.querySelector('a'), null, block);
+    unmount();
+  }
+});
