@@ -4,6 +4,7 @@ import type { Extension } from '@codemirror/state';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ExternalLink, Maximize2, Minimize2 } from 'lucide-react';
 
 import { usePaletteOps } from '@/modules/command-palette';
 import { useTheme } from '@/shared/context/ThemeContext';
@@ -267,6 +268,32 @@ export default function CodeEditor({
     wordWrap,
   ]);
 
+  // The table view has no CodeMirror toolbar panel, so it draws the docked editor's pop-out and expand buttons itself.
+  const csvWindowControls = isSidebar && (onPopOut || onToggleExpand) ? (
+    <>
+      {onPopOut && (
+        <button
+          type="button"
+          onClick={onPopOut}
+          className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
+          title={t('toolbar.popOut', 'Open in modal')}
+        >
+          <ExternalLink className="h-4 w-4" />
+        </button>
+      )}
+      {onToggleExpand && (
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
+          title={isExpanded ? t('toolbar.collapse') : t('toolbar.expand')}
+        >
+          {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+        </button>
+      )}
+    </>
+  ) : null;
+
   useEditorKeyboardShortcuts({
     onSave: handleSave,
     dependency: content,
@@ -402,6 +429,7 @@ export default function CodeEditor({
               isMarkdownFile={isMarkdownFile}
               csvTableView={csvTableView && isCsvFile}
               fileName={file.name}
+              csvWindowControls={csvWindowControls}
               isDarkMode={isDarkMode}
               fontSize={fontSize}
               showLineNumbers={showLineNumbers}

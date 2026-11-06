@@ -7,7 +7,8 @@
     "showDiff": "Show diff highlighting",
     "settings": "Editor Settings",
     "collapse": "Collapse editor",
-    "expand": "Expand editor to full width"
+    "expand": "Expand editor to full width",
+    "popOut": "Open in modal"
   },
   "loading": "Loading {{fileName}}...",
   "header": {

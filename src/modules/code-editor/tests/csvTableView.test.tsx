@@ -77,3 +77,17 @@ test('Escape abandons a cell edit and the text view shows the same buffer', asyn
   // Like CodeMirror, a textarea reports the document with LF line endings.
   assert.equal(editor.value, 'name;city\n"Ann";Utrecht\nBob;Delft\n');
 });
+
+test('the docked table view keeps the pop-out and expand buttons of the text view', async () => {
+  const onPopOut = vi.fn();
+  const onToggleExpand = vi.fn();
+  render(<CodeEditor file={file} onClose={() => undefined} isSidebar onPopOut={onPopOut} onToggleExpand={onToggleExpand} />);
+  await screen.findByText('Utrecht');
+
+  fireEvent.click(screen.getByTitle('Open in modal'));
+  // No i18n instance is initialised here, so a label without a default renders as its key.
+  fireEvent.click(screen.getByTitle('toolbar.expand'));
+
+  assert.equal(onPopOut.mock.calls.length, 1);
+  assert.equal(onToggleExpand.mock.calls.length, 1);
+});
