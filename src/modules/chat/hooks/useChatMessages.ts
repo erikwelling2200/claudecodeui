@@ -289,6 +289,7 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
             tool.toolResult = {
               content: formatToolResultContent(msg.content ?? ''),
               isError: Boolean(msg.isError),
+              timestamp: msg.timestamp,
             };
             lastSubagentSourceByParent.set(parentId, msg);
           }

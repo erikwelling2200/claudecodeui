@@ -636,7 +636,7 @@ export type SubagentActivity = {
   toolId?: string;
   toolName?: string;
   toolInput?: unknown;
-  toolResult?: { content?: string; isError?: boolean } | null;
+  toolResult?: { content?: string; isError?: boolean; timestamp?: string } | null;
   /** Message body; only set when `kind` is `text` or `thinking`. */
   content?: string;
 };
