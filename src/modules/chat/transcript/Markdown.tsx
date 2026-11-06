@@ -64,7 +64,7 @@ const FILE_NAME_PATTERN = new RegExp(`(^|[\\\\/])[^\\\\/]+\\.(${FILE_EXTENSIONS}
 // `C:/…`, `~/…` or `/dir/…`: a POSIX path needs a space-free first segment, so `/compact notes.md` is no path.
 const ABSOLUTE_PATH_PATTERN = /^([A-Za-z]:[\\/]|~[\\/]|\/[^\s\\/]+\/)/;
 
-const looksLikeInlineCodeFile = (value: string): boolean => {
+const looksLikeCodeFileReference = (value: string): boolean => {
   const cleaned = stripLineSuffix(value.trim());
   // Spaces are only allowed in an absolute path; elsewhere they mark a command such as `git add foo.ts`.
   const forbidden = ABSOLUTE_PATH_PATTERN.test(cleaned) ? /[\t\r\n*?<>|"(){}]/ : /[\s*?<>|"(){}]/;
@@ -131,7 +131,7 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
   // `pre` renderer hands us (forceBlock). Multiline is kept as a safety net.
   const shouldInline = !forceBlock && !/[\r\n]/.test(raw);
 
-  if (shouldInline && !insideLink && looksLikeInlineCodeFile(raw)) {
+  if (shouldInline && !insideLink && looksLikeCodeFileReference(raw)) {
     return (
       <a
         href={raw.trim()}
@@ -171,6 +171,9 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
   if (language === 'mermaid') {
     return <MermaidDiagram code={raw} />;
   }
+
+  // A block holding nothing but one path is how agents quote files outside the repo.
+  const isFileBlock = !insideLink && !/[\r\n]/.test(raw) && looksLikeCodeFileReference(raw);
 
   return (
     <div className="group my-3 overflow-hidden rounded-xl border border-border bg-muted/50 shadow-sm dark:bg-zinc-900">
@@ -219,28 +222,43 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
         </button>
       </div>
 
-      <SyntaxHighlighter
-        language={language}
-        style={syntaxTheme.style}
-        customStyle={{
-          margin: 0,
-          borderRadius: 0,
-          fontSize: '0.8125rem',
-          lineHeight: 1.6,
-          padding: '0.5rem 1rem 1rem',
-          // The container owns the background so the label row and code read as one panel.
-          background: 'transparent',
-        }}
-        codeTagProps={{
-          style: {
-            fontFamily:
-              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+      {isFileBlock ? (
+        <div className="break-all px-4 pb-4 pt-2 font-mono text-[0.8125rem] leading-[1.6]">
+          <a
+            href={raw.trim()}
+            className="cursor-pointer text-blue-600 no-underline hover:underline dark:text-blue-400"
+            onClick={(event) => {
+              event.preventDefault();
+              openFileReference(raw, fileOps);
+            }}
+          >
+            {raw}
+          </a>
+        </div>
+      ) : (
+        <SyntaxHighlighter
+          language={language}
+          style={syntaxTheme.style}
+          customStyle={{
+            margin: 0,
+            borderRadius: 0,
+            fontSize: '0.8125rem',
+            lineHeight: 1.6,
+            padding: '0.5rem 1rem 1rem',
+            // The container owns the background so the label row and code read as one panel.
             background: 'transparent',
-          },
-        }}
-      >
-        {raw}
-      </SyntaxHighlighter>
+          }}
+          codeTagProps={{
+            style: {
+              fontFamily:
+                'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+              background: 'transparent',
+            },
+          }}
+        >
+          {raw}
+        </SyntaxHighlighter>
+      )}
     </div>
   );
 };
