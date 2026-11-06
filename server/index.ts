@@ -227,6 +227,11 @@ app.use('/api/voice', authenticateToken, voiceRoutes);
 
 app.use('/api/usage', authenticateToken, usageRoutes);
 
+// INVERT_APP_ICON=true swaps in the colour-inverted favicon and app icons, so two instances on one taskbar can be told apart
+if (process.env.INVERT_APP_ICON === 'true') {
+    app.use(express.static(path.join(APP_ROOT, 'public', 'inverted')));
+}
+
 // Serve public files (like api-docs.html)
 app.use(express.static(path.join(APP_ROOT, 'public')));
 
