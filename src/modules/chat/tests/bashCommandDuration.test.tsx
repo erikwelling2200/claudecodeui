@@ -3,6 +3,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { ToolRenderer } from '@/modules/chat/tools/ToolRenderer';
+import { SubagentTimeline } from '@/modules/chat/tools/SubagentTimeline';
 
 const render = (toolResult: unknown, startedAt: string) =>
   renderToStaticMarkup(
@@ -50,5 +51,25 @@ describe('Bash command row duration', () => {
     const markup = render({ content: 'ok', isError: false }, '2026-11-05T10:00:00.000Z');
 
     expect(markup).not.toMatch(/>\d+(\.\d)?s<\/span>/);
+  });
+});
+
+describe('Bash command duration in a subagent timeline', () => {
+  it('times the commands a subagent ran', () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(SubagentTimeline, {
+        activity: [{
+          kind: 'tool',
+          toolId: 'toolu_sub_1',
+          toolName: 'Bash',
+          toolInput: { command: 'npm test' },
+          timestamp: '2026-11-06T09:00:00.000Z',
+          toolResult: { content: 'ok', isError: false, timestamp: '2026-11-06T09:00:01.250Z' },
+        }],
+        createDiff: () => [],
+      }),
+    );
+
+    expect(markup).toContain('>1.3s</span>');
   });
 });

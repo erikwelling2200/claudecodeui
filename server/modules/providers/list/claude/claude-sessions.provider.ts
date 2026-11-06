@@ -182,6 +182,7 @@ async function readClaudeSubagentTranscript(filePath: string): Promise<ClaudeSub
                     .join('\n')
                   : JSON.stringify(part.content),
               isError: Boolean(part.is_error),
+              timestamp,
             };
           }
         }
