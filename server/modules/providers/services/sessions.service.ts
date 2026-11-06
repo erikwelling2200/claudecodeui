@@ -247,6 +247,8 @@ export const sessionsService = {
           tasks,
           ...(liveTurn ? { liveTurn } : {}),
         });
+        // The process holding this work reports itself busy in the CLI registry too.
+        runningById.set(sessionId, entries[entries.length - 1]);
       }
     }
 
