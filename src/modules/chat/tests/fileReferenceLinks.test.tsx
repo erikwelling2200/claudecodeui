@@ -88,13 +88,21 @@ test('inline code inside a link does not nest a second link', () => {
 });
 
 test('a code block holding only an absolute path opens that file', () => {
-  const filePath = 'C:\Users\erikw\AppData\Local\Temp\claude\scratchpad\investigation-impact.md';
+  const filePath = String.raw`C:\Users\erikw\AppData\Local\Temp\claude\scratchpad\investigation-impact.md`;
   clickReference(`Saved to:\n\n\`\`\`\n${filePath}\n\`\`\``, filePath);
   assert.deepEqual(openFileInEditor.mock.calls[0], [filePath, null]);
 });
 
-test('a code block holding a command or several lines stays highlighted code', () => {
-  for (const block of ['git add src/foo.ts', 'src/foo.ts\nsrc/bar.ts']) {
+test('each line of a code block holding several paths opens its own file', () => {
+  const first = String.raw`C:\Temp\scratchpad\excel\formula_edits.json`;
+  const second = String.raw`C:\Temp\scratchpad\excel\text\text-edits-log.json`;
+  clickReference(`\`\`\`\n${first}\n${second}\n\`\`\``, second);
+  fireEvent.click(screen.getByText(first));
+  assert.deepEqual(openFileInEditor.mock.calls, [[second, null], [first, null]]);
+});
+
+test('a code block holding a command, or a path next to a command, stays highlighted code', () => {
+  for (const block of ['git add src/foo.ts', 'src/foo.ts\nnpm run build']) {
     const { container, unmount } = render(<Markdown>{`\`\`\`\n${block}\n\`\`\``}</Markdown>);
     assert.equal(container.querySelector('a'), null, block);
     unmount();

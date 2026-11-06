@@ -172,8 +172,9 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
     return <MermaidDiagram code={raw} />;
   }
 
-  // A block holding nothing but one path is how agents quote files outside the repo.
-  const isFileBlock = !insideLink && !/[\r\n]/.test(raw) && looksLikeCodeFileReference(raw);
+  // A block holding nothing but paths, one per line, is how agents quote files outside the repo.
+  const filePaths = raw.split(/\r?\n/).filter((line) => line.trim());
+  const isFileBlock = !insideLink && filePaths.length > 0 && filePaths.every(looksLikeCodeFileReference);
 
   return (
     <div className="group my-3 overflow-hidden rounded-xl border border-border bg-muted/50 shadow-sm dark:bg-zinc-900">
@@ -224,16 +225,20 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
 
       {isFileBlock ? (
         <div className="break-all px-4 pb-4 pt-2 font-mono text-[0.8125rem] leading-[1.6]">
-          <a
-            href={raw.trim()}
-            className="cursor-pointer text-blue-600 no-underline hover:underline dark:text-blue-400"
-            onClick={(event) => {
-              event.preventDefault();
-              openFileReference(raw, fileOps);
-            }}
-          >
-            {raw}
-          </a>
+          {filePaths.map((filePath, index) => (
+            <div key={index}>
+              <a
+                href={filePath.trim()}
+                className="cursor-pointer text-blue-600 no-underline hover:underline dark:text-blue-400"
+                onClick={(event) => {
+                  event.preventDefault();
+                  openFileReference(filePath, fileOps);
+                }}
+              >
+                {filePath}
+              </a>
+            </div>
+          ))}
         </div>
       ) : (
         <SyntaxHighlighter
