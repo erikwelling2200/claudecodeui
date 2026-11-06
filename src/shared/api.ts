@@ -327,8 +327,17 @@ export const api = {
     get(fileContentPath(projectId, filePath), options),
   saveFile: (projectId: string, filePath: string, content: string) =>
     put(`/api/file-tree/projects/${projectId}/file`, { filePath, content }),
-  getFiles: (projectId: string, options: ApiRequestOptions = {}) =>
-    get(`/api/file-tree/projects/${projectId}/files${query({ respectGitignore: true })}`, options),
+  // The project's top level, `depth` directory levels deep; deeper levels come from getFileChildren.
+  getFiles: (projectId: string, depth: number, options: ApiRequestOptions = {}) =>
+    get(`/api/file-tree/projects/${projectId}/files${query({ respectGitignore: true, depth })}`, options),
+  getFileChildren: (projectId: string, paths: string[], depth: number, options: ApiRequestOptions = {}) =>
+    post(`/api/file-tree/projects/${projectId}/files/children`, { paths, depth, respectGitignore: true }, options),
+  searchFiles: (
+    projectId: string,
+    searchQuery: string,
+    { limit, type }: { limit: number; type: 'file' | 'any' },
+    options: ApiRequestOptions = {},
+  ) => get(`/api/file-tree/projects/${projectId}/files/search${query({ q: searchQuery, limit, type })}`, options),
 
   // C# semantic layer served by Roslyn. Each call sends the editor's own text, so unsaved edits are understood.
   csharpLanguage: {

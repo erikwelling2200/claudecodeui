@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { RefObject } from 'react';
 import { test, vi } from 'vitest';
 
-import type { Project } from '@/shared/types';
+import type { FileSearchResult, Project } from '@/shared/types';
 
 /**
  * In a multi-folder project the agent's working directory is the primary
@@ -12,10 +12,10 @@ import type { Project } from '@/shared/types';
  * the other folders are mentioned by absolute path so the agent can find them.
  */
 
-const getFiles = vi.fn();
+const searchFiles = vi.fn();
 
 vi.mock('@/shared/api', () => ({
-  api: { getFiles: (...args: unknown[]) => getFiles(...args) },
+  api: { searchFiles: (...args: unknown[]) => searchFiles(...args) },
 }));
 
 const { useFileMentions } = await import('@/modules/chat/hooks/useFileMentions');
@@ -24,40 +24,14 @@ const PRIMARY = '/work/app';
 const EXTRA = '/work/shared-lib';
 const project: Project = { projectId: 'p1', displayName: 'app', fullPath: PRIMARY, additionalFolders: [EXTRA] };
 
-const tree = [
-  {
-    type: 'directory',
-    name: 'app',
-    path: PRIMARY,
-    isProjectRoot: true,
-    children: [
-      {
-        type: 'directory',
-        name: 'src',
-        path: `${PRIMARY}/src`,
-        children: [{ type: 'file', name: 'main.ts', path: `${PRIMARY}/src/main.ts` }],
-      },
-    ],
-  },
-  {
-    type: 'directory',
-    name: 'shared-lib',
-    path: EXTRA,
-    isProjectRoot: true,
-    children: [
-      {
-        type: 'directory',
-        name: 'lib',
-        path: `${EXTRA}/lib`,
-        children: [{ type: 'file', name: 'util.ts', path: `${EXTRA}/lib/util.ts` }],
-      },
-    ],
-  },
+const results: FileSearchResult[] = [
+  { name: 'main.ts', path: `${PRIMARY}/src/main.ts`, relativePath: 'src/main.ts', type: 'file', rootPath: PRIMARY, rootIndex: 0 },
+  { name: 'util.ts', path: `${EXTRA}/lib/util.ts`, relativePath: 'lib/util.ts', type: 'file', rootPath: EXTRA, rootIndex: 1 },
 ];
 
 test('primary-folder files keep relative paths and extra-folder files use absolute paths', async () => {
-  getFiles.mockReset();
-  getFiles.mockResolvedValue({ ok: true, json: async () => tree });
+  searchFiles.mockReset();
+  searchFiles.mockResolvedValue({ ok: true, json: async () => ({ results }) });
 
   const textareaRef: RefObject<HTMLTextAreaElement> = { current: null };
   const hook = renderHook(
@@ -65,7 +39,6 @@ test('primary-folder files keep relative paths and extra-folder files use absolu
       useFileMentions({ selectedProject: project, input, setInput: vi.fn(), textareaRef }),
     { initialProps: { input: '' } },
   );
-  await waitFor(() => assert.equal(getFiles.mock.calls.length, 1));
 
   hook.rerender({ input: '@.ts' });
   act(() => {

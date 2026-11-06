@@ -1,18 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Dispatch, KeyboardEvent, RefObject, SetStateAction } from 'react';
 
 import { api } from '@/shared/api';
 import { escapeRegExp } from '@/modules/chat/utils/chatFormatting';
-import type { Project } from '@/shared/types';
-
-type ProjectFileNode = {
-  name: string;
-  type: 'file' | 'directory';
-  path?: string;
-  children?: ProjectFileNode[];
-  // Top-level node of one folder of a multi-folder project (primary first).
-  isProjectRoot?: boolean;
-};
+import type { FileSearchResult, Project } from '@/shared/types';
 
 export type MentionableFile = {
   name: string;
@@ -27,174 +18,82 @@ type UseFileMentionsOptions = {
   textareaRef: RefObject<HTMLTextAreaElement>;
 };
 
-const flattenFileTree = (files: ProjectFileNode[], basePath = ''): MentionableFile[] => {
-  let flattened: MentionableFile[] = [];
+const MENTION_RESULT_LIMIT = 10;
+const MENTION_SEARCH_DEBOUNCE_MS = 80;
 
-  files.forEach((file) => {
-    const fullPath = basePath ? `${basePath}/${file.name}` : file.name;
-    if (file.type === 'directory' && file.children) {
-      flattened = flattened.concat(flattenFileTree(file.children, fullPath));
-      return;
-    }
-
-    if (file.type === 'file') {
-      flattened.push({
-        name: file.name,
-        path: fullPath,
-        relativePath: file.path,
-      });
-    }
-  });
-
-  return flattened;
-};
-
-// Files of an extra folder are mentioned by their absolute path, since the
-// agent resolves a relative mention against the primary folder (its cwd).
-const flattenAbsoluteFileTree = (files: ProjectFileNode[]): MentionableFile[] =>
-  files.flatMap((file) => {
-    if (file.type === 'directory') {
-      return file.children ? flattenAbsoluteFileTree(file.children) : [];
-    }
-    return file.path ? [{ name: file.name, path: file.path, relativePath: file.path }] : [];
-  });
-
-/**
- * Turns the file listing into mentionable files. A single-folder project lists
- * its entries directly; a multi-folder one lists one root node per folder,
- * primary first, whose files keep relative paths (`src/x.ts`) while the other
- * folders' files use absolute paths.
- */
-const flattenProjectFiles = (files: ProjectFileNode[]): MentionableFile[] => {
-  if (!files.some((file) => file.isProjectRoot)) {
-    return flattenFileTree(files);
-  }
-  return files.flatMap((root, index) => (
-    index === 0
-      ? flattenFileTree(root.children ?? [])
-      : flattenAbsoluteFileTree(root.children ?? [])
-  ));
-};
-
-// True when both flattened lists hold the same files in the same order.
-const haveSameFiles = (left: MentionableFile[], right: MentionableFile[]) =>
-  left.length === right.length &&
-  left.every(
-    (file, index) => file.path === right[index].path && file.relativePath === right[index].relativePath,
-  );
+// The agent resolves a relative mention against the primary folder (its cwd), so
+// files of a multi-folder project's other folders are mentioned by absolute path.
+const toMentionableFile = (result: FileSearchResult): MentionableFile => ({
+  name: result.name,
+  path: result.rootIndex === 0 ? result.relativePath : result.path,
+  relativePath: result.path,
+});
 
 export function useFileMentions({ selectedProject, input, setInput, textareaRef }: UseFileMentionsOptions) {
   const projectId = selectedProject?.projectId;
-  const [fileList, setFileList] = useState<MentionableFile[]>([]);
   const [fileMentions, setFileMentions] = useState<string[]>([]);
   const [filteredFiles, setFilteredFiles] = useState<MentionableFile[]>([]);
   const [showFileDropdown, setShowFileDropdown] = useState(false);
   const [selectedFileIndex, setSelectedFileIndex] = useState(-1);
   const [cursorPosition, setCursorPosition] = useState(0);
   const [atSymbolPosition, setAtSymbolPosition] = useState(-1);
-  // The file-list request still in flight. Starting a new one aborts it, so an
-  // older response can never overwrite a newer list.
-  const fileListRequestRef = useRef<AbortController | null>(null);
+  // The text typed after `@`, or null while the caret is not in a mention.
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
 
-  const loadProjectFiles = useCallback(async (targetProjectId: string) => {
-    fileListRequestRef.current?.abort();
-    const abortController = new AbortController();
-    fileListRequestRef.current = abortController;
-
-    try {
-      // File list is keyed by DB projectId now; the backend resolves it to
-      // the project's path before reading.
-      const response = await api.getFiles(targetProjectId, {
-        signal: abortController.signal,
-      });
-      if (!response.ok) {
-        return;
-      }
-
-      const files = (await response.json()) as ProjectFileNode[];
-      if (abortController.signal.aborted) {
-        return;
-      }
-      const nextFileList = flattenProjectFiles(files);
-      // Keeping the same array when nothing changed stops the filter effect
-      // below from re-running and resetting the highlighted row.
-      setFileList((previousFileList) =>
-        haveSameFiles(previousFileList, nextFileList) ? previousFileList : nextFileList,
-      );
-    } catch (error) {
-      // Ignore aborts from newer requests and rapid project switches; we only care about the latest request.
-      if ((error as { name?: string })?.name === 'AbortError') {
-        return;
-      }
-      console.error('Error fetching files:', error);
-    }
-  }, []);
-
+  // The server searches its file index, which follows changes on disk, so a file
+  // added since the last `@` (an upload, an agent edit, a checkout) is offered too.
   useEffect(() => {
-    const fetchProjectFiles = async () => {
-      setFileList([]);
+    if (mentionQuery === null || !projectId) {
       setFilteredFiles([]);
-      if (!projectId) {
-        return;
+      return;
+    }
+
+    const abortController = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const response = await api.searchFiles(
+          projectId,
+          mentionQuery,
+          { limit: MENTION_RESULT_LIMIT, type: 'file' },
+          { signal: abortController.signal },
+        );
+        if (!response.ok) {
+          return;
+        }
+        const body = (await response.json()) as { results: FileSearchResult[] };
+        if (!abortController.signal.aborted) {
+          setFilteredFiles(body.results.map(toMentionableFile));
+        }
+      } catch (error) {
+        if ((error as { name?: string })?.name !== 'AbortError') {
+          console.error('Error searching files:', error);
+        }
       }
+    }, MENTION_SEARCH_DEBOUNCE_MS);
 
-      await loadProjectFiles(projectId);
-    };
-
-    fetchProjectFiles();
     return () => {
-      fileListRequestRef.current?.abort();
+      clearTimeout(timer);
+      abortController.abort();
     };
-  }, [projectId, loadProjectFiles]);
-
-  // Files keep appearing after the list above was loaded (uploads, agent edits,
-  // the terminal, git checkouts) and nothing tells the composer about them, so
-  // the list is refetched each time the `@` dropdown opens. The dropdown stays
-  // open while the query is typed, so this is one request per `@`, not one per
-  // keystroke, and the previous list stays visible until the response lands.
-  useEffect(() => {
-    const refreshProjectFiles = async () => {
-      if (!showFileDropdown || !projectId) {
-        return;
-      }
-
-      await loadProjectFiles(projectId);
-    };
-
-    refreshProjectFiles();
-  }, [showFileDropdown, projectId, loadProjectFiles]);
+  }, [projectId, mentionQuery]);
 
   useEffect(() => {
     const textBeforeCursor = input.slice(0, cursorPosition);
     const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+    const textAfterAt = lastAtIndex === -1 ? '' : textBeforeCursor.slice(lastAtIndex + 1);
 
-    if (lastAtIndex === -1) {
+    if (lastAtIndex === -1 || textAfterAt.includes(' ')) {
       setShowFileDropdown(false);
       setAtSymbolPosition(-1);
-      return;
-    }
-
-    const textAfterAt = textBeforeCursor.slice(lastAtIndex + 1);
-    if (textAfterAt.includes(' ')) {
-      setShowFileDropdown(false);
-      setAtSymbolPosition(-1);
+      setMentionQuery(null);
       return;
     }
 
     setAtSymbolPosition(lastAtIndex);
     setShowFileDropdown(true);
     setSelectedFileIndex(-1);
-
-    const matchingFiles = fileList
-      .filter(
-        (file) =>
-          file.name.toLowerCase().includes(textAfterAt.toLowerCase()) ||
-          file.path.toLowerCase().includes(textAfterAt.toLowerCase()),
-      )
-      .slice(0, 10);
-
-    setFilteredFiles(matchingFiles);
-  }, [input, cursorPosition, fileList]);
+    setMentionQuery(textAfterAt);
+  }, [input, cursorPosition]);
 
   const activeFileMentions = useMemo(() => {
     if (!input || fileMentions.length === 0) {
@@ -295,11 +194,6 @@ export function useFileMentions({ selectedProject, input, setInput, textareaRef 
 
       if (event.key === 'Escape') {
         event.preventDefault();
-        // The caret is still inside the `@` query, so a refetch landing after
-        // this would re-open the dropdown (or first show it, when nothing
-        // matched yet) and take the next Enter. Drop it; re-opening the
-        // dropdown fetches again.
-        fileListRequestRef.current?.abort();
         setShowFileDropdown(false);
         return true;
       }

@@ -75,6 +75,13 @@ function createFakeFileSystem(
   };
 }
 
+const unusedFileIndex: FileTreeServiceDependencies['fileIndex'] = {
+  warm: () => undefined,
+  search: async () => {
+    throw new Error('Unexpected file search');
+  },
+};
+
 function createDependencies(
   fileSystem: FileTreeFileSystem,
   projectRoot: string,
@@ -91,6 +98,7 @@ function createDependencies(
     },
     resolveMimeType: () => 'text/plain',
     fileSystemConcurrency: 4,
+    fileIndex: unusedFileIndex,
     logger: { error: () => undefined },
   };
 }
@@ -142,7 +150,7 @@ test('listProjectFiles applies gitignore alongside hard directory exclusions', a
   });
   const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
 
-  const tree = await service.listProjectFiles('project-1', { respectGitignore: true });
+  const tree = await service.listProjectFiles('project-1', { respectGitignore: true, depth: 10 });
 
   assert.deepEqual(tree.map((entry) => entry.name), ['docs', 'src', 'README.md']);
   const documentationEntry = tree[0];
@@ -198,7 +206,7 @@ test('listProjectFiles excludes gitignored entries only when requested', async (
   });
   const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
 
-  const tree = await service.listProjectFiles('project-1', { respectGitignore: true });
+  const tree = await service.listProjectFiles('project-1', { respectGitignore: true, depth: 10 });
 
   assert.deepEqual(tree.map((entry) => entry.name), ['src', '.gitignore', 'keep.log']);
   assert.deepEqual(tree[0]?.children?.map((entry) => entry.name), ['index.ts']);
@@ -240,7 +248,7 @@ test('listProjectFiles falls back to conventional directory names when no gitign
   });
   const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
 
-  const tree = await service.listProjectFiles('project-1', { respectGitignore: true });
+  const tree = await service.listProjectFiles('project-1', { respectGitignore: true, depth: 10 });
 
   assert.deepEqual(tree.map((entry) => entry.name), ['docs', 'debug.log']);
   assert.deepEqual(tree[0]?.children?.map((entry) => entry.name), ['guide.md']);
@@ -248,118 +256,46 @@ test('listProjectFiles falls back to conventional directory names when no gitign
   assert.equal(readDirectories.includes(buildDocumentationDirectory), false);
 });
 
-test('listProjectFiles rejects a tree that exceeds the server entry limit', async () => {
+test('listProjectFiles lists a directory of any size in full', async () => {
   const projectRoot = path.resolve('file-tree-test-project');
   const fileSystem = createFakeFileSystem({
     access: async () => undefined,
     openDirectory: createDirectoryReader((directoryPath) => directoryPath === projectRoot
-      ? Array.from({ length: 10_001 }, (_, index) => createDirectoryEntry(`file-${index}.txt`, false))
+      ? Array.from({ length: 25_000 }, (_, index) => createDirectoryEntry(`file-${index}.txt`, false))
       : []),
     lstat: async () => createStats(false, 0o644),
   });
   const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
 
-  await assert.rejects(
-    service.listProjectFiles('project-1'),
-    (error: unknown) => error instanceof AppError
-      && error.code === 'FILE_TREE_TOO_LARGE'
-      && error.statusCode === 413,
-  );
-});
-
-test('listProjectFiles lists an oversized folder of a multi-folder project empty and still lists the others', async () => {
-  const projectRoot = path.resolve('file-tree-test-project');
-  const smallFolder = path.resolve('file-tree-small-folder');
-  const fileSystem = createFakeFileSystem({
-    access: async () => undefined,
-    // Twenty sibling directories are walked in parallel, so some walks are still
-    // running after the overflow rejects the oversized folder.
-    openDirectory: createDirectoryReader((directoryPath) => {
-      if (directoryPath === projectRoot) {
-        return Array.from({ length: 20 }, (_, index) => createDirectoryEntry(`dir-${index}`, true));
-      }
-      if (path.dirname(directoryPath) === projectRoot) {
-        return Array.from({ length: 1_000 }, (_, index) => createDirectoryEntry(`file-${index}.txt`, false));
-      }
-      return directoryPath === smallFolder ? [createDirectoryEntry('readme.md', false)] : [];
-    }),
-    lstat: async (candidatePath) => createStats(path.basename(candidatePath).startsWith('dir-'), 0o644),
-  });
-  const service = createFileTreeService({
-    ...createDependencies(fileSystem, projectRoot),
-    projects: { getProjectFolderPathsById: async () => [projectRoot, smallFolder] },
-  });
-
   const tree = await service.listProjectFiles('project-1');
 
-  assert.equal(tree[0].isTooLarge, true);
-  assert.deepEqual(tree[0].children, []);
-  assert.equal(tree[1].isTooLarge, undefined);
-  assert.deepEqual(tree[1].children?.map((node) => node.name), ['readme.md']);
+  assert.equal(tree.length, 25_000);
 });
 
-test('listProjectFiles abandons a directory stream as soon as the entry limit is passed', async () => {
+test('listProjectFiles reads only as many levels as requested', async () => {
   const projectRoot = path.resolve('file-tree-test-project');
-  let streamedEntries = 0;
-  const fileSystem = createFakeFileSystem({
-    access: async () => undefined,
-    // Endless on purpose: the walk has to stop consuming the stream itself
-    // instead of waiting for the directory listing to be materialized.
-    openDirectory: async function* (directoryPath) {
-      if (directoryPath !== projectRoot) {
-        return;
-      }
-      for (let index = 0; ; index += 1) {
-        streamedEntries += 1;
-        yield createDirectoryEntry(`file-${index}.txt`, false);
-      }
-    },
-    lstat: async () => createStats(false, 0o644),
-  });
-  const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
-
-  await assert.rejects(
-    service.listProjectFiles('project-1'),
-    (error: unknown) => error instanceof AppError
-      && error.code === 'FILE_TREE_TOO_LARGE'
-      && error.statusCode === 413,
-  );
-  // The budget plus the single entry that proves it was exceeded.
-  assert.equal(streamedEntries, 10_001);
-});
-
-test('listProjectFiles shares the entry limit across nested directories', async () => {
-  const projectRoot = path.resolve('file-tree-test-project');
-  const firstDirectory = path.join(projectRoot, 'first');
-  const secondDirectory = path.join(projectRoot, 'second');
-  const directoryPaths = new Set([firstDirectory, secondDirectory]);
+  const levelOne = path.join(projectRoot, 'one');
+  const levelTwo = path.join(levelOne, 'two');
+  const readDirectories: string[] = [];
   const fileSystem = createFakeFileSystem({
     access: async () => undefined,
     openDirectory: createDirectoryReader((directoryPath) => {
-      if (directoryPath === projectRoot) {
-        return [
-          createDirectoryEntry('first', true),
-          createDirectoryEntry('second', true),
-        ];
-      }
-      if (directoryPaths.has(directoryPath)) {
-        return Array.from(
-          { length: 5_000 },
-          (_, index) => createDirectoryEntry(`${path.basename(directoryPath)}-${index}.txt`, false),
-        );
-      }
+      readDirectories.push(directoryPath);
+      if (directoryPath === projectRoot) return [createDirectoryEntry('one', true)];
+      if (directoryPath === levelOne) return [createDirectoryEntry('two', true)];
+      if (directoryPath === levelTwo) return [createDirectoryEntry('three.txt', false)];
       return [];
     }),
-    lstat: async (candidatePath) => createStats(directoryPaths.has(candidatePath), 0o644),
+    lstat: async (candidatePath) => createStats(candidatePath !== path.join(levelTwo, 'three.txt'), 0o755),
   });
   const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
 
-  await assert.rejects(
-    service.listProjectFiles('project-1'),
-    (error: unknown) => error instanceof AppError
-      && error.code === 'FILE_TREE_TOO_LARGE'
-      && error.statusCode === 413,
-  );
+  const tree = await service.listProjectFiles('project-1', { respectGitignore: false, depth: 2 });
+
+  assert.deepEqual(tree[0].children?.map((node) => node.name), ['two']);
+  // Below the requested depth a directory is listed without contents, not as empty.
+  assert.equal(tree[0].children?.[0].children, undefined);
+  assert.deepEqual(readDirectories, [projectRoot, levelOne]);
 });
 
 test('readTextFile rejects traversal before invoking the filesystem adapter', async () => {
@@ -469,6 +405,7 @@ function createRealFileSystemService(
     },
     resolveMimeType: () => 'text/plain',
     fileSystemConcurrency: 4,
+    fileIndex: unusedFileIndex,
     logger: { error: () => undefined },
   });
 }
@@ -675,7 +612,7 @@ function assertFileTreeError(code: string, statusCode = 403) {
 
 test('listProjectFiles shows each folder of a multi-folder project as a top-level node', async () => {
   await withMultiFolderProject(async ({ primary, shared, otherShared, nested, missing, service }) => {
-    const tree = await service.listProjectFiles('project-1', { respectGitignore: false });
+    const tree = await service.listProjectFiles('project-1', { respectGitignore: false, depth: 10 });
 
     assert.deepEqual(
       tree.map((node) => ({ name: node.name, path: node.path, isProjectRoot: node.isProjectRoot })),
@@ -704,10 +641,35 @@ test('listProjectFiles shows each folder of a multi-folder project as a top-leve
 
 test('listProjectFiles applies each folder its own gitignore', async () => {
   await withMultiFolderProject(async ({ service }) => {
-    const tree = await service.listProjectFiles('project-1', { respectGitignore: true });
+    const tree = await service.listProjectFiles('project-1', { respectGitignore: true, depth: 10 });
 
     assert.deepEqual(tree[0].children?.map((node) => node.name), ['src', '.gitignore']);
     assert.deepEqual(tree[1].children?.map((node) => node.name), ['shared.txt']);
+  });
+});
+
+test('listDirectoryChildren lists each requested directory with its own folder rules', async () => {
+  await withMultiFolderProject(async ({ primary, shared, nested, service }) => {
+    const packages = path.join(primary, 'Packages');
+    const listings = await service.listDirectoryChildren('project-1', [path.join(primary, 'src'), packages, shared, nested], {
+      respectGitignore: false,
+      depth: 1,
+    });
+
+    assert.deepEqual(listings[path.join(primary, 'src')].map((node) => node.name), ['index.ts']);
+    // The nested project folder stays out of the folder it sits in.
+    assert.deepEqual(listings[packages].map((node) => node.name), ['loose.txt']);
+    assert.deepEqual(listings[shared].map((node) => node.name), ['shared.txt']);
+    assert.deepEqual(listings[nested].map((node) => node.name), ['nested.txt']);
+  });
+});
+
+test('listDirectoryChildren refuses a directory outside the project folders', async () => {
+  await withMultiFolderProject(async ({ outside, service }) => {
+    await assert.rejects(
+      service.listDirectoryChildren('project-1', [path.dirname(outside)], { respectGitignore: false, depth: 1 }),
+      assertFileTreeError('PATH_OUTSIDE_PROJECT'),
+    );
   });
 });
 
