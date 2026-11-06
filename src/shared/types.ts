@@ -1046,15 +1046,25 @@ export type FileTreeNode = {
   size?: number;
   modified?: string;
   permissionsRwx?: string;
+  // Absent on a directory whose contents have not been loaded yet.
   children?: FileTreeNode[];
   // Set on the top-level node of each folder of a multi-folder project; such a
   // node can receive new files and uploads but is never renamed or deleted.
   isProjectRoot?: boolean;
   // Set on a top-level folder node whose folder no longer exists on disk.
   isUnavailable?: boolean;
-  // Set on a top-level folder node that alone exceeds the server's entry limit; its children are empty.
-  isTooLarge?: boolean;
   [key: string]: unknown;
+};
+
+/** One match of the server's project file search; `relativePath` is relative to `rootPath` and uses `/`. */
+export type FileSearchResult = {
+  name: string;
+  path: string;
+  relativePath: string;
+  type: FileTreeItemType;
+  rootPath: string;
+  // Position of the project folder that holds the entry; 0 is the primary folder.
+  rootIndex: number;
 };
 
 /** The image the file tree asked to preview, carrying the path plus the DB `projectId` the image viewer needs to build its raw content URL. */

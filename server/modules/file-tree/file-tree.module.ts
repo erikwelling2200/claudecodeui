@@ -6,6 +6,8 @@ import mime from 'mime-types';
 import multer from 'multer';
 
 import { projectsDb } from '@/modules/database/index.js';
+import { createFileSearchIndex } from '@/modules/file-tree/file-search-index.js';
+import { listFilesWithRipgrep, watchFolderRecursively } from '@/modules/file-tree/file-search-index.adapters.js';
 import { createFileTreeRouter } from '@/modules/file-tree/file-tree.routes.js';
 import { createFileTreeService } from '@/modules/file-tree/file-tree.service.js';
 import type {
@@ -36,8 +38,7 @@ const fileTreeFileSystem: FileTreeFileSystem = {
   access: (candidatePath) => fsPromises.access(candidatePath),
   stat: (candidatePath) => fsPromises.stat(candidatePath),
   lstat: (candidatePath) => fsPromises.lstat(candidatePath),
-  // `opendir` streams entries in batches and the handle is closed by the
-  // iterator protocol, including when the caller stops early at the entry cap.
+  // `opendir` streams entries in batches; the iterator protocol closes the handle.
   openDirectory: async function* (directoryPath) {
     yield* await fsPromises.opendir(directoryPath);
   },
@@ -80,12 +81,20 @@ const fileTreeLogger: FileTreeLogger = {
   error: (message, error) => console.error(message, error),
 };
 
+const fileSearchIndex = createFileSearchIndex({
+  listFiles: listFilesWithRipgrep,
+  watchFolder: watchFolderRecursively,
+  readTextFile: (filePath) => fsPromises.readFile(filePath, 'utf8'),
+  logger: fileTreeLogger,
+});
+
 const fileTreeServices = createFileTreeService({
   fileSystem: fileTreeFileSystem,
   projects: fileTreeProjects,
   workspace: fileTreeWorkspace,
   resolveMimeType: (filePath) => mime.lookup(filePath) || 'application/octet-stream',
   fileSystemConcurrency: readFileSystemConcurrency(),
+  fileIndex: fileSearchIndex,
   logger: fileTreeLogger,
 });
 

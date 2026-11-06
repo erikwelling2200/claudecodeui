@@ -41,13 +41,14 @@ const COMMON_WORKSPACE_DIRECTORY_NAMES = [
   'workspace',
 ];
 
-// File Tree consumes this guard when recursively listing a project so a very
-// broad workspace (for example, a user's home directory) cannot exhaust the
-// server heap before the browser has a chance to switch to a narrower project.
-const MAXIMUM_FILE_TREE_ENTRIES = 10_000;
-// Each folder of a multi-folder project keeps the per-folder limit above; this
-// caps what all folders together may add to one listing.
-const MAXIMUM_MULTI_FOLDER_FILE_TREE_ENTRIES = 50_000;
+// The tree is listed a few levels at a time as the browser expands it, so a
+// request never needs more than this; it keeps one call from walking a disk.
+const MAXIMUM_LISTING_DEPTH = 10;
+
+function clampListingDepth(depth: number | undefined): number {
+  if (depth === undefined || !Number.isFinite(depth)) return 1;
+  return Math.min(MAXIMUM_LISTING_DEPTH, Math.max(1, Math.floor(depth)));
+}
 
 type FileTreeEntryFilter = (entryPath: string, isDirectory: boolean) => boolean;
 
@@ -285,23 +286,34 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
   }
 
   /**
-   * One top-level node per project folder, primary first. Each folder has the
-   * single-folder entry limit, drawn from a total for the whole listing; a
-   * folder over its limit is listed empty with `isTooLarge`. A directory that is
-   * itself another project folder is left out of the subtree it sits in, so a
-   * nested folder shows only as its own node.
+   * The entry filter for directories inside `folderPath`: its `.gitignore` when
+   * asked for (otherwise the conventional build directories), and in a
+   * multi-folder project no directory that is itself another project folder,
+   * so a nested folder shows only as its own top-level node.
    */
+  async function createProjectFolderEntryFilter(
+    folders: ProjectFolders,
+    folderPath: string,
+    respectGitignore: boolean,
+  ): Promise<FileTreeEntryFilter> {
+    const baseFilter = await createFolderEntryFilter(folderPath, respectGitignore) ?? includeEntryByFallbackDirectoryNames;
+    if (folders.all.length < 2) return baseFilter;
+
+    const folderKeys = new Set(folders.all.map(getPathComparisonKey));
+    return (entryPath, isDirectory) => (
+      !(isDirectory && folderKeys.has(getPathComparisonKey(entryPath))) && baseFilter(entryPath, isDirectory)
+    );
+  }
+
+  /** One top-level node per project folder, primary first, each listed `depth` levels deep. */
   async function listMultiFolderProjectFiles(
     folders: ProjectFolders,
     respectGitignore: boolean,
+    depth: number,
   ): Promise<FileTreeNode[]> {
-    let remainingTotalEntries = MAXIMUM_MULTI_FOLDER_FILE_TREE_ENTRIES;
-    const folderKeys = new Set(folders.all.map(getPathComparisonKey));
     const rootNames = createProjectRootNames(folders.all);
-    const rootNodes: FileTreeNode[] = [];
 
-    // Sequential so the primary folder is charged against the budget first.
-    for (const [index, folderPath] of folders.all.entries()) {
+    return Promise.all(folders.all.map(async (folderPath, index) => {
       const rootNode: FileTreeNode = {
         name: rootNames[index],
         path: folderPath,
@@ -313,81 +325,53 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
         isProjectRoot: true,
         children: [],
       };
-      rootNodes.push(rootNode);
 
       try {
         await fileSystem.access(folderPath);
       } catch {
         rootNode.isUnavailable = true;
-        continue;
+        return rootNode;
       }
 
       await applyEntryMetadata(rootNode);
-      const baseFilter = await createFolderEntryFilter(folderPath, respectGitignore)
-        ?? includeEntryByFallbackDirectoryNames;
-      const includeEntry: FileTreeEntryFilter = (entryPath, isDirectory) => (
-        !(isDirectory && folderKeys.has(getPathComparisonKey(entryPath))) && baseFilter(entryPath, isDirectory)
-      );
-      // A fresh counter per folder: sibling walks of a folder that overflowed keep
-      // running after the rejection and may only drain that folder's own counter.
-      const folderBudget = Math.min(MAXIMUM_FILE_TREE_ENTRIES, remainingTotalEntries);
-      const remainingEntries = { value: folderBudget };
-      try {
-        rootNode.children = await buildFileTree(folderPath, 10, 0, includeEntry, remainingEntries);
-        remainingTotalEntries -= folderBudget - remainingEntries.value;
-      } catch (error) {
-        if (!(error instanceof AppError) || error.code !== 'FILE_TREE_TOO_LARGE') {
-          throw error;
-        }
-        rootNode.isTooLarge = true;
-      }
-    }
-
-    return rootNodes;
+      const includeEntry = await createProjectFolderEntryFilter(folders, folderPath, respectGitignore);
+      rootNode.children = await buildFileTree(folderPath, depth - 1, 0, includeEntry);
+      return rootNode;
+    }));
   }
 
-  /**
-   * Streams one directory and keeps only the entries the tree will show.
-   *
-   * Entries are filtered and charged against the shared budget one at a time,
-   * so a pathologically large directory stops the walk at the cap instead of
-   * being read into memory in full first.
-   */
+  /** The deepest project folder that is or contains `targetPath`. */
+  function findOwningFolder(folders: ProjectFolders, targetPath: string): string {
+    let owner = folders.primary;
+    let ownerLength = -1;
+    for (const folder of folders.all) {
+      const contains = isSameFolderPath(folder, targetPath) || isPathInsideFolder(folder, targetPath);
+      if (contains && folder.length > ownerLength) {
+        owner = folder;
+        ownerLength = folder.length;
+      }
+    }
+    return owner;
+  }
+
+  /** Reads one directory and keeps only the entries the tree will show. */
   async function collectVisibleEntries(
     directoryPath: string,
     includeEntry: FileTreeEntryFilter,
-    remainingEntries: { value: number },
   ): Promise<FileTreeDirectoryEntry[]> {
     const visibleEntries: FileTreeDirectoryEntry[] = [];
 
     await acquire();
     try {
       for await (const entry of fileSystem.openDirectory(directoryPath)) {
-        const isDirectory = entry.isDirectory();
-        if (!includeEntry(path.join(directoryPath, entry.name), isDirectory)) {
-          continue;
+        if (includeEntry(path.join(directoryPath, entry.name), entry.isDirectory())) {
+          visibleEntries.push(entry);
         }
-
-        // Charged after visibility filtering so ignored entries never consume
-        // the budget. Every recursive branch shares one counter, so the cap
-        // applies to the whole tree rather than per directory.
-        if (remainingEntries.value <= 0) {
-          throw createFileTreeError(
-            `Project file tree exceeds the ${MAXIMUM_FILE_TREE_ENTRIES.toLocaleString()} entry limit. Choose a narrower project directory or add ignore rules.`,
-            413,
-            'FILE_TREE_TOO_LARGE',
-          );
-        }
-        remainingEntries.value -= 1;
-        visibleEntries.push(entry);
       }
     } catch (error) {
-      // The entry cap is a caller-visible outcome, not an unreadable directory.
-      if (error instanceof AppError) {
-        throw error;
-      }
       const errorCode = readErrorCode(error);
-      if (errorCode !== 'EACCES' && errorCode !== 'EPERM') {
+      // ENOENT: the browser asked for a directory deleted since it listed the parent.
+      if (errorCode !== 'EACCES' && errorCode !== 'EPERM' && errorCode !== 'ENOENT') {
         dependencies.logger.error(`Error reading directory "${directoryPath}"`, error);
       }
       return [];
@@ -403,9 +387,8 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     maximumDepth: number,
     currentDepth = 0,
     includeEntry: FileTreeEntryFilter = includeEntryByFallbackDirectoryNames,
-    remainingEntries = { value: MAXIMUM_FILE_TREE_ENTRIES },
   ): Promise<FileTreeNode[]> {
-    const visibleEntries = await collectVisibleEntries(directoryPath, includeEntry, remainingEntries);
+    const visibleEntries = await collectVisibleEntries(directoryPath, includeEntry);
 
     const items = await Promise.all(visibleEntries.map(async (entry): Promise<FileTreeNode> => {
       const itemPath = path.join(directoryPath, entry.name);
@@ -428,13 +411,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       const isForbiddenSystemDir = FORBIDDEN_WORKSPACE_PATHS.includes(normalizeProjectPath(itemPath));
 
       if (entry.isDirectory() && currentDepth < maximumDepth && !isForbiddenSystemDir) {
-        item.children = await buildFileTree(
-          itemPath,
-          maximumDepth,
-          currentDepth + 1,
-          includeEntry,
-          remainingEntries,
-        );
+        item.children = await buildFileTree(itemPath, maximumDepth, currentDepth + 1, includeEntry);
       }
 
       return item;
@@ -641,8 +618,11 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     async listProjectFiles(projectId, options) {
       const folders = await resolveProjectFolders(projectId);
       const respectGitignore = options?.respectGitignore === true;
+      const depth = clampListingDepth(options?.depth);
+      // Opening the tree is the usual prelude to a search, so the index starts building now.
+      dependencies.fileIndex.warm(folders.all);
       if (folders.all.length > 1) {
-        return listMultiFolderProjectFiles(folders, respectGitignore);
+        return listMultiFolderProjectFiles(folders, respectGitignore, depth);
       }
 
       const projectRoot = folders.primary;
@@ -652,8 +632,31 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
         throw createFileTreeError(`Project path not found: ${projectRoot}`, 404, 'PROJECT_PATH_NOT_FOUND');
       }
 
-      const includeEntry = await createFolderEntryFilter(projectRoot, respectGitignore);
-      return buildFileTree(projectRoot, 10, 0, includeEntry);
+      const includeEntry = await createProjectFolderEntryFilter(folders, projectRoot, respectGitignore);
+      return buildFileTree(projectRoot, depth - 1, 0, includeEntry);
+    },
+
+    async listDirectoryChildren(projectId, paths, options) {
+      const folders = await resolveProjectFolders(projectId);
+      const depth = clampListingDepth(options.depth);
+      // One filter per project folder, shared by every requested directory inside it.
+      const filters = new Map<string, Promise<FileTreeEntryFilter>>();
+      const listings = await Promise.all(paths.map(async (requestedPath) => {
+        const directoryPath = resolvePathInsideProjectFolders(folders, requestedPath, { allowFolderRoot: true });
+        const folderPath = findOwningFolder(folders, directoryPath);
+        let filter = filters.get(folderPath);
+        if (!filter) {
+          filter = createProjectFolderEntryFilter(folders, folderPath, options.respectGitignore);
+          filters.set(folderPath, filter);
+        }
+        return [requestedPath, await buildFileTree(directoryPath, depth - 1, 0, await filter)] as const;
+      }));
+      return Object.fromEntries(listings);
+    },
+
+    async searchProjectFiles(projectId, query, options) {
+      const folders = await resolveProjectFolders(projectId);
+      return dependencies.fileIndex.search(folders.all, query, options);
     },
 
     async createEntry(input) {

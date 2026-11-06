@@ -33,8 +33,16 @@ function readRequiredString(value: unknown, fieldName: string, message?: string)
   return value;
 }
 
+const MAXIMUM_SEARCH_RESULTS = 1000;
+
 function readOptionalString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+// Accepts a JSON number or a query-string digit run; anything else is absent.
+function readOptionalInteger(value: unknown): number | undefined {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number.parseInt(value, 10) : Number.NaN;
+  return Number.isFinite(parsed) ? Math.floor(parsed) : undefined;
 }
 
 function readProjectId(request: Request): string {
@@ -164,6 +172,30 @@ export function createFileTreeRouter(
   router.get('/projects/:projectId/files', createRouteHandler(async (request, response) => {
     response.json(await services.listProjectFiles(readProjectId(request), {
       respectGitignore: request.query.respectGitignore === 'true',
+      depth: readOptionalInteger(request.query.depth),
+    }));
+  }, logger));
+
+  router.post('/projects/:projectId/files/children', createRouteHandler(async (request, response) => {
+    const body = readBody(request);
+    if (!Array.isArray(body.paths) || body.paths.some((value) => typeof value !== 'string' || !value)) {
+      throw new AppError('paths must be a list of directory paths', {
+        code: 'INVALID_DIRECTORY_PATHS',
+        statusCode: 400,
+      });
+    }
+    response.json(await services.listDirectoryChildren(readProjectId(request), body.paths as string[], {
+      respectGitignore: body.respectGitignore === true,
+      depth: readOptionalInteger(body.depth) ?? 1,
+    }));
+  }, logger));
+
+  router.get('/projects/:projectId/files/search', createRouteHandler(async (request, response) => {
+    const query = typeof request.query.q === 'string' ? request.query.q : '';
+    const limit = Math.min(MAXIMUM_SEARCH_RESULTS, Math.max(1, readOptionalInteger(request.query.limit) ?? 100));
+    response.json(await services.searchProjectFiles(readProjectId(request), query, {
+      limit,
+      type: request.query.type === 'file' ? 'file' : 'any',
     }));
   }, logger));
 
