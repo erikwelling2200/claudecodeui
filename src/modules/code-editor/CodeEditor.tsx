@@ -15,6 +15,7 @@ import { createMinimapExtension, createScrollToFirstChunkExtension, getLanguageE
 import { createCsharpSemanticExtension } from '@/modules/code-editor/utils/csharpSemanticLayer';
 import { getEditorStyles } from '@/modules/code-editor/utils/editorStyles';
 import { createEditorToolbarPanelExtension } from '@/modules/code-editor/utils/editorToolbarPanel';
+import { isCsvFileName } from '@/modules/code-editor/utils/csvDocument';
 import CodeEditorFooter from '@/modules/code-editor/CodeEditorFooter';
 import CodeEditorHeader from '@/modules/code-editor/CodeEditorHeader';
 import CodeEditorLoadingState from '@/modules/code-editor/CodeEditorLoadingState';
@@ -70,6 +71,9 @@ export default function CodeEditor({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showDiff, setShowDiff] = useState(Boolean(file.diffInfo));
   const [markdownPreview, setMarkdownPreview] = useState(false);
+  const isCsvFile = isCsvFileName(file.name);
+  // CSV opens as a table, except when it was opened to show a diff, which only the text view can draw.
+  const [csvTableView, setCsvTableView] = useState(() => isCsvFile && !file.diffInfo);
 
   // The code editor follows the app-wide theme; it has no theme of its own.
   const { isDarkMode } = useTheme();
@@ -350,10 +354,13 @@ export default function CodeEditor({
             isMarkdownFile={isMarkdownFile}
             isHtmlPreviewFile={isHtmlPreviewFile}
             markdownPreview={markdownPreview}
+            isCsvFile={isCsvFile}
+            csvTableView={csvTableView}
             saving={saving}
             saveSuccess={saveSuccess}
             hasUnsavedChanges={hasUnsavedChanges}
             onToggleMarkdownPreview={() => setMarkdownPreview((previous) => !previous)}
+            onToggleCsvTableView={() => setCsvTableView((previous) => !previous)}
             onOpenHtmlPreview={openHtmlPreview}
             onOpenSettings={() => paletteOps.openSettings('appearance')}
             onDownload={handleDownload}
@@ -367,6 +374,8 @@ export default function CodeEditor({
               editMarkdown: t('actions.editMarkdown'),
               previewMarkdown: t('actions.previewMarkdown'),
               previewHtml: t('actions.previewHtml', 'Open HTML preview in new tab'),
+              showCsvTable: t('actions.showCsvTable', 'Show as table'),
+              showCsvText: t('actions.showCsvText', 'Show as text'),
               settings: t('toolbar.settings'),
               download: t('actions.download'),
               save: t('actions.save'),
@@ -391,6 +400,8 @@ export default function CodeEditor({
               onChange={setContent}
               markdownPreview={markdownPreview}
               isMarkdownFile={isMarkdownFile}
+              csvTableView={csvTableView && isCsvFile}
+              fileName={file.name}
               isDarkMode={isDarkMode}
               fontSize={fontSize}
               showLineNumbers={showLineNumbers}
