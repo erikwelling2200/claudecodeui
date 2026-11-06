@@ -20,6 +20,8 @@ function createFakeServices(overrides: Partial<FileTreeServices> = {}): FileTree
     openFile: unexpectedOperation,
     saveTextFile: unexpectedOperation,
     listProjectFiles: unexpectedOperation,
+    listDirectoryChildren: unexpectedOperation,
+    searchProjectFiles: unexpectedOperation,
     createEntry: unexpectedOperation,
     renameEntry: unexpectedOperation,
     deleteEntry: unexpectedOperation,
@@ -72,10 +74,10 @@ test('project files route uses the File Tree API namespace and forwards the proj
     assert.deepEqual(await response.json(), []);
   });
 
-  assert.deepEqual(inputs, [['project-1', { respectGitignore: false }]]);
+  assert.deepEqual(inputs, [['project-1', { respectGitignore: false, depth: undefined }]]);
 });
 
-test('project files route requests gitignore filtering when explicitly enabled', async () => {
+test('project files route requests gitignore filtering and a depth when given', async () => {
   const inputs: Parameters<FileTreeServices['listProjectFiles']>[] = [];
   const services = createFakeServices({
     listProjectFiles: async (...input) => {
@@ -86,13 +88,66 @@ test('project files route requests gitignore filtering when explicitly enabled',
 
   await withFileTreeServer(services, async (baseUrl) => {
     const response = await fetch(
-      `${baseUrl}/api/file-tree/projects/project-1/files?respectGitignore=true`,
+      `${baseUrl}/api/file-tree/projects/project-1/files?respectGitignore=true&depth=2`,
     );
 
     assert.equal(response.status, 200);
   });
 
-  assert.deepEqual(inputs, [['project-1', { respectGitignore: true }]]);
+  assert.deepEqual(inputs, [['project-1', { respectGitignore: true, depth: 2 }]]);
+});
+
+test('children route forwards the directory paths and depth', async () => {
+  const inputs: Parameters<FileTreeServices['listDirectoryChildren']>[] = [];
+  const services = createFakeServices({
+    listDirectoryChildren: async (...input) => {
+      inputs.push(input);
+      return { '/project/src': [] };
+    },
+  });
+
+  await withFileTreeServer(services, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/children`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: ['/project/src'], depth: 2, respectGitignore: true }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { '/project/src': [] });
+  });
+
+  assert.deepEqual(inputs, [['project-1', ['/project/src'], { respectGitignore: true, depth: 2 }]]);
+});
+
+test('children route rejects a request without directory paths', async () => {
+  await withFileTreeServer(createFakeServices(), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/children`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: 'src' }),
+    });
+
+    assert.equal(response.status, 400);
+  });
+});
+
+test('search route forwards the query and caps the result limit', async () => {
+  const inputs: Parameters<FileTreeServices['searchProjectFiles']>[] = [];
+  const services = createFakeServices({
+    searchProjectFiles: async (...input) => {
+      inputs.push(input);
+      return { results: [], truncated: false };
+    },
+  });
+
+  await withFileTreeServer(services, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/search?q=main&limit=99999&type=file`);
+
+    assert.equal(response.status, 200);
+  });
+
+  assert.deepEqual(inputs, [['project-1', 'main', { limit: 1000, type: 'file' }]]);
 });
 
 test('create route parses the transport payload before invoking the service', async () => {

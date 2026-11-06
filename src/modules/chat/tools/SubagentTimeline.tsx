@@ -80,6 +80,7 @@ export const SubagentTimeline = memo(({ activity, activityCount, onFileOpen, cre
                 toolInput={entry.toolInput}
                 toolResult={entry.toolResult}
                 toolId={entry.toolId}
+                startedAt={entry.timestamp}
                 mode="input"
                 onFileOpen={onFileOpen}
                 createDiff={createDiff}

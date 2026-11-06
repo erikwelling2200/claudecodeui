@@ -151,6 +151,18 @@ type LiveProcess = {
    * the client, which the stop already told.
    */
   ensureStopped(interrupted: boolean): void;
+  /**
+   * When the turn in flight is one the CLI started on its own (to report
+   * background work that finished after the last `result`), the time it
+   * started; null otherwise. No chat run exists for such a turn.
+   */
+  selfStartedTurnSince(): number | null;
+  /**
+   * Interrupts a turn the CLI started on its own. The process and any
+   * background work it still runs stay up. False when no such turn is in
+   * flight, or the CLI did not acknowledge the interrupt.
+   */
+  interruptSelfStartedTurn(): Promise<boolean>;
 };
 
 type ToolApprovalDecision = AnyRecord | null;
@@ -1384,6 +1396,9 @@ async function queryClaudeSDK(
   // True while the turn that ended left background work going, so a later
   // `result` can be recognised as that work reporting back.
   let heldForBackgroundWork = false;
+  // When the CLI started a turn of its own between turns (a background task
+  // reporting back); cleared by that turn's `result` or a delivered turn.
+  let selfStartedTurnSince: number | null = null;
   // Set once a turn publishes a budget read from an assistant message, so the
   // turn-ending `result` is only mined for usage when nothing better arrived.
   let assistantBudgetSent = false;
@@ -1449,6 +1464,7 @@ async function queryClaudeSDK(
     backgroundWorkPending = false;
     sawTaskEventThisTurn = false;
     betweenTurns = true;
+    selfStartedTurnSince = null;
   };
 
   // Ends a delivered turn's run promise, and an interrupt's wait for the
@@ -1950,6 +1966,8 @@ async function queryClaudeSDK(
         // The turn takes the process over until its own `result`.
         settleTurn();
         betweenTurns = false;
+        // The turn's `result` may be the self-started one's; this turn owns it now.
+        selfStartedTurnSince = null;
         heldForBackgroundWork = false;
         backgroundWorkPending = false;
         sawTaskEventThisTurn = false;
@@ -2072,6 +2090,15 @@ async function queryClaudeSDK(
         const onTurnEnd = () => clearTimeout(timer);
         turnEndListeners.add(onTurnEnd);
       },
+
+      selfStartedTurnSince: () => selfStartedTurnSince,
+
+      interruptSelfStartedTurn: async () => {
+        if (selfStartedTurnSince === null || promptReleased) {
+          return false;
+        }
+        return requestInterrupt(instance, sessionKey());
+      },
     };
 
     // canUseTool reads the mode and allow list from sdkOptions, so they change
@@ -2182,6 +2209,17 @@ async function queryClaudeSDK(
           }
         }
         continue;
+      }
+
+      // Main-thread output while no turn of ours is in flight is the CLI working
+      // on a turn it started itself; a subagent's output carries its parent tool.
+      if (
+        betweenTurns
+        && selfStartedTurnSince === null
+        && (message.type === 'assistant' || message.type === 'stream_event')
+        && !message.parent_tool_use_id
+      ) {
+        selfStartedTurnSince = Date.now();
       }
 
       // Transform and normalize message via adapter
@@ -2461,6 +2499,23 @@ function listClaudeSDKBackgroundWork(): Array<{
     const liveProcess = getSession(entry.sessionId)?.liveProcess;
     return liveProcess?.canTakeTurn() ? { ...entry, liveTurn: liveProcess.terms } : entry;
   });
+}
+
+/** Sessions whose process is in a turn the CLI started itself, with when it started; see LiveProcess.selfStartedTurnSince. */
+function listClaudeSDKSelfStartedTurns(): Array<{ sessionId: string; startedAt: number }> {
+  const turns: Array<{ sessionId: string; startedAt: number }> = [];
+  for (const [sessionId, session] of activeSessions) {
+    const startedAt = session.liveProcess?.selfStartedTurnSince();
+    if (typeof startedAt === 'number') {
+      turns.push({ sessionId, startedAt });
+    }
+  }
+  return turns;
+}
+
+/** Interrupts the session's turn the CLI started itself, as LiveProcess.interruptSelfStartedTurn. */
+async function interruptClaudeSDKSelfStartedTurn(sessionId: string): Promise<boolean> {
+  return Boolean(await getSession(sessionId)?.liveProcess?.interruptSelfStartedTurn());
 }
 
 /**
@@ -2756,6 +2811,8 @@ export const claudeRuntime = {
     listPending: getPendingApprovalsForSession,
   },
   listBackgroundWork: listClaudeSDKBackgroundWork,
+  listSelfStartedTurns: listClaudeSDKSelfStartedTurns,
+  interruptSelfStartedTurn: interruptClaudeSDKSelfStartedTurn,
   stopBackgroundTask: stopClaudeSDKTask,
   acceptsLiveTurn: acceptsClaudeSDKLiveTurn,
   setPermissionMode: setClaudeSDKPermissionMode,
@@ -2774,6 +2831,8 @@ export {
   queryClaudeSDK,
   abortClaudeSDKSession,
   listClaudeSDKBackgroundWork,
+  listClaudeSDKSelfStartedTurns,
+  interruptClaudeSDKSelfStartedTurn,
   stopClaudeSDKTask,
   acceptsClaudeSDKLiveTurn,
   setClaudeSDKPermissionMode,

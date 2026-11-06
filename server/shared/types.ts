@@ -392,6 +392,8 @@ export type NormalizedMessage = {
     content?: string;
     isError?: boolean;
     toolUseResult?: unknown;
+    /** When the result was recorded, so the transcript can show how long the call took. */
+    timestamp?: string;
   };
   isError?: boolean;
   text?: string;
@@ -634,7 +636,7 @@ export type SubagentActivity = {
   toolId?: string;
   toolName?: string;
   toolInput?: unknown;
-  toolResult?: { content?: string; isError?: boolean } | null;
+  toolResult?: { content?: string; isError?: boolean; timestamp?: string } | null;
   /** Message body; only set when `kind` is `text` or `thinking`. */
   content?: string;
 };
@@ -1506,8 +1508,7 @@ export type FileTreeNode = {
   isProjectRoot?: true;
   /** A project folder that is missing on disk; its `children` are empty. */
   isUnavailable?: true;
-  /** A project folder over the entry limit by itself; listed with empty `children`. */
-  isTooLarge?: true;
+  /** Absent on a directory whose contents were not listed (below the requested depth). */
   children?: FileTreeNode[];
 };
 
@@ -1548,8 +1549,6 @@ export type FileTreeFileSystem = {
   access(candidatePath: string): Promise<void>;
   stat(candidatePath: string): Promise<FileTreeStats>;
   lstat(candidatePath: string): Promise<FileTreeStats>;
-  // Streamed rather than returned as an array so a directory with millions of
-  // children is abandoned at the entry limit instead of being materialized.
   openDirectory(directoryPath: string): AsyncIterable<FileTreeDirectoryEntry>;
   realpath(candidatePath: string): Promise<string>;
   readTextFile(filePath: string): Promise<string>;
@@ -1615,6 +1614,45 @@ export type FileTreeLogger = {
   error(message: string, error?: unknown): void;
 };
 
+/** One file or directory found by a project file search. */
+export type FileSearchResult = {
+  name: string;
+  /** Absolute, with the platform's separators, like `FileTreeNode.path`. */
+  path: string;
+  /** Relative to `rootPath`, always with `/`. */
+  relativePath: string;
+  type: 'file' | 'directory';
+  /** The project folder the entry belongs to. */
+  rootPath: string;
+  /** Position of `rootPath` among the project's folders; 0 is the primary folder. */
+  rootIndex: number;
+};
+
+/** In-memory file index the File Tree service searches instead of walking the disk. */
+export type FileTreeFileIndex = {
+  /** Starts indexing these folders in the background so a first search does not wait. */
+  warm(folderPaths: string[]): void;
+  /** An empty query matches every entry, in index order. */
+  search(
+    folderPaths: string[],
+    query: string,
+    options: { limit: number; type: 'file' | 'any' },
+  ): Promise<{ results: FileSearchResult[]; truncated: boolean }>;
+};
+
+export type FileTreeFileIndexDependencies = {
+  /** Every non-ignored file under the folder, relative to it, with `/` separators. */
+  listFiles(folderPath: string): Promise<string[]>;
+  /**
+   * Reports each change under the folder with its path relative to the folder
+   * (`null` when the platform does not say which), until the returned function
+   * is called. `onError` means the watcher stopped by itself.
+   */
+  watchFolder(folderPath: string, onChange: (relativePath: string | null) => void, onError: () => void): () => void;
+  readTextFile(filePath: string): Promise<string>;
+  logger: FileTreeLogger;
+};
+
 /**
  * Required production dependencies for the File Tree application service.
  *
@@ -1628,6 +1666,7 @@ export type FileTreeServiceDependencies = {
   workspace: FileTreeWorkspaceGateway;
   resolveMimeType(filePath: string): string;
   fileSystemConcurrency: number;
+  fileIndex: FileTreeFileIndex;
   logger: FileTreeLogger;
 };
 
@@ -1651,10 +1690,25 @@ export type FileTreeServices = {
     path: string;
     message: string;
   }>;
+  /**
+   * The project's top level, `depth` directory levels deep (1 lists only the
+   * entries of each folder). A multi-folder project gets one node per folder.
+   */
   listProjectFiles(
     projectId: string,
-    options?: { respectGitignore: boolean },
+    options?: { respectGitignore: boolean; depth?: number },
   ): Promise<FileTreeNode[]>;
+  /** The contents of each directory in `paths`, `depth` levels deep, keyed by the path as requested. */
+  listDirectoryChildren(
+    projectId: string,
+    paths: string[],
+    options: { respectGitignore: boolean; depth: number },
+  ): Promise<Record<string, FileTreeNode[]>>;
+  searchProjectFiles(
+    projectId: string,
+    query: string,
+    options: { limit: number; type: 'file' | 'any' },
+  ): Promise<{ results: FileSearchResult[]; truncated: boolean }>;
   createEntry(input: {
     projectId: string;
     parentPath: string;

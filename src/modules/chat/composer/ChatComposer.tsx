@@ -55,6 +55,8 @@ type ChatComposerProps = {
   handleGrantToolPermission: (suggestion: { entry: string; toolName: string }) => { success: boolean };
   activity: SessionActivity | null;
   isLoading: boolean;
+  /** False while the turn in flight runs in a CLI process the app does not drive, which nothing here can stop. */
+  canAbortSession: boolean;
   onAbortSession: () => void;
   permissionMode: PermissionMode;
   availablePermissionModes: PermissionMode[];
@@ -140,6 +142,7 @@ export default function ChatComposer({
   handleGrantToolPermission,
   activity,
   isLoading,
+  canAbortSession,
   onAbortSession,
   permissionMode,
   availablePermissionModes,
@@ -573,7 +576,7 @@ export default function ChatComposer({
               }
               disabled={
                 isLoading
-                  ? false
+                  ? !canQueueDraft && !canAbortSession
                   : isRecording
                     ? false
                     : isTranscribing

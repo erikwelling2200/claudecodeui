@@ -15,10 +15,10 @@ import type { Project } from '@/shared/types';
  * from the right one.
  */
 
-const getFiles = vi.fn();
+const searchFiles = vi.fn();
 
 vi.mock('@/shared/api', () => ({
-  api: { getFiles: (...args: unknown[]) => getFiles(...args) },
+  api: { searchFiles: (...args: unknown[]) => searchFiles(...args) },
 }));
 
 const { useFileOpenResolver } = await import('@/modules/project-workspace/hooks/useFileOpenResolver');
@@ -26,19 +26,22 @@ const { useFileOpenResolver } = await import('@/modules/project-workspace/hooks/
 const ROOT = '/home/odoo/workspace/personal';
 const project: Project = { projectId: 'p1', displayName: 'personal', fullPath: ROOT };
 
-const tree = [
-  { type: 'file', name: 'CLAUDE.md', path: `${ROOT}/CLAUDE.md` },
-  {
-    type: 'directory',
-    name: 'src',
-    path: `${ROOT}/src`,
-    children: [{ type: 'file', name: 'foo.ts', path: `${ROOT}/src/foo.ts` }],
-  },
+const projectFiles = [
+  { name: 'CLAUDE.md', path: `${ROOT}/CLAUDE.md` },
+  { name: 'foo.ts', path: `${ROOT}/src/foo.ts` },
 ];
 
+// Answers like the server's index: by name, or by path when the query holds a slash.
+const answerSearch = async (_projectId: string, query: string) => ({
+  ok: true,
+  json: async () => ({
+    results: projectFiles.filter((file) => (query.includes('/') ? file.path : file.name).includes(query)),
+  }),
+});
+
 const setup = () => {
-  getFiles.mockReset();
-  getFiles.mockResolvedValue({ ok: true, json: async () => tree });
+  searchFiles.mockReset();
+  searchFiles.mockImplementation(answerSearch);
   const onFileOpen = vi.fn();
   const { result } = renderHook(() => useFileOpenResolver(project, onFileOpen));
   return { resolve: result.current, onFileOpen };
@@ -49,8 +52,8 @@ test('an absolute path outside the project is passed through untouched', async (
   resolve('/home/odoo/.claude/CLAUDE.md');
   await waitFor(() => assert.equal(onFileOpen.mock.calls.length, 1));
   assert.equal(onFileOpen.mock.calls[0][0], '/home/odoo/.claude/CLAUDE.md');
-  // It does not even need the tree, so no request goes out.
-  assert.equal(getFiles.mock.calls.length, 0);
+  // It does not even need a search, so no request goes out.
+  assert.equal(searchFiles.mock.calls.length, 0);
 });
 
 test('an absolute path inside the project resolves to itself, as before', async () => {

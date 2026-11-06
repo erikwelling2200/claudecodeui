@@ -32,6 +32,8 @@ type ToolRendererProps = {
   rawToolInput?: string;
   /** Lifecycle the provider reported, when it reports one. Overrides the result-based inference. */
   toolStatus?: string;
+  /** When the call was made; the command row times itself from it. */
+  startedAt?: string | number | Date;
 };
 
 // Files the Read tool hands to the model as an image rather than as text.
@@ -92,6 +94,7 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
   showRawParameters = false,
   rawToolInput,
   toolStatus: reportedStatus,
+  startedAt,
 }) => {
   const config = getToolConfig(toolName);
   const displayConfig: any = mode === 'input' ? config.input : config.result;
@@ -148,6 +151,8 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
           output={output}
           isError={Boolean(toolResult?.isError)}
           status={toolStatus !== 'completed' ? toolStatus : undefined}
+          startedAt={startedAt}
+          finishedAt={toolResult?.timestamp}
           // Commands stay collapsed by default — including failures; the status
           // badge marks errors and the output expands via the chevron.
           defaultOpen={false}

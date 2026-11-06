@@ -6,13 +6,13 @@ import { AlertTriangle, Check, X, Loader2, Folder, Upload } from 'lucide-react';
 import { cn } from '@/shared/utils';
 import { ICON_SIZE_CLASS, getFileIconData } from '@/modules/file-tree/utils/fileIcons';
 import { useExpandedDirectories } from '@/modules/file-tree/hooks/useExpandedDirectories';
-import { useFileTreeData } from '@/modules/file-tree/hooks/useFileTreeData';
+import { useDirectoryPrefetch, useFileTreeData } from '@/modules/file-tree/hooks/useFileTreeData';
 import { useFileTreeOperations } from '@/modules/file-tree/hooks/useFileTreeOperations';
 import { useFileTreeSearch } from '@/modules/file-tree/hooks/useFileTreeSearch';
 import { useFileTreeViewMode } from '@/modules/file-tree/hooks/useFileTreeViewMode';
 import { useFileTreeUpload } from '@/modules/file-tree/hooks/useFileTreeUpload';
 import type { DirectoryRevealRequest, FileTreeImageSelection, FileTreeNode,Project } from '@/shared/types';
-import { formatFileSize, formatRelativeTime, isImageFile } from '@/modules/file-tree/utils/fileTreeUtils';
+import { findTreeNode, formatFileSize, formatRelativeTime, isImageFile } from '@/modules/file-tree/utils/fileTreeUtils';
 import { directoryRevealPaths } from '@/modules/file-tree/utils/revealDirectory';
 import { ScrollArea, Input } from '@/shared/ui';
 import FileTreeBody from '@/modules/file-tree/FileTreeBody';
@@ -52,7 +52,7 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
     }
   }, [toast]);
 
-  const { files, loading, error, refreshFiles } = useFileTreeData(selectedProject);
+  const { files, loading, error, refreshFiles, loadDirectories } = useFileTreeData(selectedProject);
   const { viewMode, changeViewMode } = useFileTreeViewMode();
   // Top-level folder nodes of a multi-folder project; they start expanded.
   const projectRootPaths = useMemo(
@@ -60,30 +60,43 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
     [files],
   );
   const { expandedDirs, toggleDirectory, expandDirectories, collapseAll } = useExpandedDirectories(projectRootPaths);
-  const { searchQuery, setSearchQuery, filteredFiles } = useFileTreeSearch({
+  useDirectoryPrefetch(files, expandedDirs, loadDirectories);
+  const { searchQuery, setSearchQuery, filteredFiles, visibleExpandedDirs, toggleVisibleDirectory } = useFileTreeSearch({
+    projectId: selectedProject?.projectId,
     files,
-    expandDirectories,
+    expandedDirs,
+    toggleDirectory,
   });
+
+  // The folder to open: an in-chat reference, or a folder picked from the search results.
+  const [revealRequest, setRevealRequest] = useState<DirectoryRevealRequest | null>(revealDirectory ?? null);
+  useEffect(() => {
+    if (revealDirectory) {
+      setRevealRequest(revealDirectory);
+    }
+  }, [revealDirectory]);
 
   // The reveal request already served, so a later tree refresh does not fold
   // the folders open again over a collapse the user has since made.
   const revealedRef = useRef<DirectoryRevealRequest | null>(null);
 
   // Expand every ancestor between the project root and the requested folder.
-  // A request that arrives before the tree finds nothing to expand and is
-  // retried when `files` lands.
+  // The tree is loaded level by level, so this runs again as each opened
+  // folder's contents arrive, and is done once the deepest folder found is loaded.
   useEffect(() => {
     const projectRoot = selectedProject?.path || selectedProject?.fullPath;
-    if (!revealDirectory || !projectRoot || revealedRef.current === revealDirectory) {
+    if (!revealRequest || !projectRoot || revealedRef.current === revealRequest) {
       return;
     }
-    const paths = directoryRevealPaths(files, projectRoot, revealDirectory.path);
+    const paths = directoryRevealPaths(files, projectRoot, revealRequest.path);
     if (paths.length === 0) {
       return;
     }
-    revealedRef.current = revealDirectory;
     expandDirectories(paths);
-  }, [revealDirectory, selectedProject?.path, selectedProject?.fullPath, expandDirectories, files]);
+    if (findTreeNode(files, paths[paths.length - 1])?.children !== undefined) {
+      revealedRef.current = revealRequest;
+    }
+  }, [revealRequest, selectedProject?.path, selectedProject?.fullPath, expandDirectories, files]);
 
   // File operations
   const operations = useFileTreeOperations({
@@ -148,7 +161,13 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
   const handleItemClick = useCallback(
     (item: FileTreeNode) => {
       if (item.type === 'directory') {
-        toggleDirectory(item.path);
+        // A folder that matched the search by name is opened in the full tree, where its contents are.
+        if (searchQuery.trim() && !item.isProjectRoot && (item.children?.length ?? 0) === 0) {
+          setSearchQuery('');
+          setRevealRequest({ path: item.path });
+          return;
+        }
+        toggleVisibleDirectory(item.path);
         return;
       }
 
@@ -166,7 +185,7 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
 
       onFileOpen?.(item.path);
     },
-    [onFileOpen, selectedProject, toggleDirectory],
+    [onFileOpen, searchQuery, selectedProject, setSearchQuery, toggleVisibleDirectory],
   );
 
   const formatRelativeTimeLabel = useCallback(
@@ -273,7 +292,7 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
           error={error}
           searchQuery={searchQuery}
           viewMode={viewMode}
-          expandedDirs={expandedDirs}
+          expandedDirs={visibleExpandedDirs}
           onItemClick={handleItemClick}
           renderFileIcon={renderFileIcon}
           formatFileSize={formatFileSize}

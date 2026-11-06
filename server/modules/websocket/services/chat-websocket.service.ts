@@ -99,6 +99,8 @@ export type ProviderRuntimeGateway = {
   cancelSteer(provider: LLMProvider, sessionId: string, steerId: string): Promise<boolean>;
   /** Whether a provider runtime still holds background work for the session after its turn ended. */
   hasBackgroundWork(sessionId: string): boolean;
+  /** Interrupts a turn the provider's kept process started on its own; false when none is in flight. */
+  interruptSelfStartedTurn(sessionId: string): Promise<boolean>;
   /** Whether a turn with these options goes into the process the session keeps between turns. */
   acceptsLiveTurn(sessionId: string, options: AnyRecord): boolean;
   /** Lets go of the process a session keeps between turns when no turn is in flight; false when there is none. */
@@ -569,7 +571,10 @@ async function handleChatAbort(
 
   const run = chatRunRegistry.getRun(sessionId);
   if (!run || run.status !== 'running') {
-    sendProtocolError(ws, 'NO_ACTIVE_RUN', `Session "${sessionId}" has no active run.`, sessionId);
+    // A turn the CLI started itself has no run; it ends on its own `result`.
+    if (!await dependencies.runtime.interruptSelfStartedTurn(sessionId)) {
+      sendProtocolError(ws, 'NO_ACTIVE_RUN', `Session "${sessionId}" has no active run.`, sessionId);
+    }
     return;
   }
 
