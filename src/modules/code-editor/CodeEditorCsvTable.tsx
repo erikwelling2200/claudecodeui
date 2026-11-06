@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ClipboardEvent, KeyboardEvent } from 'react';
+import type { ClipboardEvent, KeyboardEvent, ReactNode } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown, BetweenHorizontalEnd, BetweenVerticalEnd, Search, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -51,10 +51,12 @@ type CodeEditorCsvTableProps = {
   onChange: (value: string) => void;
   fileName: string;
   fontSize: number;
+  // The editor's layout buttons (pop out, expand), which CodeMirror's own toolbar shows in the text view.
+  windowControls?: ReactNode;
 };
 
 /** Rendered by CodeEditorSurface inside the code-editor module as the spreadsheet view of a CSV/TSV file; edits write back into the text buffer. */
-export default function CodeEditorCsvTable({ content, onChange, fileName, fontSize }: CodeEditorCsvTableProps) {
+export default function CodeEditorCsvTable({ content, onChange, fileName, fontSize, windowControls = null }: CodeEditorCsvTableProps) {
   const { t } = useTranslation('codeEditor');
 
   // Detected once from the text; the user can override it when a file splits on the wrong character.
@@ -433,6 +435,7 @@ export default function CodeEditorCsvTable({ content, onChange, fileName, fontSi
             <Trash2 className="h-4 w-4 rotate-90" />
           </button>
         </div>
+        {windowControls && <div className="ml-auto flex items-center gap-0.5">{windowControls}</div>}
       </div>
 
       <div
