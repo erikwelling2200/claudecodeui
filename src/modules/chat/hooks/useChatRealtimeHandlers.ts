@@ -208,11 +208,11 @@ export function useChatRealtimeHandlers({
           if (sid) {
             // Surface the failure in the conversation and stop the spinner —
             // the run never started (or was rejected), so no `complete` follows.
-            // A refused stop request is not about the run: the task had
-            // already settled, and idling here would drop a response in
+            // A refused or failed stop request is not about the run, and idling here would drop a response in
             // flight on that session.
             // Nor is a mid-turn message that could not be queued: the turn goes on.
-            if (msg.code !== 'NO_SUCH_TASK' && msg.code !== 'TASK_ID_REQUIRED' && msg.code !== 'QUEUED_MESSAGE_NOT_COMBINABLE') {
+            if (msg.code !== 'NO_SUCH_TASK' && msg.code !== 'TASK_ID_REQUIRED' && msg.code !== 'QUEUED_MESSAGE_NOT_COMBINABLE'
+              && msg.code !== 'TASK_STOP_FAILED') {
               onSessionIdle?.(sid);
             }
             sessionStore.appendRealtime(sid, {
