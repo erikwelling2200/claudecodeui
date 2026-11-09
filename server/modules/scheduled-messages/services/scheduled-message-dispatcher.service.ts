@@ -15,7 +15,12 @@ import { readQueuedChatMessage } from '@/shared/utils.js';
 const POLL_INTERVAL_MS = 30_000;
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let dispatchInFlight = false;
+/**
+ * Sessions whose scheduled sends are still going, from this pass or an
+ * earlier one. Their next due rows stay pending (and keep their banner) until
+ * those sends finish, so they neither overtake nor interrupt them.
+ */
+const sessionsSending = new Set<string>();
 
 function readOptions(raw: string): Record<string, unknown> {
   try {
@@ -70,7 +75,9 @@ async function sendClaimedQueuedMessage(
  */
 function isSessionBusy(candidate: QueuedSessionMessageRecord, runtime: ProviderRuntimeGateway): boolean {
   const { sessionId } = candidate;
-  if (chatRunRegistry.isProcessing(sessionId)) {
+  // sessionsSending too: a scheduled turn can complete before its send settles,
+  // and the session's next due row would then interrupt this queued turn.
+  if (chatRunRegistry.isProcessing(sessionId) || sessionsSending.has(sessionId)) {
     return true;
   }
   if (!runtime.hasBackgroundWork(sessionId)) {
@@ -138,7 +145,7 @@ async function sendClaimedMessage(
 }
 
 /**
- * Sends every message whose time has come.
+ * Sends every message whose time has come and returns how many it handled.
  *
  * Exported so a test can drive one pass without waiting on the timer.
  */
@@ -148,7 +155,7 @@ export async function dispatchDueScheduledMessages(
 ): Promise<number> {
   // Claimed before any of them runs, so a long turn cannot let the next poll
   // pick the same message up again.
-  const due = scheduledMessagesDb.claimDue(now);
+  const due = scheduledMessagesDb.claimDue(now, sessionsSending);
   if (due.length === 0) {
     return 0;
   }
@@ -159,13 +166,55 @@ export async function dispatchDueScheduledMessages(
     announceScheduledMessagesChanged(sessionId);
   }
 
-  // Sequentially: a session can only have one run at a time, and two due
-  // messages for the same session must not race each other into it.
-  for (const row of due) {
-    await sendClaimedMessage(row, runtime);
-  }
+  // Sessions side by side, since a turn can stay open a long time (see
+  // runDispatchPass). A session's rows that were due at `now` go one after
+  // another in this pass, each claimed only when the earlier send ends, so
+  // none is recorded as sent while it still waits and no poll gap opens
+  // between them. A turn the user starts meanwhile is still interrupted, as
+  // any scheduled send interrupts the active run.
+  // shortcut: a session's next row waits for the whole earlier send, background work included (the runtime ends that hold after 30 idle minutes); interrupt instead if timeliness matters more.
+  let sent = 0;
+  await Promise.all(due.map(async (first) => {
+    const sessionId = first.session_id;
+    sessionsSending.add(sessionId);
+    try {
+      let row: ScheduledMessageRow | null = first;
+      while (row) {
+        await sendClaimedMessage(row, runtime);
+        sent += 1;
+        row = scheduledMessagesDb.claimNextDue(sessionId, now);
+        if (row) announceScheduledMessagesChanged(sessionId);
+      }
+    } catch (error) {
+      logPassFailure(error);
+    } finally {
+      sessionsSending.delete(sessionId);
+    }
+  }));
 
-  return due.length;
+  return sent;
+}
+
+function logPassFailure(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error('[ScheduledMessages] Dispatch pass failed', { error: message });
+}
+
+/**
+ * One poll's work. A send waits for its whole turn, and a Claude turn that
+ * leaves background work running (a Monitor, say) stays open until that work
+ * reports back, so passes must not wait on each other: claims are
+ * transactional, and a queued turn skips a session that is still busy.
+ *
+ * Exported so a test can drive overlapping passes.
+ */
+export function runDispatchPass(runtime: ProviderRuntimeGateway): Promise<void> {
+  return Promise.all([
+    // First, so a due send that starts a run at once has registered it before
+    // the queued pass checks whether that session is busy.
+    dispatchDueScheduledMessages(runtime).catch(logPassFailure),
+    dispatchQueuedMessages(runtime).catch(logPassFailure),
+  ]).then(() => undefined);
 }
 
 /**
@@ -181,21 +230,7 @@ export function initializeScheduledMessageDispatcher(runtime: ProviderRuntimeGat
   }
 
   const poll = () => {
-    // A pass that overruns the interval must not be started again underneath
-    // itself; the claim is transactional but the runs are not.
-    if (dispatchInFlight) {
-      return;
-    }
-    dispatchInFlight = true;
-    void dispatchDueScheduledMessages(runtime)
-      .then(() => dispatchQueuedMessages(runtime))
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error('[ScheduledMessages] Dispatch pass failed', { error: message });
-      })
-      .finally(() => {
-        dispatchInFlight = false;
-      });
+    void runDispatchPass(runtime);
   };
 
   pollTimer = setInterval(poll, POLL_INTERVAL_MS);
