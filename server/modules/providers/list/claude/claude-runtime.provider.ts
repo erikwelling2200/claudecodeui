@@ -1611,6 +1611,9 @@ async function queryClaudeSDK(
       const explainToolCall = context.explainToolCall ?? permissionExplainerService.explain;
       void (TOOLS_REQUIRING_INTERACTION.has(toolName) ? Promise.resolve(null) : explainToolCall({ toolName, input })).then((explanation) => {
         if (explanation) {
+          // Kept with the pending approval, so a tab that subscribes later gets it in its replay.
+          const resolver = pendingToolApprovals.get(requestId);
+          if (resolver) resolver._explanation = explanation;
           writer.send(createNormalizedMessage({ kind: 'permission_explanation', requestId, explanation, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
         }
       }).catch((error: unknown) => {
@@ -2780,6 +2783,7 @@ function getPendingApprovalsForSession(sessionId: string) {
         toolName: resolver._toolName || 'UnknownTool',
         input: resolver._input,
         context: resolver._context,
+        explanation: resolver._explanation,
         sessionId,
         receivedAt: resolver._receivedAt || new Date(),
       });
