@@ -4,10 +4,12 @@ import { EditorView } from '@codemirror/view';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { Prec } from '@codemirror/state';
 import type { Extension } from '@codemirror/state';
+import type { ReactNode } from 'react';
 
 import type { CodeEditorGotoTarget } from '@/shared/types';
 
 import MarkdownPreview from '@/modules/code-editor/markdown/MarkdownPreview';
+import CodeEditorCsvTable from '@/modules/code-editor/CodeEditorCsvTable';
 
 // Visual Studio 2022's editor surface, to sit under the Visual Studio syntax colors: a neutral background, an
 // outlined current line and its selection blue. In dark mode One Dark still colors languages without a VS palette.
@@ -40,6 +42,11 @@ type CodeEditorSurfaceProps = {
   onChange: (value: string) => void;
   markdownPreview: boolean;
   isMarkdownFile: boolean;
+  // The CSV/TSV spreadsheet view replaces the text surface while on.
+  csvTableView?: boolean;
+  fileName?: string;
+  // Layout buttons for the CSV table, standing in for the ones in CodeMirror's toolbar panel.
+  csvWindowControls?: ReactNode;
   isDarkMode: boolean;
   fontSize: number;
   showLineNumbers: boolean;
@@ -48,12 +55,15 @@ type CodeEditorSurfaceProps = {
   gotoTarget?: CodeEditorGotoTarget | null;
 };
 
-/** Rendered by CodeEditor inside the code-editor module to show either the CodeMirror editing surface or the markdown preview. */
+/** Rendered by CodeEditor inside the code-editor module to show the CodeMirror editing surface, the markdown preview or the CSV table. */
 export default function CodeEditorSurface({
   content,
   onChange,
   markdownPreview,
   isMarkdownFile,
+  csvTableView = false,
+  fileName = '',
+  csvWindowControls = null,
   isDarkMode,
   fontSize,
   showLineNumbers,
@@ -84,6 +94,10 @@ export default function CodeEditorSurface({
       effects: EditorView.scrollIntoView(position, { y: 'center' }),
     });
   }, [view, gotoTarget, content]);
+
+  if (csvTableView) {
+    return <CodeEditorCsvTable content={content} onChange={onChange} fileName={fileName} fontSize={fontSize} windowControls={csvWindowControls} />;
+  }
 
   if (markdownPreview && isMarkdownFile) {
     return (

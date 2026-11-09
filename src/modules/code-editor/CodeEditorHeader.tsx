@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Code2, Copy, Download, Eye, Maximize2, Minimize2, Save, Settings as SettingsIcon, X } from 'lucide-react';
+import { Check, Code2, Copy, Download, Eye, Maximize2, Minimize2, Save, Settings as SettingsIcon, Table, X } from 'lucide-react';
 
 import { copyTextToClipboard } from '@/shared/utils';
 import type { CodeEditorFile } from '@/shared/types';
@@ -11,10 +11,13 @@ type CodeEditorHeaderProps = {
   isMarkdownFile: boolean;
   isHtmlPreviewFile: boolean;
   markdownPreview: boolean;
+  isCsvFile: boolean;
+  csvTableView: boolean;
   saving: boolean;
   saveSuccess: boolean;
   hasUnsavedChanges: boolean;
   onToggleMarkdownPreview: () => void;
+  onToggleCsvTableView: () => void;
   onOpenHtmlPreview: () => void;
   onOpenSettings: () => void;
   onDownload: () => void;
@@ -28,6 +31,8 @@ type CodeEditorHeaderProps = {
     editMarkdown: string;
     previewMarkdown: string;
     previewHtml: string;
+    showCsvTable: string;
+    showCsvText: string;
     settings: string;
     download: string;
     save: string;
@@ -48,10 +53,13 @@ export default function CodeEditorHeader({
   isMarkdownFile,
   isHtmlPreviewFile,
   markdownPreview,
+  isCsvFile,
+  csvTableView,
   saving,
   saveSuccess,
   hasUnsavedChanges,
   onToggleMarkdownPreview,
+  onToggleCsvTableView,
   onOpenHtmlPreview,
   onOpenSettings,
   onDownload,
@@ -136,6 +144,21 @@ export default function CodeEditorHeader({
             title={markdownPreview ? labels.editMarkdown : labels.previewMarkdown}
           >
             {markdownPreview ? <Code2 className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        )}
+
+        {isCsvFile && (
+          <button
+            type="button"
+            onClick={onToggleCsvTableView}
+            className={`flex items-center justify-center rounded-md p-1.5 transition-colors ${
+              csvTableView
+                ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white'
+            }`}
+            title={csvTableView ? labels.showCsvText : labels.showCsvTable}
+          >
+            {csvTableView ? <Code2 className="h-4 w-4" /> : <Table className="h-4 w-4" />}
           </button>
         )}
 

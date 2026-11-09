@@ -4,6 +4,7 @@ import type { Extension } from '@codemirror/state';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ExternalLink, Maximize2, Minimize2 } from 'lucide-react';
 
 import { usePaletteOps } from '@/modules/command-palette';
 import { useTheme } from '@/shared/context/ThemeContext';
@@ -15,6 +16,7 @@ import { createMinimapExtension, createScrollToFirstChunkExtension, getLanguageE
 import { createCsharpSemanticExtension } from '@/modules/code-editor/utils/csharpSemanticLayer';
 import { getEditorStyles } from '@/modules/code-editor/utils/editorStyles';
 import { createEditorToolbarPanelExtension } from '@/modules/code-editor/utils/editorToolbarPanel';
+import { isCsvFileName } from '@/modules/code-editor/utils/csvDocument';
 import CodeEditorFooter from '@/modules/code-editor/CodeEditorFooter';
 import CodeEditorHeader from '@/modules/code-editor/CodeEditorHeader';
 import CodeEditorLoadingState from '@/modules/code-editor/CodeEditorLoadingState';
@@ -70,6 +72,9 @@ export default function CodeEditor({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showDiff, setShowDiff] = useState(Boolean(file.diffInfo));
   const [markdownPreview, setMarkdownPreview] = useState(false);
+  const isCsvFile = isCsvFileName(file.name);
+  // CSV opens as a table, except when it was opened to show a diff, which only the text view can draw.
+  const [csvTableView, setCsvTableView] = useState(() => isCsvFile && !file.diffInfo);
 
   // The code editor follows the app-wide theme; it has no theme of its own.
   const { isDarkMode } = useTheme();
@@ -263,6 +268,32 @@ export default function CodeEditor({
     wordWrap,
   ]);
 
+  // The table view has no CodeMirror toolbar panel, so it draws the docked editor's pop-out and expand buttons itself.
+  const csvWindowControls = isSidebar && (onPopOut || onToggleExpand) ? (
+    <>
+      {onPopOut && (
+        <button
+          type="button"
+          onClick={onPopOut}
+          className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
+          title={t('toolbar.popOut', 'Open in modal')}
+        >
+          <ExternalLink className="h-4 w-4" />
+        </button>
+      )}
+      {onToggleExpand && (
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
+          title={isExpanded ? t('toolbar.collapse') : t('toolbar.expand')}
+        >
+          {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+        </button>
+      )}
+    </>
+  ) : null;
+
   useEditorKeyboardShortcuts({
     onSave: handleSave,
     dependency: content,
@@ -350,10 +381,13 @@ export default function CodeEditor({
             isMarkdownFile={isMarkdownFile}
             isHtmlPreviewFile={isHtmlPreviewFile}
             markdownPreview={markdownPreview}
+            isCsvFile={isCsvFile}
+            csvTableView={csvTableView}
             saving={saving}
             saveSuccess={saveSuccess}
             hasUnsavedChanges={hasUnsavedChanges}
             onToggleMarkdownPreview={() => setMarkdownPreview((previous) => !previous)}
+            onToggleCsvTableView={() => setCsvTableView((previous) => !previous)}
             onOpenHtmlPreview={openHtmlPreview}
             onOpenSettings={() => paletteOps.openSettings('appearance')}
             onDownload={handleDownload}
@@ -367,6 +401,8 @@ export default function CodeEditor({
               editMarkdown: t('actions.editMarkdown'),
               previewMarkdown: t('actions.previewMarkdown'),
               previewHtml: t('actions.previewHtml', 'Open HTML preview in new tab'),
+              showCsvTable: t('actions.showCsvTable', 'Show as table'),
+              showCsvText: t('actions.showCsvText', 'Show as text'),
               settings: t('toolbar.settings'),
               download: t('actions.download'),
               save: t('actions.save'),
@@ -391,6 +427,9 @@ export default function CodeEditor({
               onChange={setContent}
               markdownPreview={markdownPreview}
               isMarkdownFile={isMarkdownFile}
+              csvTableView={csvTableView && isCsvFile}
+              fileName={file.name}
+              csvWindowControls={csvWindowControls}
               isDarkMode={isDarkMode}
               fontSize={fontSize}
               showLineNumbers={showLineNumbers}

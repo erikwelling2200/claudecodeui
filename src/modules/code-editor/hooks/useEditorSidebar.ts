@@ -149,10 +149,8 @@ export const useEditorSidebar = ({
     setEditorExpanded((previous) => !previous);
   }, []);
 
-  // The expanded editor hides the main view, so hiding the editor leaves the expanded layout too.
   const handleToggleEditorHidden = useCallback(() => {
     setEditorHidden((previous) => !previous);
-    setEditorExpanded(false);
   }, []);
 
   const handleResizeStart = useCallback(
@@ -239,7 +237,9 @@ export const useEditorSidebar = ({
     dirtyTabKeys,
     editingFile,
     editorWidth,
-    editorExpanded,
+    // The expanded editor hides the main view, so a hidden editor never reports expanded; the flag itself
+    // survives so showing the editor again restores the width it had.
+    editorExpanded: editorExpanded && !editorHidden,
     editorHidden,
     resizeHandleRef,
     handleFileOpen,
