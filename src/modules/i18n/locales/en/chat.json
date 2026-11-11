@@ -466,6 +466,7 @@
     "cancel": "Cancel (Esc)",
     "done": "Done",
     "textPlaceholder": "Text",
-    "resetZoom": "Reset zoom (wheel to zoom, middle-drag to pan)"
+    "resetZoom": "Reset zoom (wheel to zoom, middle-drag to pan)",
+    "textSelectionHint": "Drag to move, drag a corner to resize, double-click to edit, Delete to remove"
   }
 }
