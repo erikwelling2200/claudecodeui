@@ -10,6 +10,8 @@ type ClaudeBillingDependencies = {
   spend: { record(costUsd: number, sessionId: string | null, at: number): void; sumSince(since: number): number };
   /** The latest plan-usage reading, the same one the sidebar's bars show. */
   readUsageLimits: () => UsageLimitReading[];
+  /** When the current API credit cycle began, in epoch milliseconds; spend is totalled from there. */
+  creditCycleStart: () => number;
   now?: () => number;
 };
 
@@ -35,7 +37,7 @@ export type ClaudeBillingStatus = {
   keyHint: string | null;
   mode: ClaudeBilling['mode'];
   limit: ClaudeBillingLimit | null;
-  spend: { today: number; month: number };
+  spend: { today: number; cycle: number };
 };
 
 const STORED_KEY = 'claude_fallback_api_key';
@@ -141,13 +143,12 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     const billing = resolve();
     const today = new Date(now());
     today.setHours(0, 0, 0, 0);
-    const month = new Date(today.getFullYear(), today.getMonth(), 1);
     return {
       keySource: stored ? 'settings' : key ? 'environment' : null,
       keyHint: key ? key.slice(-4) : null,
       mode: billing.mode,
       limit: billing.mode === 'api_key' ? billing.limit : currentLimit(),
-      spend: { today: dependencies.spend.sumSince(today.getTime()), month: dependencies.spend.sumSince(month.getTime()) },
+      spend: { today: dependencies.spend.sumSince(today.getTime()), cycle: dependencies.spend.sumSince(dependencies.creditCycleStart()) },
     };
   }
 
