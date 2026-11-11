@@ -460,9 +460,12 @@
     "pen": "Pen",
     "arrow": "Arrow",
     "rectangle": "Rectangle",
+    "text": "Text",
     "undo": "Undo (Ctrl+Z)",
     "clear": "Clear drawing",
     "cancel": "Cancel (Esc)",
-    "done": "Done"
+    "done": "Done",
+    "textPlaceholder": "Text",
+    "resetZoom": "Reset zoom (wheel to zoom, middle-drag to pan)"
   }
 }
