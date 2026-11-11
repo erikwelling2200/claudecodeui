@@ -699,6 +699,10 @@ export const api = {
     claudeApiKey: () => get('/api/usage/claude-api-key'),
     saveClaudeApiKey: (key: string) => put('/api/usage/claude-api-key', { key }),
     removeClaudeApiKey: () => del('/api/usage/claude-api-key'),
+    claudeCredit: () => get('/api/usage/claude-credit'),
+    saveClaudeCreditKey: (key: string) => put('/api/usage/claude-credit/key', { key }),
+    removeClaudeCreditKey: () => del('/api/usage/claude-credit/key'),
+    saveClaudeCreditCycle: (renewalDay: number, amount: number | null) => put('/api/usage/claude-credit/cycle', { renewalDay, amount }),
   },
 };
 

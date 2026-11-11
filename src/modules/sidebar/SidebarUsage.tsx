@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import type { TFunction } from 'i18next';
 
 import { api } from '@/shared/api';
-import type { ClaudeBillingStatus } from '@/shared/types';
+import type { ClaudeBillingStatus, ClaudeCreditStatus } from '@/shared/types';
+import { formatCreditCycleDay } from '@/shared/utils';
 
 type UsageLimit = {
   kind: string;
@@ -17,6 +18,7 @@ type UsageSnapshot = {
   limits: UsageLimit[];
   fetchedAt: number;
   billing?: ClaudeBillingStatus;
+  credit?: ClaudeCreditStatus;
 };
 
 const POLL_INTERVAL_MS = 60_000;
@@ -50,7 +52,6 @@ function formatUntil(ms: number): string {
 function formatUsd(amount: number): string {
   return `$${amount.toFixed(2)}`;
 }
-
 function formatAge(ms: number): string {
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 60) return `${Math.max(minutes, 0)}m`;
@@ -99,7 +100,16 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
   };
 
   const billing = usage?.billing;
-  if (!usage || (usage.limits.length === 0 && !billing?.keySource)) return null;
+  const credit = usage?.credit;
+  // The organization's total includes this app's own key spend, so it replaces the local count once read.
+  const org = credit?.org;
+  if (!usage || (usage.limits.length === 0 && !billing?.keySource && !org)) return null;
+  const spendToday = org ? t('usage.orgSpendToday', { amount: formatUsd(org.today) }) : t('usage.apiSpendToday', { amount: formatUsd(billing?.spend.today ?? 0) });
+  const cycleSpend = formatUsd(org ? org.cycle : billing?.spend.cycle ?? 0);
+  const since = credit ? formatCreditCycleDay(credit.cycleStart) : '';
+  const spendCycle = credit?.amount
+    ? t('usage.spendOfSince', { amount: cycleSpend, total: `$${credit.amount}`, since })
+    : t('usage.spendSince', { amount: cycleSpend, since });
 
   const stale = !usage.fetchedAt || now - usage.fetchedAt > STALE_USAGE_MS;
   const resetsAt = pickReset(usage.limits);
@@ -139,10 +149,14 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
         <span className="truncate">{status}</span>
         {resetsAt > 0 && <span className="flex-none whitespace-nowrap font-bold">{t('usage.resetsIn', { time: formatUntil(resetsAt - now) })}</span>}
       </div>
-      {billing?.keySource && (
-        <div data-testid="usage-api-spend" className={`mt-0.5 flex items-baseline justify-between gap-2 text-[10px] ${billing.mode === 'api_key' ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}>
-          <span className="truncate">{t('usage.apiSpendToday', { amount: formatUsd(billing.spend.today) })}</span>
-          <span className="flex-none whitespace-nowrap">{t('usage.apiSpendMonth', { amount: formatUsd(billing.spend.month) })}</span>
+      {(org || billing?.keySource) && (
+        <div
+          data-testid="usage-api-spend"
+          title={credit?.error ?? undefined}
+          className={`mt-0.5 flex items-baseline justify-between gap-2 text-[10px] ${billing?.mode === 'api_key' ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}
+        >
+          <span className="truncate">{spendToday}</span>
+          <span className="flex-none whitespace-nowrap">{spendCycle}</span>
         </div>
       )}
     </button>

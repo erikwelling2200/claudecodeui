@@ -95,7 +95,9 @@
     "apiKeyActive": "Billing your API key",
     "subscriptionBackIn": "Subscription limit hit, back in {{time}}",
     "apiSpendToday": "API key {{amount}} today",
-    "apiSpendMonth": "{{amount}} this month"
+    "orgSpendToday": "Org {{amount}} today",
+    "spendSince": "{{amount}} since {{since}}",
+    "spendOfSince": "{{amount}} of {{total}} since {{since}}"
   },
   "branding": {
     "openSource": "Open Source"

@@ -4,6 +4,7 @@ import os from 'node:os';
 import { appConfigDb, claudeApiSpendDb } from '@/modules/database/index.js';
 
 import { createClaudeBillingService } from './claude-billing.service.js';
+import { createClaudeCreditService } from './claude-credit.service.js';
 import { createUsageRouter } from './usage.routes.js';
 import { createUsageService } from './usage.service.js';
 
@@ -14,6 +15,8 @@ const usageService = createUsageService({
   }),
 });
 
+const claudeCredit = createClaudeCreditService({ config: appConfigDb, fetch: globalThis.fetch });
+
 /** Used by the Claude runtime to pick each run's credential and to record what API-key turns cost. */
 export const claudeBilling = createClaudeBillingService({
   homeDirectory: os.homedir(),
@@ -21,7 +24,8 @@ export const claudeBilling = createClaudeBillingService({
   config: appConfigDb,
   spend: claudeApiSpendDb,
   readUsageLimits: () => usageService.getUsage().limits,
+  creditCycleStart: () => claudeCredit.cycleStart(),
 });
 
 /** Used by the server entrypoint to mount the authenticated plan-usage endpoints. */
-export const usageRoutes = createUsageRouter(usageService, claudeBilling);
+export const usageRoutes = createUsageRouter(usageService, claudeBilling, claudeCredit);

@@ -1449,7 +1449,17 @@ export type ClaudeBillingStatus = {
   keyHint: string | null;
   mode: 'subscription' | 'api_key' | 'none';
   limit: { kind: string; resetsAt: number } | null;
-  spend: { today: number; month: number };
+  spend: { today: number; cycle: number };
+};
+
+/** The whole Console organization's API spend over the current credit cycle, read from Anthropic's cost report with the key saved in settings; amounts in USD, times in epoch milliseconds. `org` is null until a reading succeeds; `error` is the last failed reading's reason. */
+export type ClaudeCreditStatus = {
+  keyHint: string | null;
+  renewalDay: number;
+  amount: number | null;
+  cycleStart: number;
+  org: { today: number; cycle: number; fetchedAt: number } | null;
+  error: string | null;
 };
 
 /** Reported by the server when an ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN is taking precedence over a still-valid `claude /login` subscription, so every request is billed pay-as-you-go to the key; says which variable won, where it was found (the fix differs: restart after unsetting a process env var, or edit the `env` block of ~/.claude/settings.json) and the bypassed account's email when the credentials file records one. Rendered as a warning by the settings account view. */

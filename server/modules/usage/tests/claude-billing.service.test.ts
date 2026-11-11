@@ -14,6 +14,7 @@ type Options = {
   storedKey?: string;
   hostEnv?: NodeJS.ProcessEnv;
   limits?: { kind: string; percent: number; resetsAt: number }[];
+  cycleStart?: number;
 };
 
 function createBilling(options: Options = {}) {
@@ -34,6 +35,7 @@ function createBilling(options: Options = {}) {
       sumSince: (since) => ledger.filter((row) => row.at >= since).reduce((sum, row) => sum + row.costUsd, 0),
     },
     readUsageLimits: () => options.limits ?? [],
+    creditCycleStart: () => options.cycleStart ?? Date.parse('2026-10-20T00:00:00Z'),
     now: () => clock,
   });
   return { billing, advance: (ms: number) => { clock += ms; } };
@@ -95,14 +97,16 @@ test('the env for a subscription run carries no key; for a key run only the chos
   assert.equal(applyClaudeBillingEnv(env, { mode: 'none' }), env);
 });
 
-test('spend is totalled for today and for the month', () => {
+test('spend is totalled for today and since the credit cycle began', () => {
   const { billing, advance } = createBilling({ storedKey: 'sk-stored' });
   billing.recordSpend(1.25, 's1');
   billing.recordSpend(0, 's1');
   advance(-3 * 24 * HOUR);
   billing.recordSpend(2, 's2');
-  advance(3 * 24 * HOUR);
-  assert.deepEqual(billing.getStatus().spend, { today: 1.25, month: 3.25 });
+  advance(-7 * 24 * HOUR);
+  billing.recordSpend(4, 's3');
+  advance(10 * 24 * HOUR);
+  assert.deepEqual(billing.getStatus().spend, { today: 1.25, cycle: 3.25 });
   assert.equal(billing.getStatus().keyHint, 'ored');
   assert.equal(billing.getStatus().keySource, 'settings');
 });

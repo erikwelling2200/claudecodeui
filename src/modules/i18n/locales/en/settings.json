@@ -447,6 +447,16 @@
       "replace": "Replace",
       "remove": "Remove"
     },
+    "apiCredit": {
+      "title": "API credit",
+      "keyDescription": "A key that can read the organization's cost report: a service account with the Developer role and scope Organization, or an Admin key. Counts every key in the organization, not only chats here.",
+      "keySaved": "Cost report key ending in {{hint}}",
+      "keyNone": "No cost report key. Only chats here are counted.",
+      "orgSpend": "Organization spent {{amount}} since {{since}}",
+      "renewalDay": "Renews on day",
+      "amount": "Credit per cycle (USD)",
+      "saveCycle": "Save"
+    },
     "subscriptionOverride": {
       "title": "Your subscription login is not being used",
       "description": "{{variable}} is set in {{source}}, so Claude Code bills every request to that key as pay-as-you-go API usage instead of using your subscription login.",

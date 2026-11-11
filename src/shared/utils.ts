@@ -381,3 +381,7 @@ export const formatCompactAge = (
   const hours = Math.floor(minutes / 60);
   return hours < 24 ? `${hours}hr` : `${Math.floor(hours / 24)}d`;
 };
+
+/** Dates an API credit cycle start (00:00 UTC) as "20 Oct", in UTC so it never shows the day before west of Greenwich. */
+export const formatCreditCycleDay = (at: number): string =>
+  new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
