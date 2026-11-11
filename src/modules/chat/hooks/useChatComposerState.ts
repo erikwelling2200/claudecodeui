@@ -785,11 +785,16 @@ export function useChatComposerState({
   // mid-turn message the server could not take), so the composer is left as it is.
   const queueMessage = useCallback(
     async (durableDraft: QueuedDraft, queuedSessionKey: string | null, { fromComposer = true } = {}) => {
-      const queuedFromOpenComposer = !queuedSessionKey || sessionKeyRef.current === queuedSessionKey;
-      if (queuedFromOpenComposer && fromComposer) {
+      const queuedFromOpenComposer = fromComposer
+        && (!queuedSessionKey || sessionKeyRef.current === queuedSessionKey);
+      // Attachments are not kept per chat: the queued ones leave even when another chat is
+      // open now, or a send from there would take them along.
+      if (fromComposer) {
+        setAttachedFiles((files) => files.filter((file) => !durableDraft.attachments.includes(file)));
+      }
+      if (queuedFromOpenComposer) {
         setInput('');
         inputValueRef.current = '';
-        setAttachedFiles([]);
         setFileErrors(new Map());
         resetCommandMenuState();
         setIsTextareaExpanded(false);
@@ -841,9 +846,9 @@ export function useChatComposerState({
             const restored = withTypedSince(inputValueRef.current);
             setInput(restored);
             inputValueRef.current = restored;
-            if (queuedFromOpenComposer) {
-              setAttachedFiles((current) => [...durableDraft.attachments, ...current]);
-            }
+            // The message's files come back with it, also after a switch away and back
+            // and for a refused steer: all were taken from this composer.
+            setAttachedFiles((current) => [...durableDraft.attachments, ...current]);
             if (draftScopeRef.current) {
               writeDraftText(draftScopeRef.current, restored);
             }
@@ -881,23 +886,37 @@ export function useChatComposerState({
     [addMessage, recordSentMessage, resetCommandMenuState, setInput, t],
   );
 
-  // Empties the composer and its saved draft once a message has gone out.
-  const clearComposer = useCallback(() => {
-    setInput('');
-    inputValueRef.current = '';
-    resetCommandMenuState();
-    setAttachedFiles([]);
-    setFileErrors(new Map());
-    setIsTextareaExpanded(false);
+  // Empties the composer and its saved draft once a message has gone out. The upload and
+  // session allocation before that can outlast a chat switch, so `scope` is the chat the
+  // message was typed in, and the chat open by then keeps its text.
+  const clearComposerAfterSend = useCallback(
+    (scope: string | null, targetSessionId: string | null, text: string, sentAttachments: File[]) => {
+      // Attachments are not kept per chat, so only the ones just sent go.
+      setAttachedFiles((files) => files.filter((file) => !sentAttachments.includes(file)));
+      // A brand-new chat moves from its project scope to its allocated session id meanwhile.
+      const stillOpen = draftScopeRef.current === scope || (!!targetSessionId && draftScopeRef.current === targetSessionId);
+      if (!stillOpen) {
+        // The chat left keeps text the user went back and edited during the upload.
+        if (scope && readDraftText(scope) === text) {
+          writeDraftText(scope, '');
+        }
+        return;
+      }
+      if (scope) {
+        writeDraftText(scope, '');
+      }
+      setInput('');
+      inputValueRef.current = '';
+      resetCommandMenuState();
+      setFileErrors(new Map());
+      setIsTextareaExpanded(false);
 
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
-
-    if (draftScopeRef.current) {
-      writeDraftText(draftScopeRef.current, '');
-    }
-  }, [resetCommandMenuState, setInput]);
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+    },
+    [resetCommandMenuState, setInput],
+  );
 
   const submitMessage = useCallback(
     async (
@@ -919,6 +938,9 @@ export function useChatComposerState({
       ) {
         return;
       }
+      // The chat this send belongs to: the upload and session allocation below can outlast a
+      // chat switch, and the cleanup at the end must not empty whichever chat is open by then.
+      const submittedScope = draftScopeRef.current;
 
       // A turn is already in flight: stash this message instead of sending it.
       // Upload attached files now so the queued record contains durable image
@@ -973,7 +995,7 @@ export function useChatComposerState({
             options: { ...queuedOptions, attachments: uploadedAttachments },
           });
           recordSentMessage(currentInput, steerSessionId);
-          clearComposer();
+          clearComposerAfterSend(submittedScope, steerSessionId, currentInput, currentAttachments);
           return;
         }
 
@@ -1185,21 +1207,22 @@ export function useChatComposerState({
           attachments: uploadedAttachments,
         },
       });
-      setEditingAnchorId(null);
+      // Only this send's edit: an edit begun in another chat during the upload stays.
+      setEditingAnchorId((current) => (current === editingAnchorId ? null : current));
 
       // Recorded under the (possibly just-allocated) session id, so the first
       // message of a new chat lands in the history of the session the user is
       // navigated to. Queued drafts were recorded when they were queued; the
       // consecutive-duplicate check keeps this second call a no-op.
       recordSentMessage(currentInput, targetSessionId);
-      clearComposer();
+      clearComposerAfterSend(submittedScope, targetSessionId, currentInput, currentAttachments);
     },
     [
       selectedSession,
       askBeforeSendingOverBackgroundWork,
       attachedFiles,
       buildSendOptions,
-      clearComposer,
+      clearComposerAfterSend,
       currentSessionId,
       editingAnchorId,
       steerSessionId,
