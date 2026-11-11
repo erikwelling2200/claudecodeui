@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { FileIcon, XIcon } from 'lucide-react';
 
-import { ImageLightbox } from '@/modules/chat/transcript/ChatMessageImages';
+import { ImageAnnotator } from '@/modules/chat/composer/ImageAnnotator';
 
 type ComposerAttachmentProps = {
   file: File;
   onRemove: () => void;
+  onReplace: (file: File) => void;
   error?: string;
 };
 
@@ -17,9 +18,10 @@ const formatFileSize = (size: number) => {
 
 /**
  * Rendered by chat's ChatComposer for each pending attachment, showing its
- * thumbnail or file chip, upload progress and remove control.
+ * thumbnail or file chip and remove control. Opening an image thumbnail lets
+ * the user draw on it before sending.
  */
-const ComposerAttachment = ({ file, onRemove, error }: ComposerAttachmentProps) => {
+const ComposerAttachment = ({ file, onRemove, onReplace, error }: ComposerAttachmentProps) => {
   const [preview, setPreview] = useState<string | undefined>(undefined);
   const [expanded, setExpanded] = useState(false);
   const isImage = file.type.startsWith('image/');
@@ -40,11 +42,11 @@ const ComposerAttachment = ({ file, onRemove, error }: ComposerAttachmentProps) 
         <button
           type="button"
           onClick={() => preview && setExpanded(true)}
-          aria-label={`Expand ${file.name}`}
+          aria-label={`Draw on ${file.name}`}
           className="block overflow-hidden rounded-xl border border-border/50 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/60"
         >
           {preview
-            ? <img src={preview} alt={file.name} className="h-20 w-20 cursor-zoom-in object-cover" />
+            ? <img src={preview} alt={file.name} className="h-20 w-20 cursor-pointer object-cover" />
             : <div className="h-20 w-20 animate-pulse bg-muted" />}
         </button>
       ) : (
@@ -74,7 +76,14 @@ const ComposerAttachment = ({ file, onRemove, error }: ComposerAttachmentProps) 
         <XIcon className="h-3 w-3" aria-hidden />
       </button>
       {expanded && preview && (
-        <ImageLightbox src={preview} alt={file.name} onClose={() => setExpanded(false)} />
+        <ImageAnnotator
+          file={file}
+          onCancel={() => setExpanded(false)}
+          onSave={(annotated) => {
+            setExpanded(false);
+            onReplace(annotated);
+          }}
+        />
       )}
     </div>
   );

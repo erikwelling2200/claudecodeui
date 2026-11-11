@@ -454,5 +454,15 @@
     "empty": "No archived chats",
     "noMatches": "No matching chats",
     "reopenFailed": "Could not reopen this chat."
+  },
+  "annotate": {
+    "title": "Draw on {{name}}",
+    "pen": "Pen",
+    "arrow": "Arrow",
+    "rectangle": "Rectangle",
+    "undo": "Undo (Ctrl+Z)",
+    "clear": "Clear drawing",
+    "cancel": "Cancel (Esc)",
+    "done": "Done"
   }
 }
