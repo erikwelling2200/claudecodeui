@@ -123,6 +123,28 @@ test('start_chat refuses a caller session that does not exist', async () => {
   });
 });
 
+test('a thread takes its parent project folder, and refuses another folder unless topLevel', async () => {
+  await withIsolatedDatabase(async (projectPath) => {
+    const otherProjectPath = path.join(projectPath, 'other-project');
+    sessionsDb.createAppSession('other-parent', 'claude', otherProjectPath, 'Other parent');
+    const { runtime, release } = createRuntime([]);
+
+    const thread = await chatToolsService.startChat(CALLER_SESSION_ID, { message: 'Thread', model: 'opus', parentSessionId: 'other-parent' }, runtime);
+    assert.equal(thread.projectPath, otherProjectPath);
+    assert.equal(sessionsDb.getSessionById(thread.sessionId)?.project_path, otherProjectPath);
+
+    await assert.rejects(
+      chatToolsService.startChat(CALLER_SESSION_ID, { message: 'Wrong folder', model: 'opus', parentSessionId: 'other-parent', projectPath }, runtime),
+      /Use topLevel: true/,
+    );
+
+    const topLevel = await chatToolsService.startChat(CALLER_SESSION_ID, { message: 'Elsewhere', model: 'opus', topLevel: true, projectPath: otherProjectPath }, runtime);
+    assert.equal(topLevel.projectPath, otherProjectPath);
+    assert.equal(topLevel.parentSessionId, null);
+    release();
+  });
+});
+
 test('start_chat from a thread starts a thread of its parent, and topLevel starts no thread', async () => {
   await withIsolatedDatabase(async () => {
     const { runtime, release } = createRuntime([]);

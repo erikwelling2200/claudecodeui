@@ -367,15 +367,25 @@ export const chatToolsService = {
     }
 
     let parentSessionId: string | undefined;
+    let projectPath = input.projectPath ?? caller.project_path ?? '';
     if (!input.topLevel) {
       const requestedParent = input.parentSessionId ? sessionsDb.getSessionById(input.parentSessionId) : caller;
       if (!requestedParent) {
         throw new AppError(`Session "${input.parentSessionId}" was not found.`, { code: 'SESSION_NOT_FOUND', statusCode: 404 });
       }
       parentSessionId = requestedParent.parent_session_id ?? requestedParent.session_id;
+
+      // The sidebar folds a thread only under a parent in the same project folder, so a thread takes its parent's folder.
+      const parentProjectPath = sessionsDb.getSessionById(parentSessionId)?.project_path ?? '';
+      if (input.projectPath && path.resolve(input.projectPath) !== path.resolve(parentProjectPath)) {
+        throw new AppError(
+          `A thread runs in its parent's project folder (${parentProjectPath}). Use topLevel: true to start a chat in ${input.projectPath}.`,
+          { code: 'THREAD_PROJECT_MISMATCH', statusCode: 400 },
+        );
+      }
+      projectPath = parentProjectPath;
     }
 
-    const projectPath = input.projectPath ?? caller.project_path ?? '';
     const created = sessionsService.createAppSession(caller.provider as LLMProvider, projectPath, input.message, parentSessionId);
     await broadcastSessionUpserted(created.sessionId);
 
