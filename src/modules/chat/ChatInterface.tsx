@@ -628,6 +628,11 @@ function ChatInterface({
               previous.filter((_, currentIndex) => currentIndex !== index),
             )
           }
+          onReplaceAttachment={(index, file) =>
+            setAttachedFiles((previous) =>
+              previous.map((current, currentIndex) => (currentIndex === index ? file : current)),
+            )
+          }
           fileErrors={fileErrors}
           showFileDropdown={showFileDropdown}
           filteredFiles={filteredFiles}

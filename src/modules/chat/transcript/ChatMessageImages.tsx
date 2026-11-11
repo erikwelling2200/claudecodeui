@@ -88,7 +88,7 @@ function useChatImageSrc(image: ChatImage, projectId?: string | null): { src: st
  * image that zooms on scroll and pans by dragging, closes on backdrop click,
  * close button, or Escape.
  *
- * Used by chat's ChatMessageImages and ComposerAttachment to expand a
+ * Used by chat's ChatMessageImages and MarkdownImage to expand a
  * thumbnail to full size.
  */
 export function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {

@@ -99,6 +99,7 @@ type ChatComposerProps = {
   onCancelPendingSteer: (steerId: string) => void;
   attachedFiles: File[];
   onRemoveAttachment: (index: number) => void;
+  onReplaceAttachment: (index: number, file: File) => void;
   fileErrors: Map<string, string>;
   showFileDropdown: boolean;
   filteredFiles: MentionableFile[];
@@ -180,6 +181,7 @@ export default function ChatComposer({
   onCancelPendingSteer,
   attachedFiles,
   onRemoveAttachment,
+  onReplaceAttachment,
   fileErrors,
   showFileDropdown,
   filteredFiles,
@@ -443,6 +445,7 @@ export default function ChatComposer({
                       key={`${file.name}-${file.lastModified}-${index}`}
                       file={file}
                       onRemove={() => onRemoveAttachment(index)}
+                      onReplace={(annotated) => onReplaceAttachment(index, annotated)}
                       error={fileErrors.get(file.name)}
                     />
                   ))}
