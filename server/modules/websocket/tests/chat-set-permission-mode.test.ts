@@ -95,3 +95,28 @@ test('a switch for a session that does not exist is refused', async () => {
     assert.equal(socket.frames.at(-1)?.code, 'SESSION_NOT_FOUND');
   });
 });
+
+test('a switch is recorded on the session row, live process or not', async () => {
+  await withGateway(false, async ({ socket }) => {
+    await socket.deliver({ type: 'chat.set-permission-mode', sessionId: SESSION_ID, permissionMode: 'plan' });
+
+    assert.equal(sessionsDb.getSessionById(SESSION_ID)?.permission_mode, 'plan');
+  });
+});
+
+test('applyToLiveTurn false records the mode without switching the running turn', async () => {
+  await withGateway(true, async ({ socket, calls }) => {
+    await socket.deliver({ type: 'chat.set-permission-mode', sessionId: SESSION_ID, permissionMode: 'auto', applyToLiveTurn: false });
+
+    assert.equal(calls.length, 0);
+    assert.equal(sessionsDb.getSessionById(SESSION_ID)?.permission_mode, 'auto');
+  });
+});
+
+test('a mode the provider does not offer is not recorded', async () => {
+  await withGateway(true, async ({ socket }) => {
+    await socket.deliver({ type: 'chat.set-permission-mode', sessionId: SESSION_ID, permissionMode: 'not-a-mode' });
+
+    assert.equal(sessionsDb.getSessionById(SESSION_ID)?.permission_mode, null);
+  });
+});

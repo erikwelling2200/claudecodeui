@@ -10,6 +10,7 @@ import { providerRuntimeService } from '@/modules/providers/services/provider-ru
 import { providerTokenUsageService } from '@/modules/providers/services/provider-token-usage.service.js';
 import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
+import { sessionPermissionModeService } from '@/modules/providers/services/session-permission-mode.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import type {
   CustomProviderModelEffort,
@@ -704,9 +705,10 @@ router.delete(
 );
 
 /**
- * Reports which model one session is using. `requestedModel` lets the client
- * pass the default it would otherwise send, so a session that has not been
- * sent on yet resolves to that instead of the catalog default.
+ * Reports which model one session is using, and the permission mode it runs in
+ * (null when unknown). `requestedModel` lets the client pass the default it
+ * would otherwise send, so a session that has not been sent on yet resolves to
+ * that instead of the catalog default.
  */
 router.get(
   '/:provider/sessions/:sessionId/active-model',
@@ -714,11 +716,11 @@ router.get(
     const provider = parseProvider(req.params.provider);
     const sessionId = parseSessionId(req.params.sessionId);
     const requestedModel = readOptionalQueryString(req.query.requestedModel);
-    const result = await providerModelsService.resolveSessionModel(provider, {
-      sessionId,
-      requestedModel,
-    });
-    res.json(createApiSuccessResponse(result));
+    const [result, permissionMode] = await Promise.all([
+      providerModelsService.resolveSessionModel(provider, { sessionId, requestedModel }),
+      sessionPermissionModeService.resolve(provider, sessionId),
+    ]);
+    res.json(createApiSuccessResponse({ ...result, permissionMode }));
   }),
 );
 

@@ -11,6 +11,12 @@ import type { PendingPermissionRequest, PermissionMode,
   ProviderModelsDefinition } from '@/shared/types';
 import { DEFAULT_EFFORT_VALUE } from '@/shared/constants';
 import { readSelectedProvider, writeSelectedProvider } from '@/shared/selectedProvider';
+import {
+  readLastPermissionMode,
+  readSessionPermissionMode,
+  writeLastPermissionMode,
+  writeSessionPermissionMode,
+} from '@/modules/chat/utils/permissionModeStorage';
 
 const FALLBACK_PROVIDER_EFFORT_VALUES: Partial<Record<LLMProvider, readonly string[]>> = {
   // Superset used only before the model catalog loads; `ultracode` belongs to the
@@ -112,6 +118,8 @@ type SessionSelectionApiResponse = {
      * which the composer replaces with the user's per-provider selection.
      */
     source?: 'session' | 'provider' | 'default';
+    /** The mode the session runs in, as the server recorded it; null when unknown. */
+    permissionMode?: string | null;
   };
 };
 
@@ -396,21 +404,28 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     }
   }, [providerEfforts, providerModels, reconcileStoredEffort]);
 
+  // The server's answer for an open chat arrives with the session selection
+  // below and replaces this one, unless the user picks a mode first.
   useEffect(() => {
     const validModes = getPermissionModesForProvider(provider);
-    const sessionSavedMode = selectedSession?.id
-      ? (localStorage.getItem(`permissionMode-${selectedSession.id}`) as PermissionMode | null)
-      : null;
-    // Fall back to the last mode picked for this provider: a brand-new chat
-    // only receives its session id after the first send, so without this the
-    // mode chosen beforehand would snap back to the default as soon as the
-    // session id appears.
-    const providerSavedMode = localStorage.getItem(`permissionMode-last-${provider}`) as PermissionMode | null;
-    const savedMode = [sessionSavedMode, providerSavedMode].find(
-      (mode): mode is PermissionMode => Boolean(mode && validModes.includes(mode)),
-    );
-    setPermissionMode(savedMode ?? getDefaultPermissionModeForProvider(provider));
+    const savedMode = selectedSession?.id
+      ? readSessionPermissionMode(selectedSession.id)
+      : readLastPermissionMode(provider);
+    setPermissionMode(savedMode && validModes.includes(savedMode as PermissionMode)
+      ? savedMode as PermissionMode
+      : getDefaultPermissionModeForProvider(provider));
   }, [selectedSession?.id, provider, getDefaultPermissionModeForProvider, getPermissionModesForProvider]);
+
+  // Counts the user's picks, so a server answer requested before a pick does not undo it.
+  const permissionModePicksRef = useRef(0);
+  const adoptRecordedPermissionModeRef = useRef<(sessionId: string, mode: string) => void>(() => {});
+  adoptRecordedPermissionModeRef.current = (sessionId, mode) => {
+    if (selectedSession?.id !== sessionId || !getPermissionModesForProvider(provider).includes(mode as PermissionMode)) {
+      return;
+    }
+    setPermissionMode(mode as PermissionMode);
+    writeSessionPermissionMode(sessionId, mode);
+  };
 
   useEffect(() => {
     if (!selectedSession?.__provider || selectedSession.__provider === provider) {
@@ -432,18 +447,21 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
   /** `applyToLiveTurn: false` when the switch already travels with something else, such as a plan approval. */
   const selectPermissionMode = useCallback((nextMode: PermissionMode, { applyToLiveTurn = true } = {}) => {
     setPermissionMode(nextMode);
+    permissionModePicksRef.current += 1;
 
-    // Persist per provider as well as per session: a brand-new chat has no
-    // session id yet, and the per-provider key keeps the choice sticky when
-    // the real id arrives (and for future sessions of this provider).
-    localStorage.setItem(`permissionMode-last-${provider}`, nextMode);
+    // The per-provider key is what the next brand-new chat starts in.
+    writeLastPermissionMode(provider, nextMode);
     if (selectedSession?.id) {
-      localStorage.setItem(`permissionMode-${selectedSession.id}`, nextMode);
-      // A turn takes its mode when it is sent; this switches one already
-      // running. The server ignores it when the session has no live turn.
-      if (applyToLiveTurn) {
-        sendMessage?.({ type: 'chat.set-permission-mode', sessionId: selectedSession.id, permissionMode: nextMode });
-      }
+      writeSessionPermissionMode(selectedSession.id, nextMode);
+      // The server records the mode on the session either way. A turn takes its
+      // mode when it is sent; applying it here switches one already running,
+      // and the server skips that when the session has no live turn.
+      sendMessage?.({
+        type: 'chat.set-permission-mode',
+        sessionId: selectedSession.id,
+        permissionMode: nextMode,
+        ...(applyToLiveTurn ? {} : { applyToLiveTurn: false }),
+      });
     }
   }, [provider, selectedSession?.id, sendMessage]);
 
@@ -508,11 +526,23 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     let cancelled = false;
     const targetProvider = selectedSessionProvider;
     const targetSessionKey = getSessionSelectionKey(targetProvider, selectedSessionId);
+    const permissionModePicksAtRequest = permissionModePicksRef.current;
 
     const loadSessionSelection = async () => {
       try {
         const response = await api.providers.sessionActiveModel(targetProvider, selectedSessionId);
         const body = (await response.json()) as SessionSelectionApiResponse;
+        // Checked before the request-id guard: a model or effort pick bumps
+        // that id, and must not cost the chat its recorded mode.
+        const recordedPermissionMode = body.success ? body.data?.permissionMode : null;
+        if (
+          !cancelled
+          && recordedPermissionMode
+          && permissionModePicksRef.current === permissionModePicksAtRequest
+          && selectedSessionKeyRef.current === targetSessionKey
+        ) {
+          adoptRecordedPermissionModeRef.current(selectedSessionId, recordedPermissionMode);
+        }
         if (
           cancelled
           || sessionSelectionLoadRequestIdRef.current !== requestId

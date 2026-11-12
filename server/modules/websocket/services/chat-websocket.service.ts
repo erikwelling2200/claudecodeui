@@ -4,7 +4,7 @@ import type { WebSocket } from 'ws';
 
 import { chatToolsService } from '@/modules/chat-tools/index.js';
 import { projectsDb, sessionsDb } from '@/modules/database/index.js';
-import { providerModelsService, sessionsService } from '@/modules/providers/index.js';
+import { providerModelsService, sessionPermissionModeService, sessionsService } from '@/modules/providers/index.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
 import { connectedClients, WS_OPEN_STATE } from '@/modules/websocket/services/websocket-state.service.js';
 import {
@@ -395,6 +395,9 @@ async function dispatchRun(
   if (typeof clientOptions.effort === 'string' && clientOptions.effort.trim()) {
     providerModelsService.setSessionEffort(provider, sessionId, clientOptions.effort);
   }
+  if (typeof clientOptions.permissionMode === 'string') {
+    sessionPermissionModeService.record(provider, sessionId, clientOptions.permissionMode);
+  }
 
   if (clientOptions.remoteControl === true) {
     sessionsDb.setSessionRemoteControl(sessionId, true);
@@ -635,8 +638,10 @@ async function handleChatStopTask(
 }
 
 /**
- * Handles `chat.set-permission-mode`: applies a mode the user picked to the
- * session's live process, so it governs the rest of the turn already running.
+ * Handles `chat.set-permission-mode`: records a mode the user picked on the
+ * session and applies it to the session's live process, so it governs the rest
+ * of the turn already running. `applyToLiveTurn: false` only records it, for a
+ * switch that already travels with something else, such as a plan approval.
  * A session with no live process is not an error: its next `chat.send` carries
  * the mode anyway, so nothing is echoed back either way.
  */
@@ -663,6 +668,10 @@ async function handleChatSetPermissionMode(
     return;
   }
 
+  sessionPermissionModeService.record(session.provider as LLMProvider, sessionId, permissionMode);
+  if (data.applyToLiveTurn === false) {
+    return;
+  }
   await dependencies.runtime.setPermissionMode(session.provider as LLMProvider, sessionId, permissionMode);
 }
 
@@ -813,7 +822,7 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  * - `chat.steer-cancel`        { sessionId, steerId }  (drop that message before the CLI takes it)
  * - `chat.abort`               { sessionId }
  * - `chat.stop-task`           { sessionId, taskId }
- * - `chat.set-permission-mode` { sessionId, permissionMode }
+ * - `chat.set-permission-mode` { sessionId, permissionMode, applyToLiveTurn? }
  * - `chat.subscribe`           { sessions: [{ sessionId, lastSeq? }] }
  * - `chat.permission-response` { requestId, allow, updatedInput?, message?, rememberEntry?, permissionMode? }
  *

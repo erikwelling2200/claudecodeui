@@ -157,6 +157,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- restores its exact runtime configuration instead of provider defaults.
     model TEXT,
     effort TEXT,
+    -- Permission mode this session runs with, written on every send and every
+    -- mode switch, so the composer shows the mode the chat really runs in.
+    permission_mode TEXT,
     -- The app session this one was branched from, NULL for sessions created
     -- normally. Informational only: a fork is a fully independent provider
     -- session, and deleting the source does not affect it.
