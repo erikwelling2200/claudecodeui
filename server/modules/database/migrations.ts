@@ -442,6 +442,17 @@ const addParentSessionIdColumn = (db: Database): void => {
   addColumnToTableIfNotExists(db, 'sessions', columnNames, 'parent_session_id', 'TEXT');
 };
 
+/**
+ * Adds the `permission_mode` column that records the mode a session runs in.
+ *
+ * Existing rows stay NULL; the active-model route then falls back to the
+ * provider's own record of the session, such as Claude's transcript.
+ */
+const addSessionPermissionModeColumn = (db: Database): void => {
+  const columnNames = getTableInfo(db, 'sessions').map((column) => column.name);
+  addColumnToTableIfNotExists(db, 'sessions', columnNames, 'permission_mode', 'TEXT');
+};
+
 /** Adds the `remote_control` column that records whether a chat wants Remote Control on. */
 const addRemoteControlColumn = (db: Database): void => {
   const columnNames = getTableInfo(db, 'sessions').map((column) => column.name);
@@ -644,6 +655,7 @@ export const runMigrations = (db: Database) => {
     addForkedFromSessionIdColumn(db);
     addParentSessionIdColumn(db);
     addRemoteControlColumn(db);
+    addSessionPermissionModeColumn(db);
     ensureProjectsForSessionPaths(db);
     mergeProjectsWithSameNormalizedPath(db);
     db.exec(SCHEDULED_MESSAGES_TABLE_SCHEMA_SQL);

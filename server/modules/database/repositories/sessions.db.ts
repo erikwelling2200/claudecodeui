@@ -13,6 +13,8 @@ type SessionRow = {
   model: string | null;
   /** Reasoning effort this session runs with; NULL until the app records one. */
   effort: string | null;
+  /** Permission mode this session runs in; NULL until the app records one. */
+  permission_mode: string | null;
   /** The app session this one was branched from; NULL unless it is a fork. */
   forked_from_session_id: string | null;
   /** The app session this one is a thread of; NULL for a top-level chat. */
@@ -30,7 +32,7 @@ type RecentSessionsPage = {
 };
 
 const SESSION_ROW_COLUMNS =
-  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, forked_from_session_id, parent_session_id, remote_control, isArchived, created_at, updated_at';
+  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, permission_mode, forked_from_session_id, parent_session_id, remote_control, isArchived, created_at, updated_at';
 
 const SQLITE_UTC_TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
@@ -442,6 +444,16 @@ export const sessionsDb = {
        SET effort = ?
        WHERE session_id = ?`
     ).run(effort, sessionId);
+  },
+
+  /** Records the permission mode one session runs in, on every send and every mode switch. */
+  setSessionPermissionMode(sessionId: string, permissionMode: string): void {
+    const db = getConnection();
+    db.prepare(
+      `UPDATE sessions
+       SET permission_mode = ?
+       WHERE session_id = ?`
+    ).run(permissionMode, sessionId);
   },
 
   setSessionRemoteControl(sessionId: string, enabled: boolean): void {

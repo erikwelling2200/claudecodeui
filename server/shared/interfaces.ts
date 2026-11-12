@@ -200,6 +200,13 @@ export interface IProviderModels {
    * provider-specific lookup finds nothing.
    */
   getCurrentActiveModel(sessionId?: string): Promise<ProviderCurrentActiveModel>;
+
+  /**
+   * Reads the permission mode the provider recorded for one session's last
+   * prompt, or null when it keeps no such record. Only consulted for sessions
+   * the app has not recorded a mode for yet.
+   */
+  getSessionPermissionMode?(sessionId: string): Promise<string | null>;
 }
 
 // ---------------------------

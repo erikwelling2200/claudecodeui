@@ -39,6 +39,7 @@ import { useFileMentions } from '@/modules/chat/hooks/useFileMentions';
 import { useInputHistory } from '@/modules/chat/hooks/useInputHistory';
 import { useSlashCommands } from '@/modules/chat/hooks/useSlashCommands';
 import { adoptRemoteControlWish, readRemoteControlWanted } from '@/modules/chat/utils/remoteControl';
+import { writeSessionPermissionMode } from '@/modules/chat/utils/permissionModeStorage';
 
 type UseChatComposerStateArgs = {
   selectedProject: Project | null;
@@ -1077,6 +1078,8 @@ export function useChatComposerState({
         if (provider === 'claude') {
           adoptRemoteControlWish(targetSessionId);
         }
+        // Before the navigation below, which reads the new chat's mode from its own key.
+        writeSessionPermissionMode(targetSessionId, resolvePermissionModeForProvider(provider, permissionMode));
         onSessionEstablished?.(targetSessionId, {
           provider,
           project: selectedProject,
@@ -1150,6 +1153,10 @@ export function useChatComposerState({
       // One message shape for every provider. The backend resolves the
       // provider, project path, and provider-native resume id from the
       // session row; `options` only carries composer-level preferences.
+      const sendOptions = queuedSubmission?.options ?? buildSendOptions(messageContent);
+      if (typeof sendOptions.permissionMode === 'string') {
+        writeSessionPermissionMode(targetSessionId, sendOptions.permissionMode);
+      }
       sendMessage({
         // Replacing an already-sent message is its own frame: it changes the
         // shape of the conversation, so it gets validated separately and can
@@ -1159,7 +1166,7 @@ export function useChatComposerState({
         ...(editingAnchorId ? { anchorId: editingAnchorId } : {}),
         content: messageContent,
         options: {
-          ...(queuedSubmission?.options ?? buildSendOptions(messageContent)),
+          ...sendOptions,
           attachments: uploadedAttachments,
         },
       });
@@ -1185,8 +1192,10 @@ export function useChatComposerState({
       isLoading,
       onSessionProcessing,
       onSessionEstablished,
+      permissionMode,
       provider,
       queueMessage,
+      resolvePermissionModeForProvider,
       recordSentMessage,
       resetCommandMenuState,
       scrollToBottom,

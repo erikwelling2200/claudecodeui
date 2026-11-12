@@ -5,6 +5,8 @@ export { providerRuntimeService } from './services/provider-runtime.service.js';
 
 // providerModelsService: used by Commands to list models and resolve the active session model.
 export { providerModelsService } from './services/provider-models.service.js';
+// sessionPermissionModeService: used by the chat gateway to record the mode each session runs in.
+export { sessionPermissionModeService } from './services/session-permission-mode.service.js';
 
 // sessionsService: used by the websocket module's chat gateway to resolve an
 // edited message's resume point, which only the providers module can read, and

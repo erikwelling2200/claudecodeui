@@ -276,6 +276,26 @@ const readClaudeSessionModelFromJsonl = async (
   return null;
 };
 
+/** The CLI stamps every prompt it records with the permission mode it ran in. */
+const readClaudeSessionPermissionModeFromJsonl = async (jsonlPath: string): Promise<string | null> => {
+  const lines = (await readFile(jsonlPath, 'utf8')).split(/\r?\n/);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index].trim();
+    if (!line.includes('"permissionMode"')) {
+      continue;
+    }
+    try {
+      const event = JSON.parse(line) as { type?: unknown; permissionMode?: unknown };
+      if (event.type === 'user' && typeof event.permissionMode === 'string' && event.permissionMode) {
+        return event.permissionMode;
+      }
+    } catch {
+      // Skip malformed JSONL lines that can happen during concurrent writes.
+    }
+  }
+  return null;
+};
+
 export class ClaudeProviderModels implements IProviderModels {
   async getSupportedModels(): Promise<ProviderModelsDefinition> {
     // claude creates a new jsonl file as a separate session for this request.
@@ -310,5 +330,10 @@ export class ClaudeProviderModels implements IProviderModels {
     }
 
     return buildDefaultProviderCurrentActiveModel(await this.getSupportedModels());
+  }
+
+  async getSessionPermissionMode(sessionId: string): Promise<string | null> {
+    const jsonlPath = sessionsDb.getSessionById(sessionId)?.jsonl_path;
+    return jsonlPath ? readClaudeSessionPermissionModeFromJsonl(jsonlPath) : null;
   }
 }
