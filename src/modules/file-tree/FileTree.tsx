@@ -8,14 +8,25 @@ import { ICON_SIZE_CLASS, getFileIconData } from '@/modules/file-tree/utils/file
 import { useExpandedDirectories } from '@/modules/file-tree/hooks/useExpandedDirectories';
 import { useDirectoryPrefetch, useFileTreeData } from '@/modules/file-tree/hooks/useFileTreeData';
 import { useFileTreeOperations } from '@/modules/file-tree/hooks/useFileTreeOperations';
+import { useContentSearchFolders } from '@/modules/file-tree/hooks/useContentSearchFolders';
+import { useFileContentSearch } from '@/modules/file-tree/hooks/useFileContentSearch';
 import { useFileTreeSearch } from '@/modules/file-tree/hooks/useFileTreeSearch';
 import { useFileTreeViewMode } from '@/modules/file-tree/hooks/useFileTreeViewMode';
 import { useFileTreeUpload } from '@/modules/file-tree/hooks/useFileTreeUpload';
-import type { DirectoryRevealRequest, FileTreeImageSelection, FileTreeNode,Project } from '@/shared/types';
+import type {
+  CodeEditorDiffInfo,
+  DirectoryRevealRequest,
+  FileContentMatch,
+  FileTreeImageSelection,
+  FileTreeNode,
+  FileTreeSearchMode,
+  Project,
+} from '@/shared/types';
 import { findTreeNode, formatFileSize, formatRelativeTime, isImageFile } from '@/modules/file-tree/utils/fileTreeUtils';
 import { directoryRevealPaths } from '@/modules/file-tree/utils/revealDirectory';
 import { ScrollArea, Input } from '@/shared/ui';
 import FileTreeBody from '@/modules/file-tree/FileTreeBody';
+import FileTreeContentResults from '@/modules/file-tree/FileTreeContentResults';
 import FileTreeDetailedColumns from '@/modules/file-tree/FileTreeDetailedColumns';
 import FileTreeHeader from '@/modules/file-tree/FileTreeHeader';
 import FileTreeLoadingState from '@/modules/file-tree/FileTreeLoadingState';
@@ -25,7 +36,8 @@ import ImageViewer from '@/modules/file-tree/ImageViewer';
 
 type FileTreeProps = {
   selectedProject: Project | null;
-  onFileOpen?: (filePath: string) => void;
+  // `line` (1-based) and `character` (0-based) open the file at a content search match.
+  onFileOpen?: (filePath: string, diffInfo?: CodeEditorDiffInfo | null, line?: number, character?: number) => void;
   // Directory to reveal (from an in-chat `path/` reference): its ancestors are
   // expanded so the folder is visible without hunting through the tree.
   revealDirectory?: DirectoryRevealRequest | null;
@@ -61,12 +73,33 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
   );
   const { expandedDirs, toggleDirectory, expandDirectories, collapseAll } = useExpandedDirectories(projectRootPaths);
   useDirectoryPrefetch(files, expandedDirs, loadDirectories);
+  // Which search the box runs. It decides what the header offers and whether the tree or the content matches are drawn.
+  const [searchMode, setSearchMode] = useState<FileTreeSearchMode>('names');
+  // Content search options typed in the header; both are part of every content search request.
+  const [contentSearchRegex, setContentSearchRegex] = useState(false);
+  const [contentSearchGlobText, setContentSearchGlobText] = useState('');
   const { searchQuery, setSearchQuery, filteredFiles, visibleExpandedDirs, toggleVisibleDirectory } = useFileTreeSearch({
     projectId: selectedProject?.projectId,
     files,
     expandedDirs,
     toggleDirectory,
+    enabled: searchMode === 'names',
   });
+  const contentSearchFolders = useContentSearchFolders(selectedProject?.projectId, files);
+  const contentSearch = useFileContentSearch({
+    projectId: selectedProject?.projectId,
+    query: searchQuery,
+    regex: contentSearchRegex,
+    globText: contentSearchGlobText,
+    rootIndexes: contentSearchFolders.rootIndexes,
+    enabled: searchMode === 'contents',
+  });
+  // Until there is enough typed to search for, the tree itself stays on screen.
+  const showsContentResults = contentSearch.status !== 'idle';
+  const projectRootNames = useMemo(
+    () => files.filter((node) => node.isProjectRoot).map((node) => node.name),
+    [files],
+  );
 
   // The folder to open: an in-chat reference, or a folder picked from the search results.
   const [revealRequest, setRevealRequest] = useState<DirectoryRevealRequest | null>(revealDirectory ?? null);
@@ -162,7 +195,7 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
     (item: FileTreeNode) => {
       if (item.type === 'directory') {
         // A folder that matched the search by name is opened in the full tree, where its contents are.
-        if (searchQuery.trim() && !item.isProjectRoot && (item.children?.length ?? 0) === 0) {
+        if (searchMode === 'names' && searchQuery.trim() && !item.isProjectRoot && (item.children?.length ?? 0) === 0) {
           setSearchQuery('');
           setRevealRequest({ path: item.path });
           return;
@@ -185,7 +218,12 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
 
       onFileOpen?.(item.path);
     },
-    [onFileOpen, searchQuery, selectedProject, setSearchQuery, toggleVisibleDirectory],
+    [onFileOpen, searchMode, searchQuery, selectedProject, setSearchQuery, toggleVisibleDirectory],
+  );
+
+  const handleOpenContentMatch = useCallback(
+    (match: FileContentMatch) => onFileOpen?.(match.path, null, match.line, match.character),
+    [onFileOpen],
   );
 
   const formatRelativeTimeLabel = useCallback(
@@ -238,6 +276,14 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
         onViewModeChange={changeViewMode}
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
+        searchMode={searchMode}
+        onSearchModeChange={setSearchMode}
+        contentSearchRegex={contentSearchRegex}
+        onContentSearchRegexChange={setContentSearchRegex}
+        contentSearchGlobText={contentSearchGlobText}
+        onContentSearchGlobTextChange={setContentSearchGlobText}
+        contentSearchFolders={contentSearchFolders.folders}
+        onToggleContentSearchFolder={contentSearchFolders.toggleFolder}
         onUploadFiles={upload.handleFileSelect}
         onNewFile={() => operations.handleStartCreate('', 'file')}
         onNewFolder={() => operations.handleStartCreate('', 'directory')}
@@ -251,7 +297,7 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
 
       <FileTreeUploadProgress upload={upload.uploadProgress} />
 
-      {viewMode === 'detailed' && filteredFiles.length > 0 && <FileTreeDetailedColumns />}
+      {viewMode === 'detailed' && filteredFiles.length > 0 && !showsContentResults && <FileTreeDetailedColumns />}
 
       <ScrollArea className="flex-1 px-2 py-1">
         {/* New item input */}
@@ -286,36 +332,45 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
           </div>
         )}
 
-        <FileTreeBody
-          files={files}
-          filteredFiles={filteredFiles}
-          error={error}
-          searchQuery={searchQuery}
-          viewMode={viewMode}
-          expandedDirs={visibleExpandedDirs}
-          onItemClick={handleItemClick}
-          renderFileIcon={renderFileIcon}
-          formatFileSize={formatFileSize}
-          formatRelativeTime={formatRelativeTimeLabel}
-          onRename={operations.handleStartRename}
-          onDelete={operations.handleStartDelete}
-          onNewFile={(path) => operations.handleStartCreate(path, 'file')}
-          onNewFolder={(path) => operations.handleStartCreate(path, 'directory')}
-          onCopyPath={operations.handleCopyPath}
-          onDownload={operations.handleDownload}
-          onUpload={handleUploadToFolder}
-          onRefresh={refreshFiles}
-          dropTarget={upload.dropTarget}
-          onItemDragOver={upload.handleItemDragOver}
-          // Pass rename state and handlers for inline editing
-          renamingItem={operations.renamingItem}
-          renameValue={operations.renameValue}
-          setRenameValue={operations.setRenameValue}
-          handleConfirmRename={operations.handleConfirmRename}
-          handleCancelRename={operations.handleCancelRename}
-          renameInputRef={renameInputRef}
-          operationLoading={operationLoading}
-        />
+        {showsContentResults ? (
+          <FileTreeContentResults
+            search={contentSearch}
+            folderNames={projectRootNames}
+            renderFileIcon={renderFileIcon}
+            onOpenMatch={handleOpenContentMatch}
+          />
+        ) : (
+          <FileTreeBody
+            files={files}
+            filteredFiles={filteredFiles}
+            error={error}
+            searchQuery={searchQuery}
+            viewMode={viewMode}
+            expandedDirs={visibleExpandedDirs}
+            onItemClick={handleItemClick}
+            renderFileIcon={renderFileIcon}
+            formatFileSize={formatFileSize}
+            formatRelativeTime={formatRelativeTimeLabel}
+            onRename={operations.handleStartRename}
+            onDelete={operations.handleStartDelete}
+            onNewFile={(path) => operations.handleStartCreate(path, 'file')}
+            onNewFolder={(path) => operations.handleStartCreate(path, 'directory')}
+            onCopyPath={operations.handleCopyPath}
+            onDownload={operations.handleDownload}
+            onUpload={handleUploadToFolder}
+            onRefresh={refreshFiles}
+            dropTarget={upload.dropTarget}
+            onItemDragOver={upload.handleItemDragOver}
+            // Pass rename state and handlers for inline editing
+            renamingItem={operations.renamingItem}
+            renameValue={operations.renameValue}
+            setRenameValue={operations.setRenameValue}
+            handleConfirmRename={operations.handleConfirmRename}
+            handleCancelRename={operations.handleCancelRename}
+            renameInputRef={renameInputRef}
+            operationLoading={operationLoading}
+          />
+        )}
       </ScrollArea>
 
       {selectedImage && (

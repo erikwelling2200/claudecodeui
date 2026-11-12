@@ -4,6 +4,7 @@ import { rgPath } from '@vscode/ripgrep';
 import { spawn } from 'cross-spawn';
 
 import type { FileTreeFileIndexDependencies } from '@/shared/types.js';
+import { SEARCH_SKIPPED_FOLDER_NAMES } from '@/shared/utils.js';
 
 /**
  * Lists a folder's files with ripgrep, which honours every `.gitignore` in the
@@ -14,7 +15,7 @@ export const listFilesWithRipgrep: FileTreeFileIndexDependencies['listFiles'] = 
   new Promise((resolve, reject) => {
     const args = [
       '--files', '--hidden', '--no-require-git', '--no-messages', '--null', '--path-separator', '/',
-      '--glob', '!.git', '--glob', '!node_modules', '--glob', '!.svn', '--glob', '!.hg',
+      ...SEARCH_SKIPPED_FOLDER_NAMES.flatMap((folderName) => ['--glob', `!${folderName}`]),
     ];
     const ripgrep = spawn(rgPath, args, { cwd: folderPath, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     const chunks: Buffer[] = [];

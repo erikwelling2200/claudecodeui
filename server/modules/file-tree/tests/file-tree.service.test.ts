@@ -75,6 +75,12 @@ function createFakeFileSystem(
   };
 }
 
+const unusedContentSearch: FileTreeServiceDependencies['contentSearch'] = {
+  search: async () => {
+    throw new Error('Unexpected content search');
+  },
+};
+
 const unusedFileIndex: FileTreeServiceDependencies['fileIndex'] = {
   warm: () => undefined,
   search: async () => {
@@ -99,6 +105,7 @@ function createDependencies(
     resolveMimeType: () => 'text/plain',
     fileSystemConcurrency: 4,
     fileIndex: unusedFileIndex,
+    contentSearch: unusedContentSearch,
     logger: { error: () => undefined },
   };
 }
@@ -406,6 +413,7 @@ function createRealFileSystemService(
     resolveMimeType: () => 'text/plain',
     fileSystemConcurrency: 4,
     fileIndex: unusedFileIndex,
+    contentSearch: unusedContentSearch,
     logger: { error: () => undefined },
   });
 }

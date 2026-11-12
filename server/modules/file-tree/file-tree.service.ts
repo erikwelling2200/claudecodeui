@@ -659,6 +659,11 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       return dependencies.fileIndex.search(folders.all, query, options);
     },
 
+    async searchProjectFileContents(projectId, query, options, run) {
+      const folders = await resolveProjectFolders(projectId);
+      return dependencies.contentSearch.search(folders.all, query, options, run);
+    },
+
     async createEntry(input) {
       validateFilename(input.name);
       const folders = await resolveProjectFolders(input.projectId);
