@@ -1,18 +1,28 @@
 import { useRef } from 'react';
 import type { ChangeEvent } from 'react';
-import { ChevronDown, Eye, FileText, FolderPlus, List, Loader2, RefreshCw, Search, TableProperties, Upload, X } from 'lucide-react';
+import { Check, ChevronDown, Eye, FileText, FolderPlus, List, Loader2, RefreshCw, Regex, Search, TableProperties, TextSearch, Upload, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Button, Input } from '@/shared/ui';
 import { cn } from '@/shared/utils';
 import { MAX_FILE_UPLOAD_SIZE_LABEL } from '@/shared/constants';
-import type { FileTreeViewMode } from '@/shared/types';
+import type { ContentSearchFolder, FileTreeSearchMode, FileTreeViewMode } from '@/shared/types';
 
 type FileTreeHeaderProps = {
   viewMode: FileTreeViewMode;
   onViewModeChange: (mode: FileTreeViewMode) => void;
   searchQuery: string;
   onSearchQueryChange: (query: string) => void;
+  searchMode: FileTreeSearchMode;
+  onSearchModeChange: (mode: FileTreeSearchMode) => void;
+  // Content search options, shown while the search box searches inside files
+  contentSearchRegex: boolean;
+  onContentSearchRegexChange: (regex: boolean) => void;
+  contentSearchGlobText: string;
+  onContentSearchGlobTextChange: (globText: string) => void;
+  // Empty for a single-folder project, which has nothing to choose from.
+  contentSearchFolders: ContentSearchFolder[];
+  onToggleContentSearchFolder: (folderPath: string) => void;
   // Toolbar actions
   onNewFile?: () => void;
   onNewFolder?: () => void;
@@ -26,12 +36,20 @@ type FileTreeHeaderProps = {
   uploadProgress?: number | null;
 };
 
-/** Rendered by FileTree to host the search box, view-mode switch and the create/upload/refresh/collapse actions. */
+/** Rendered by FileTree to host the search box with its names/contents switch and content search options, the view-mode switch and the create/upload/refresh/collapse actions. */
 export default function FileTreeHeader({
   viewMode,
   onViewModeChange,
   searchQuery,
   onSearchQueryChange,
+  searchMode,
+  onSearchModeChange,
+  contentSearchRegex,
+  onContentSearchRegexChange,
+  contentSearchGlobText,
+  onContentSearchGlobTextChange,
+  contentSearchFolders,
+  onToggleContentSearchFolder,
   onNewFile,
   onNewFolder,
   onUploadFiles,
@@ -44,6 +62,7 @@ export default function FileTreeHeader({
 }: FileTreeHeaderProps) {
   const { t } = useTranslation();
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const searchesContents = searchMode === 'contents';
 
   const handleUploadInputChange = (event: ChangeEvent<HTMLInputElement>) => {
     const { files } = event.target;
@@ -192,28 +211,90 @@ export default function FileTreeHeader({
       </div>
 
       {/* Search Bar */}
-      <div className="relative">
-        <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          type="text"
-          placeholder={t('fileTree.searchPlaceholder')}
-          value={searchQuery}
-          onChange={(event) => onSearchQueryChange(event.target.value)}
-          className="h-8 pl-8 pr-8 text-sm"
-        />
-        {searchQuery && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="absolute right-0.5 top-1/2 h-5 w-5 -translate-y-1/2 p-0 hover:bg-accent"
-            onClick={() => onSearchQueryChange('')}
-            title={t('fileTree.clearSearch')}
-            aria-label={t('fileTree.clearSearch')}
-          >
-            <X className="h-3 w-3" />
-          </Button>
-        )}
+      <div className="flex items-center gap-1">
+        <div className="relative min-w-0 flex-1">
+          <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="text"
+            placeholder={t(searchesContents ? 'fileTree.contentSearchPlaceholder' : 'fileTree.searchPlaceholder')}
+            value={searchQuery}
+            onChange={(event) => onSearchQueryChange(event.target.value)}
+            className="h-8 pl-8 pr-8 text-sm"
+          />
+          {searchQuery && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-0.5 top-1/2 h-5 w-5 -translate-y-1/2 p-0 hover:bg-accent"
+              onClick={() => onSearchQueryChange('')}
+              title={t('fileTree.clearSearch')}
+              aria-label={t('fileTree.clearSearch')}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          )}
+        </div>
+        <Button
+          variant={searchesContents ? 'default' : 'ghost'}
+          size="sm"
+          className="h-8 w-8 flex-shrink-0 p-0"
+          onClick={() => onSearchModeChange(searchesContents ? 'names' : 'contents')}
+          title={t(searchesContents ? 'fileTree.searchInNames' : 'fileTree.searchInContents')}
+          aria-label={t(searchesContents ? 'fileTree.searchInNames' : 'fileTree.searchInContents')}
+          aria-pressed={searchesContents}
+        >
+          <TextSearch className="h-3.5 w-3.5" />
+        </Button>
       </div>
+
+      {searchesContents && (
+        <div className="flex items-center gap-1">
+          <Input
+            type="text"
+            placeholder="*.cs, !*.meta"
+            value={contentSearchGlobText}
+            onChange={(event) => onContentSearchGlobTextChange(event.target.value)}
+            className="h-7 min-w-0 flex-1 font-mono text-xs"
+            title={t('fileTree.contentSearchFilter')}
+            aria-label={t('fileTree.contentSearchFilter')}
+            spellCheck={false}
+          />
+          <Button
+            variant={contentSearchRegex ? 'default' : 'ghost'}
+            size="sm"
+            className="h-7 w-8 flex-shrink-0 p-0"
+            onClick={() => onContentSearchRegexChange(!contentSearchRegex)}
+            title={t('fileTree.contentSearchRegex')}
+            aria-label={t('fileTree.contentSearchRegex')}
+            aria-pressed={contentSearchRegex}
+          >
+            <Regex className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
+
+      {searchesContents && contentSearchFolders.length > 0 && (
+        <div className="flex flex-wrap gap-1" role="group" aria-label={t('fileTree.contentSearchFolders')}>
+          {contentSearchFolders.map((folder) => (
+            <button
+              key={folder.path}
+              type="button"
+              onClick={() => onToggleContentSearchFolder(folder.path)}
+              aria-pressed={folder.selected}
+              title={folder.path}
+              className={cn(
+                'flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors',
+                folder.selected
+                  ? 'border-primary/40 bg-primary/10 text-foreground'
+                  : 'border-border text-muted-foreground hover:bg-accent/60',
+              )}
+            >
+              {folder.selected && <Check className="h-3 w-3 flex-shrink-0" />}
+              <span className="truncate">{folder.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -34,6 +34,52 @@ function readRequiredString(value: unknown, fieldName: string, message?: string)
 }
 
 const MAXIMUM_SEARCH_RESULTS = 1000;
+const MAXIMUM_CONTENT_SEARCH_MATCHES = 1000;
+const DEFAULT_CONTENT_SEARCH_MATCHES = 500;
+const MINIMUM_CONTENT_SEARCH_QUERY_LENGTH = 2;
+const MAXIMUM_CONTENT_SEARCH_QUERY_LENGTH = 1000;
+const MAXIMUM_CONTENT_SEARCH_GLOBS = 20;
+
+function createContentSearchRequestError(message: string): AppError {
+  return new AppError(message, { code: 'INVALID_CONTENT_SEARCH_REQUEST', statusCode: 400 });
+}
+
+// Leading and trailing spaces are part of what is searched for, so the query is measured trimmed but passed on as typed.
+function readContentSearchQuery(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length < MINIMUM_CONTENT_SEARCH_QUERY_LENGTH) {
+    throw createContentSearchRequestError(`Search for at least ${MINIMUM_CONTENT_SEARCH_QUERY_LENGTH} characters`);
+  }
+  if (value.length > MAXIMUM_CONTENT_SEARCH_QUERY_LENGTH) {
+    throw createContentSearchRequestError('Search query is too long');
+  }
+  return value;
+}
+
+// A glob can hold commas (`*.{cs,ts}`), so each one is its own `glob` parameter.
+function readContentSearchGlobs(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : value === undefined ? [] : [value];
+  const globs = values
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((glob) => glob.trim())
+    .filter(Boolean);
+  if (globs.length > MAXIMUM_CONTENT_SEARCH_GLOBS) {
+    throw createContentSearchRequestError(`At most ${MAXIMUM_CONTENT_SEARCH_GLOBS} file filters are allowed`);
+  }
+  return globs;
+}
+
+// Comma-separated positions in the project's folder list; absent means every folder.
+function readContentSearchRootIndexes(value: unknown): number[] | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  return value.split(',').filter(Boolean).map((entry) => {
+    if (!/^\d+$/.test(entry)) {
+      throw createContentSearchRequestError('roots must be a list of folder positions');
+    }
+    return Number.parseInt(entry, 10);
+  });
+}
 
 function readOptionalString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
@@ -197,6 +243,57 @@ export function createFileTreeRouter(
       limit,
       type: request.query.type === 'file' ? 'file' : 'any',
     }));
+  }, logger));
+
+  // Server-sent events: `matches` while the search runs, then one `done` or `error`.
+  router.get('/projects/:projectId/files/search-content', createRouteHandler(async (request, response) => {
+    const projectId = readProjectId(request);
+    const query = readContentSearchQuery(request.query.q);
+    const options = {
+      regex: request.query.regex === 'true',
+      globs: readContentSearchGlobs(request.query.glob),
+      rootIndexes: readContentSearchRootIndexes(request.query.roots),
+      limit: Math.min(
+        MAXIMUM_CONTENT_SEARCH_MATCHES,
+        Math.max(1, readOptionalInteger(request.query.limit) ?? DEFAULT_CONTENT_SEARCH_MATCHES),
+      ),
+    };
+
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const abortController = new AbortController();
+    // The response, not the request: a GET's request stream can close before the client goes away.
+    response.on('close', () => {
+      if (!response.writableEnded) {
+        abortController.abort();
+      }
+    });
+    const sendEvent = (eventName: string, data: unknown): void => {
+      if (!abortController.signal.aborted) {
+        response.write(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`);
+      }
+    };
+
+    try {
+      const { truncated } = await services.searchProjectFileContents(projectId, query, options, {
+        signal: abortController.signal,
+        onMatches: (matches) => sendEvent('matches', { matches }),
+      });
+      sendEvent('done', { truncated });
+    } catch (error) {
+      // The headers are out, so a failure travels as an event instead of a status code.
+      if (!(error instanceof AppError)) {
+        logger.error('File Tree content search error', error);
+      }
+      sendEvent('error', { error: error instanceof AppError ? error.message : 'Search failed' });
+    } finally {
+      response.end();
+    }
   }, logger));
 
   router.post('/projects/:projectId/files/create', createRouteHandler(async (request, response) => {

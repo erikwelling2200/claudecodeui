@@ -1067,6 +1067,52 @@ export type FileSearchResult = {
   rootIndex: number;
 };
 
+/** Which search the file tree's search box runs: file and folder names, or the text inside files. */
+export type FileTreeSearchMode = 'names' | 'contents';
+
+/** One matching line of the server's content search. `character` points into the whole line (what the editor jumps to); `highlights` point into `snippet`, the line cut to a window around the first match. */
+export type FileContentMatch = {
+  path: string;
+  relativePath: string;
+  rootPath: string;
+  // Position of the project folder that holds the file; 0 is the primary folder.
+  rootIndex: number;
+  // 1-based.
+  line: number;
+  // 0-based offset of the first match within the line.
+  character: number;
+  snippet: string;
+  highlights: SnippetHighlight[];
+};
+
+/** The matching lines of one file, in the order found; one group in the file tree's content results. */
+export type FileContentFileMatches = {
+  path: string;
+  relativePath: string;
+  rootIndex: number;
+  matches: FileContentMatch[];
+};
+
+/** What the file tree shows for a content search: the matches received so far, grouped per file, and how far the search is. */
+export type FileContentSearchState = {
+  files: FileContentFileMatches[];
+  matchCount: number;
+  // `idle` means there is nothing to search for; the other three describe a search for the current input.
+  status: 'idle' | 'searching' | 'done' | 'error';
+  // The server stopped at its result limit with more to find.
+  truncated: boolean;
+  // The server's explanation of a rejected pattern or file filter; null when the connection itself failed.
+  error: string | null;
+};
+
+/** A project folder of a multi-folder project, as a choice for where a content search looks. `rootIndex` is its position in the project's folder list. */
+export type ContentSearchFolder = {
+  path: string;
+  name: string;
+  rootIndex: number;
+  selected: boolean;
+};
+
 /** The image the file tree asked to preview, carrying the path plus the DB `projectId` the image viewer needs to build its raw content URL. */
 export type FileTreeImageSelection = {
   name: string;

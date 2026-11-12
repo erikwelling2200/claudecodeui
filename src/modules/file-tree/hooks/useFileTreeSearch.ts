@@ -10,6 +10,8 @@ type UseFileTreeSearchArgs = {
   files: FileTreeNode[];
   expandedDirs: Set<string>;
   toggleDirectory: (path: string) => void;
+  // False while the search box searches inside files instead of names.
+  enabled: boolean;
 };
 
 type UseFileTreeSearchResult = {
@@ -31,12 +33,13 @@ export function useFileTreeSearch({
   files,
   expandedDirs,
   toggleDirectory,
+  enabled,
 }: UseFileTreeSearchArgs): UseFileTreeSearchResult {
   const [searchQuery, setSearchQuery] = useState('');
   // The latest answer; kept on screen while the next keystroke's search runs.
   const [results, setResults] = useState<FileSearchResult[] | null>(null);
   const [collapsedInResults, setCollapsedInResults] = useState<Set<string>>(() => new Set());
-  const query = searchQuery.trim();
+  const query = enabled ? searchQuery.trim() : '';
 
   useEffect(() => {
     if (!query || !projectId) {

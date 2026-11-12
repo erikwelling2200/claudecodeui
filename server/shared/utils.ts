@@ -514,6 +514,14 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
 // ---------------------------
 //----------------- PROJECT FOLDER PATH UTILITIES ------------
 /**
+ * Folder names no project search ever descends into, whatever `.gitignore`
+ * says: version-control stores and installed dependencies. Used by the File
+ * Tree's file-name index (listing and change filtering) and its content
+ * search, so both cover exactly the same files.
+ */
+export const SEARCH_SKIPPED_FOLDER_NAMES: readonly string[] = ['.git', 'node_modules', '.svn', '.hg'];
+
+/**
  * Key under which two spellings of the same folder compare equal.
  *
  * Normalizes with `normalizeProjectPath` and, on Windows, lower-cases the

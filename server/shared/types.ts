@@ -1654,6 +1654,81 @@ export type FileTreeFileIndexDependencies = {
 };
 
 /**
+ * One line of a project file that matched a content search.
+ *
+ * `character` points into the whole line and is what the editor jumps to;
+ * `highlights` point into `snippet`, which is the line cut down to a window
+ * around the first match so a minified file cannot send megabytes per result.
+ */
+export type FileContentMatch = {
+  /** Absolute, with the platform's separators, like `FileTreeNode.path`. */
+  path: string;
+  /** Relative to `rootPath`, always with `/`. */
+  relativePath: string;
+  /** The project folder the file belongs to. */
+  rootPath: string;
+  /** Position of `rootPath` among the project's folders; 0 is the primary folder. */
+  rootIndex: number;
+  /** 1-based line number. */
+  line: number;
+  /** 0-based UTF-16 offset of the first match within the line. */
+  character: number;
+  snippet: string;
+  /** Matched ranges within `snippet`, end exclusive. */
+  highlights: Array<{ start: number; end: number }>;
+};
+
+/**
+ * What a content search looks for besides the query itself.
+ *
+ * `globs` are ripgrep globs (`*.cs` to include, `!*.meta` to exclude).
+ * `rootIndexes` picks project folders by their position in the project's
+ * folder list, so a client can never name a folder outside the project;
+ * absent means every folder.
+ */
+export type FileContentSearchOptions = {
+  regex: boolean;
+  globs: string[];
+  /** The search stops once this many matching lines were reported. */
+  limit: number;
+  rootIndexes?: number[];
+};
+
+/**
+ * How a running content search reports back: matches arrive in batches while
+ * the search is still going, and aborting `signal` ends it early.
+ */
+export type FileContentSearchRun = {
+  signal: AbortSignal;
+  onMatches(matches: FileContentMatch[]): void;
+};
+
+/** Content search over project folders, injected into the File Tree service. */
+export type FileTreeContentSearch = {
+  /** `truncated` is true when the search stopped at `options.limit` with more to find. */
+  search(
+    folderPaths: string[],
+    query: string,
+    options: FileContentSearchOptions,
+    run: FileContentSearchRun,
+  ): Promise<{ truncated: boolean }>;
+};
+
+export type FileTreeContentSearchDependencies = {
+  /**
+   * Runs ripgrep with `args` inside `folderPath` and hands over its standard
+   * output as whole lines, a batch per chunk read. Aborting `signal` kills the
+   * process. Resolves once it exited; `errorOutput` is what it wrote to
+   * standard error.
+   */
+  runRipgrep(
+    folderPath: string,
+    args: string[],
+    run: { signal: AbortSignal; onLines(lines: string[]): void },
+  ): Promise<{ exitCode: number | null; errorOutput: string }>;
+};
+
+/**
  * Required production dependencies for the File Tree application service.
  *
  * Filesystem, project lookup, workspace policy, MIME detection, concurrency,
@@ -1667,6 +1742,7 @@ export type FileTreeServiceDependencies = {
   resolveMimeType(filePath: string): string;
   fileSystemConcurrency: number;
   fileIndex: FileTreeFileIndex;
+  contentSearch: FileTreeContentSearch;
   logger: FileTreeLogger;
 };
 
@@ -1709,6 +1785,13 @@ export type FileTreeServices = {
     query: string,
     options: { limit: number; type: 'file' | 'any' },
   ): Promise<{ results: FileSearchResult[]; truncated: boolean }>;
+  /** Searches inside the project's files; matches are reported through `run` while it runs. */
+  searchProjectFileContents(
+    projectId: string,
+    query: string,
+    options: FileContentSearchOptions,
+    run: FileContentSearchRun,
+  ): Promise<{ truncated: boolean }>;
   createEntry(input: {
     projectId: string;
     parentPath: string;

@@ -338,6 +338,20 @@ export const api = {
     { limit, type }: { limit: number; type: 'file' | 'any' },
     options: ApiRequestOptions = {},
   ) => get(`/api/file-tree/projects/${projectId}/files/search${query({ q: searchQuery, limit, type })}`, options),
+  // An EventSource URL: matches stream in while the search runs. A glob can hold
+  // commas (`*.{cs,ts}`), so each one is its own `glob` parameter. `rootIndexes`
+  // absent searches every project folder.
+  searchFileContentsUrl: (
+    projectId: string,
+    searchQuery: string,
+    { regex, globs, rootIndexes }: { regex: boolean; globs: string[]; rootIndexes?: number[] },
+  ) =>
+    `/api/file-tree/projects/${projectId}/files/search-content${query({
+      q: searchQuery,
+      regex,
+      roots: rootIndexes?.join(','),
+      token: getStoredAuthToken(),
+    })}${globs.map((glob) => `&glob=${encodeURIComponent(glob)}`).join('')}`,
 
   // C# semantic layer served by Roslyn. Each call sends the editor's own text, so unsaved edits are understood.
   csharpLanguage: {

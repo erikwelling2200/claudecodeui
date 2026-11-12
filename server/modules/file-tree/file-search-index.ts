@@ -7,7 +7,7 @@ import type {
   FileTreeFileIndex,
   FileTreeFileIndexDependencies,
 } from '@/shared/types.js';
-import { getPathComparisonKey, isPathInsideFolder } from '@/shared/utils.js';
+import { SEARCH_SKIPPED_FOLDER_NAMES, getPathComparisonKey, isPathInsideFolder } from '@/shared/utils.js';
 
 // Without a search for this long, a folder's index and its watcher are dropped.
 const IDLE_DISPOSE_MILLISECONDS = 10 * 60 * 1000;
@@ -16,7 +16,7 @@ const REBUILD_DEBOUNCE_MILLISECONDS = 400;
 // Where no watcher could be started, an index older than this is rebuilt before a search.
 const UNWATCHED_MAXIMUM_AGE_MILLISECONDS = 30 * 1000;
 
-const ALWAYS_SKIPPED_SEGMENTS = new Set(['.git', 'node_modules', '.svn', '.hg']);
+const ALWAYS_SKIPPED_SEGMENTS = new Set(SEARCH_SKIPPED_FOLDER_NAMES);
 
 type IndexEntry = {
   relativePath: string;

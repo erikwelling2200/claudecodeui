@@ -6,6 +6,8 @@ import mime from 'mime-types';
 import multer from 'multer';
 
 import { projectsDb } from '@/modules/database/index.js';
+import { createFileContentSearch } from '@/modules/file-tree/file-content-search.js';
+import { runRipgrepJson } from '@/modules/file-tree/file-content-search.adapters.js';
 import { createFileSearchIndex } from '@/modules/file-tree/file-search-index.js';
 import { listFilesWithRipgrep, watchFolderRecursively } from '@/modules/file-tree/file-search-index.adapters.js';
 import { createFileTreeRouter } from '@/modules/file-tree/file-tree.routes.js';
@@ -95,6 +97,7 @@ const fileTreeServices = createFileTreeService({
   resolveMimeType: (filePath) => mime.lookup(filePath) || 'application/octet-stream',
   fileSystemConcurrency: readFileSystemConcurrency(),
   fileIndex: fileSearchIndex,
+  contentSearch: createFileContentSearch({ runRipgrep: runRipgrepJson }),
   logger: fileTreeLogger,
 });
 

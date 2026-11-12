@@ -6,7 +6,8 @@ import test from 'node:test';
 import express, { type RequestHandler } from 'express';
 
 import { createFileTreeRouter } from '@/modules/file-tree/file-tree.routes.js';
-import type { FileTreeServices } from '@/shared/types.js';
+import type { FileContentMatch, FileContentSearchOptions, FileTreeServices } from '@/shared/types.js';
+import { AppError } from '@/shared/utils.js';
 
 function createFakeServices(overrides: Partial<FileTreeServices> = {}): FileTreeServices {
   const unexpectedOperation = async (): Promise<never> => {
@@ -22,6 +23,7 @@ function createFakeServices(overrides: Partial<FileTreeServices> = {}): FileTree
     listProjectFiles: unexpectedOperation,
     listDirectoryChildren: unexpectedOperation,
     searchProjectFiles: unexpectedOperation,
+    searchProjectFileContents: unexpectedOperation,
     createEntry: unexpectedOperation,
     renameEntry: unexpectedOperation,
     deleteEntry: unexpectedOperation,
@@ -209,4 +211,122 @@ test('create route rejects invalid entry types without calling the service', asy
   });
 
   assert.equal(createCalled, false);
+});
+
+test('content search route streams matches as events and ends with done', async () => {
+  const inputs: Array<[string, string, FileContentSearchOptions]> = [];
+  const match: FileContentMatch = {
+    path: '/project/src/main.ts',
+    relativePath: 'src/main.ts',
+    rootPath: '/project',
+    rootIndex: 0,
+    line: 3,
+    character: 6,
+    snippet: 'const needle = 1;',
+    highlights: [{ start: 6, end: 12 }],
+  };
+  const services = createFakeServices({
+    searchProjectFileContents: async (projectId, query, options, run) => {
+      inputs.push([projectId, query, options]);
+      run.onMatches([match]);
+      return { truncated: true };
+    },
+  });
+
+  await withFileTreeServer(services, async (baseUrl) => {
+    const response = await fetch(
+      `${baseUrl}/api/file-tree/projects/project-1/files/search-content`
+      + '?q=%20needle&regex=true&glob=*.%7Bcs,ts%7D&glob=!*.meta&roots=0,2&limit=99999',
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'text/event-stream');
+    assert.equal(
+      await response.text(),
+      `event: matches\ndata: ${JSON.stringify({ matches: [match] })}\n\nevent: done\ndata: {"truncated":true}\n\n`,
+    );
+  });
+
+  assert.deepEqual(inputs, [['project-1', ' needle', {
+    regex: true,
+    globs: ['*.{cs,ts}', '!*.meta'],
+    rootIndexes: [0, 2],
+    limit: 1000,
+  }]]);
+});
+
+test('content search route searches every folder literally when no options are given', async () => {
+  const inputs: FileContentSearchOptions[] = [];
+  const services = createFakeServices({
+    searchProjectFileContents: async (_projectId, _query, options) => {
+      inputs.push(options);
+      return { truncated: false };
+    },
+  });
+
+  await withFileTreeServer(services, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/search-content?q=needle`);
+    assert.equal(await response.text(), 'event: done\ndata: {"truncated":false}\n\n');
+  });
+
+  assert.deepEqual(inputs, [{ regex: false, globs: [], rootIndexes: undefined, limit: 500 }]);
+});
+
+test('content search route rejects a short query and a malformed folder list before searching', async () => {
+  const services = createFakeServices();
+
+  await withFileTreeServer(services, async (baseUrl) => {
+    const shortQuery = await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/search-content?q=%20a%20`);
+    assert.equal(shortQuery.status, 400);
+
+    const badRoots = await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/search-content?q=needle&roots=0,x`);
+    assert.equal(badRoots.status, 400);
+  });
+});
+
+test('content search route reports a search failure as an error event', async () => {
+  const services = createFakeServices({
+    searchProjectFileContents: async () => {
+      throw new AppError('unclosed group', { code: 'INVALID_CONTENT_SEARCH', statusCode: 400 });
+    },
+  });
+
+  await withFileTreeServer(services, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/search-content?q=a(&regex=true`);
+
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'event: error\ndata: {"error":"unclosed group"}\n\n');
+  });
+});
+
+test('content search route aborts the search when the client disconnects', async () => {
+  let searchSignal: AbortSignal | null = null;
+  let reportSearchEnded: () => void = () => undefined;
+  const searchEnded = new Promise<void>((resolve) => {
+    reportSearchEnded = resolve;
+  });
+  const services = createFakeServices({
+    searchProjectFileContents: (_projectId, _query, _options, run) => new Promise((resolve) => {
+      searchSignal = run.signal;
+      run.signal.addEventListener('abort', () => {
+        resolve({ truncated: false });
+        reportSearchEnded();
+      });
+      run.onMatches([]);
+    }),
+  });
+
+  await withFileTreeServer(services, async (baseUrl) => {
+    const clientAbort = new AbortController();
+    const response = await fetch(
+      `${baseUrl}/api/file-tree/projects/project-1/files/search-content?q=needle`,
+      { signal: clientAbort.signal },
+    );
+    // The first event has arrived, so the search is running when the client leaves.
+    await response.body?.getReader().read();
+    clientAbort.abort();
+    await searchEnded;
+  });
+
+  assert.equal((searchSignal as AbortSignal | null)?.aborted, true);
 });
