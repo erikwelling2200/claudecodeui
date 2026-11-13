@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { useCallback, useState } from 'react';
 import { test, vi } from 'vitest';
 
 import type { CodeEditorFile, Project } from '@/shared/types';
 
 /**
- * Regression guard for #870: the editor closed on the header X or a
- * click on another file and silently threw away whatever had been typed. A
- * dirty buffer now asks first; a clean one — including right after a save —
- * still closes without a word.
+ * Regression guard for #870: the editor closed on an X or a click on another
+ * file and silently threw away whatever had been typed. A dirty buffer now asks
+ * first; a clean one — including right after a save — still closes without a word.
+ * Files close from their tab only, so closing is exercised through EditorSidebar.
  */
 
 const readFile = vi.fn(async () => ({ ok: true, json: async () => ({ content: 'hello' }) }));
@@ -42,13 +43,58 @@ vi.mock('@uiw/react-codemirror', () => {
 
 const { default: CodeEditor } = await import('@/modules/code-editor/CodeEditor');
 const { useEditorSidebar } = await import('@/modules/code-editor/hooks/useEditorSidebar');
+const { default: EditorSidebar } = await import('@/modules/code-editor/EditorSidebar');
+
+globalThis.ResizeObserver ??= class {
+  observe() {}
+
+  unobserve() {}
+
+  disconnect() {}
+} as unknown as typeof ResizeObserver;
 
 const file: CodeEditorFile = { name: 'a.txt', path: '/repo/a.txt', projectId: 'p1' };
 const otherFile: CodeEditorFile = { name: 'b.txt', path: '/repo/b.txt', projectId: 'p1' };
 
 const renderEditor = async (onUnsavedChangesChange?: (dirty: boolean) => void) => {
+  render(<CodeEditor file={file} onUnsavedChangesChange={onUnsavedChangesChange} />);
+  const editor = await screen.findByTestId<HTMLTextAreaElement>('editor');
+  await waitFor(() => assert.equal(editor.value, 'hello'));
+  return { editor };
+};
+
+// The sidebar is told which tabs are dirty by its owner, so this plays that owner.
+function SidebarHarness({ onCloseTab }: { onCloseTab: (tabKey: string) => void }) {
+  const tabKey = 'p1|/repo/a.txt';
+  const [dirtyTabKeys, setDirtyTabKeys] = useState<ReadonlySet<string>>(new Set());
+  // Stable, as the real owner's is: a new callback per render would re-run the editor's report effect forever.
+  const handleUnsavedChangesChange = useCallback(
+    (key: string, dirty: boolean) => setDirtyTabKeys(dirty ? new Set([key]) : new Set()),
+    [],
+  );
+  return (
+    <EditorSidebar
+      tabs={[{ key: tabKey, file, gotoTarget: null }]}
+      activeTabKey={tabKey}
+      dirtyTabKeys={dirtyTabKeys}
+      isMobile={false}
+      editorExpanded={false}
+      editorHidden={false}
+      editorWidth={600}
+      resizeHandleRef={{ current: null }}
+      onResizeStart={() => undefined}
+      onActivateTab={() => undefined}
+      onCloseTab={onCloseTab}
+      onToggleEditorExpand={() => undefined}
+      onUnsavedChangesChange={handleUnsavedChangesChange}
+      projectPath="/repo"
+    />
+  );
+}
+
+const renderSidebarWithTab = async () => {
   const onClose = vi.fn();
-  render(<CodeEditor file={file} onClose={onClose} onUnsavedChangesChange={onUnsavedChangesChange} />);
+  render(<SidebarHarness onCloseTab={onClose} />);
   const editor = await screen.findByTestId<HTMLTextAreaElement>('editor');
   await waitFor(() => assert.equal(editor.value, 'hello'));
   return { onClose, editor };
@@ -60,7 +106,7 @@ const typeInto = (editor: HTMLTextAreaElement, value: string) => {
 
 // No i18n instance is initialised here, so labels without a default render as their key.
 const pressClose = () => {
-  fireEvent.click(screen.getByTitle('actions.close'));
+  fireEvent.click(screen.getByLabelText('tabs.close a.txt'));
 };
 
 // Compared as a boolean rather than against the element: a failed
@@ -70,7 +116,7 @@ const isDirtyDotShown = () => screen.queryByLabelText('Unsaved changes') !== nul
 
 test('closing with unsaved edits asks first and stays open when declined', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-  const { onClose, editor } = await renderEditor();
+  const { onClose, editor } = await renderSidebarWithTab();
 
   typeInto(editor, 'hello edited');
   pressClose();
@@ -84,7 +130,7 @@ test('closing with unsaved edits asks first and stays open when declined', async
 
 test('closing with unsaved edits closes once the user accepts', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
-  const { onClose, editor } = await renderEditor();
+  const { onClose, editor } = await renderSidebarWithTab();
 
   typeInto(editor, 'hello edited');
   pressClose();
@@ -95,7 +141,7 @@ test('closing with unsaved edits closes once the user accepts', async () => {
 
 test('closing a clean buffer does not ask', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-  const { onClose } = await renderEditor();
+  const { onClose } = await renderSidebarWithTab();
 
   pressClose();
 
@@ -105,7 +151,7 @@ test('closing a clean buffer does not ask', async () => {
 
 test('Escape never closes the editor', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-  const { onClose, editor } = await renderEditor();
+  const { onClose, editor } = await renderSidebarWithTab();
 
   fireEvent.keyDown(document, { key: 'Escape' });
   typeInto(editor, 'hello edited');
@@ -115,12 +161,13 @@ test('Escape never closes the editor', async () => {
   assert.equal(onClose.mock.calls.length, 0);
 });
 
+// A macrotask boundary lets a released request's whole promise chain settle.
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 test('a CRLF file is not dirty just because CodeMirror reports LF', async () => {
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   readFile.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ content: 'first\r\nsecond' }) }));
 
-  const onClose = vi.fn();
-  render(<CodeEditor file={file} onClose={onClose} />);
+  render(<CodeEditor file={file} />);
   const editor = await screen.findByTestId<HTMLTextAreaElement>('editor');
   // Like CodeMirror, a textarea reports the document with LF line endings.
   await waitFor(() => assert.equal(editor.value, 'first\nsecond'));
@@ -133,13 +180,9 @@ test('a CRLF file is not dirty just because CodeMirror reports LF', async () => 
   typeInto(editor, 'first\nsecond');
 
   assert.equal(isDirtyDotShown(), false);
-  pressClose();
-  assert.equal(confirm.mock.calls.length, 0);
-  assert.equal(onClose.mock.calls.length, 1);
 });
 
 test('a save still in flight when another file opens leaves that file clean', async () => {
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   let releaseSave: (() => void) | null = null;
   saveFile.mockImplementationOnce(async () => {
     await new Promise<void>((resolve) => { releaseSave = resolve; });
@@ -148,8 +191,8 @@ test('a save still in flight when another file opens leaves that file clean', as
   readFile.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ content: 'hello' }) }));
   readFile.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ content: 'other file' }) }));
 
-  const onClose = vi.fn();
-  const { rerender } = render(<CodeEditor file={file} onClose={onClose} />);
+  const onUnsavedChangesChange = vi.fn();
+  const { rerender } = render(<CodeEditor file={file} onUnsavedChangesChange={onUnsavedChangesChange} />);
   const editor = await screen.findByTestId<HTMLTextAreaElement>('editor');
   await waitFor(() => assert.equal(editor.value, 'hello'));
 
@@ -158,27 +201,19 @@ test('a save still in flight when another file opens leaves that file clean', as
   await waitFor(() => assert.equal(saveFile.mock.calls.length, 1));
 
   // The user accepts the switch while the write is still on the wire.
-  rerender(<CodeEditor file={otherFile} onClose={onClose} />);
+  rerender(<CodeEditor file={otherFile} onUnsavedChangesChange={onUnsavedChangesChange} />);
   await waitFor(() => assert.equal(screen.getByTestId<HTMLTextAreaElement>('editor').value, 'other file'));
 
   await act(async () => {
     releaseSave?.();
+    await settle();
   });
-  // Back to the plain save title: neither the old file's baseline nor its
-  // "saved" tick was allowed to land on the file that is open now.
-  await waitFor(() => assert.ok(screen.getByTitle('actions.save')));
-
+  // The old file's baseline was not allowed to land on the file that is open now.
   assert.equal(isDirtyDotShown(), false);
-  pressClose();
-  assert.equal(confirm.mock.calls.length, 0);
-  assert.equal(onClose.mock.calls.length, 1);
+  assert.equal(onUnsavedChangesChange.mock.calls.at(-1)?.[0], false);
 });
 
-// A macrotask boundary lets a released request's whole promise chain settle.
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
-
 test('a slow read of the previous file never replaces the one open now', async () => {
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   let releaseFirstRead: (() => void) | null = null;
   readFile.mockImplementationOnce(async () => {
     await new Promise<void>((resolve) => { releaseFirstRead = resolve; });
@@ -186,9 +221,8 @@ test('a slow read of the previous file never replaces the one open now', async (
   });
   readFile.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ content: 'other file' }) }));
 
-  const onClose = vi.fn();
-  const { rerender } = render(<CodeEditor file={file} onClose={onClose} />);
-  rerender(<CodeEditor file={otherFile} onClose={onClose} />);
+  const { rerender } = render(<CodeEditor file={file} />);
+  rerender(<CodeEditor file={otherFile} />);
   const editor = await screen.findByTestId<HTMLTextAreaElement>('editor');
   await waitFor(() => assert.equal(editor.value, 'other file'));
   typeInto(editor, 'other file edited');
@@ -200,9 +234,6 @@ test('a slow read of the previous file never replaces the one open now', async (
 
   assert.equal(screen.getByTestId<HTMLTextAreaElement>('editor').value, 'other file edited');
   assert.equal(isDirtyDotShown(), true);
-  pressClose();
-  assert.equal(confirm.mock.calls.length, 1);
-  assert.equal(onClose.mock.calls.length, 0);
 });
 
 test('a failed save of the previous file is not reported on the one open now', async () => {
@@ -215,15 +246,14 @@ test('a failed save of the previous file is not reported on the one open now', a
   readFile.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ content: 'other file' }) }));
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-  const onClose = vi.fn();
-  const { rerender } = render(<CodeEditor file={file} onClose={onClose} />);
+  const { rerender } = render(<CodeEditor file={file} />);
   const editor = await screen.findByTestId<HTMLTextAreaElement>('editor');
   await waitFor(() => assert.equal(editor.value, 'hello'));
   typeInto(editor, 'hello edited');
   fireEvent.keyDown(document, { key: 's', ctrlKey: true });
   await waitFor(() => assert.equal(saveFile.mock.calls.length, 1));
 
-  rerender(<CodeEditor file={otherFile} onClose={onClose} />);
+  rerender(<CodeEditor file={otherFile} />);
   await waitFor(() => assert.equal(screen.getByTestId<HTMLTextAreaElement>('editor').value, 'other file'));
   await act(async () => {
     failSave?.(new Error('disk full'));
@@ -232,12 +262,14 @@ test('a failed save of the previous file is not reported on the one open now', a
 
   assert.equal(screen.queryByText('disk full') !== null, false);
   // The open file can be saved straight away rather than waiting on the old write.
-  assert.equal(screen.getByTitle('actions.save').hasAttribute('disabled'), false);
+  typeInto(screen.getByTestId<HTMLTextAreaElement>('editor'), 'other file edited');
+  fireEvent.keyDown(document, { key: 's', ctrlKey: true });
+  await waitFor(() => assert.equal(saveFile.mock.calls.length, 2));
 });
 
 test('a successful save clears the dirty state', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-  const { onClose, editor } = await renderEditor();
+  const { onClose, editor } = await renderSidebarWithTab();
 
   typeInto(editor, 'hello edited');
   fireEvent.keyDown(document, { key: 's', ctrlKey: true });
@@ -278,10 +310,7 @@ test('leaving the page is only intercepted while there are unsaved edits', async
 
 test('dirtiness is reported upward and reset when the editor unmounts', async () => {
   const onUnsavedChangesChange = vi.fn();
-  const onClose = vi.fn();
-  const { unmount } = render(
-    <CodeEditor file={file} onClose={onClose} onUnsavedChangesChange={onUnsavedChangesChange} />,
-  );
+  const { unmount } = render(<CodeEditor file={file} onUnsavedChangesChange={onUnsavedChangesChange} />);
   const editor = await screen.findByTestId<HTMLTextAreaElement>('editor');
   await waitFor(() => assert.equal(editor.value, 'hello'));
 

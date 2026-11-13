@@ -1,235 +1,96 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Code2, Copy, Download, Eye, Maximize2, Minimize2, Save, Settings as SettingsIcon, Table, X } from 'lucide-react';
+import type { Ref } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Check, Copy, ExternalLink, Maximize2, Minimize2 } from 'lucide-react';
 
 import { copyTextToClipboard } from '@/shared/utils';
 import type { CodeEditorFile } from '@/shared/types';
+import { headerButtonClassName } from '@/modules/code-editor/utils/headerActionsSlot';
 
 type CodeEditorHeaderProps = {
   file: CodeEditorFile;
-  isSidebar: boolean;
-  isFullscreen: boolean;
-  isMarkdownFile: boolean;
-  isHtmlPreviewFile: boolean;
-  markdownPreview: boolean;
-  isCsvFile: boolean;
-  csvTableView: boolean;
-  saving: boolean;
-  saveSuccess: boolean;
   hasUnsavedChanges: boolean;
-  onToggleMarkdownPreview: () => void;
-  onToggleCsvTableView: () => void;
-  onOpenHtmlPreview: () => void;
-  onOpenSettings: () => void;
-  onDownload: () => void;
-  onSave: () => void;
-  onToggleFullscreen: () => void;
-  onClose: () => void;
-  labels: {
-    showingChanges: string;
-    copyPath: string;
-    pathCopied: string;
-    editMarkdown: string;
-    previewMarkdown: string;
-    previewHtml: string;
-    showCsvTable: string;
-    showCsvText: string;
-    settings: string;
-    download: string;
-    save: string;
-    saving: string;
-    saved: string;
-    fullscreen: string;
-    exitFullscreen: string;
-    close: string;
-    unsavedChanges: string;
-  };
+  // Where CodeEditorHeaderActions portals the open file type's own buttons.
+  actionsSlotRef: Ref<HTMLDivElement>;
+  // Whether the fullscreen toggle is on: the docked panel's expansion, or the modal's fullscreen.
+  isFullscreen: boolean;
+  onToggleFullscreen: (() => void) | null;
+  // Only the docked editor can move into the modal.
+  onOpenInModal: (() => void) | null;
 };
 
-/** Rendered by CodeEditor inside the code-editor module to show the open file's path and the save, preview, download and window controls. */
+/** Rendered by CodeEditorFrame inside the code-editor module as the one header every file type shares: name, path and layout toggles. */
 export default function CodeEditorHeader({
   file,
-  isSidebar,
-  isFullscreen,
-  isMarkdownFile,
-  isHtmlPreviewFile,
-  markdownPreview,
-  isCsvFile,
-  csvTableView,
-  saving,
-  saveSuccess,
   hasUnsavedChanges,
-  onToggleMarkdownPreview,
-  onToggleCsvTableView,
-  onOpenHtmlPreview,
-  onOpenSettings,
-  onDownload,
-  onSave,
+  actionsSlotRef,
+  isFullscreen,
   onToggleFullscreen,
-  onClose,
-  labels,
+  onOpenInModal,
 }: CodeEditorHeaderProps) {
+  const { t } = useTranslation('codeEditor');
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const saveTitle = saveSuccess ? labels.saved : saving ? labels.saving : labels.save;
   const pathCopied = copiedPath === file.path;
+  const copyLabel = pathCopied ? t('actions.pathCopied', 'File path copied') : t('actions.copyPath', 'Copy file path');
+  const unsavedLabel = t('unsavedChanges.indicator', 'Unsaved changes');
+  const fullscreenLabel = isFullscreen ? t('actions.exitFullscreen') : t('actions.fullscreen');
 
   useEffect(() => () => {
-    if (copyResetTimeoutRef.current) {
-      clearTimeout(copyResetTimeoutRef.current);
-    }
+    if (copyResetTimeoutRef.current) clearTimeout(copyResetTimeoutRef.current);
   }, []);
 
   const handleCopyPath = async () => {
-    const didCopy = await copyTextToClipboard(file.path);
-    if (!didCopy) return;
-
+    if (!(await copyTextToClipboard(file.path))) return;
     setCopiedPath(file.path);
-    if (copyResetTimeoutRef.current) {
-      clearTimeout(copyResetTimeoutRef.current);
-    }
+    if (copyResetTimeoutRef.current) clearTimeout(copyResetTimeoutRef.current);
     copyResetTimeoutRef.current = setTimeout(() => setCopiedPath(null), 2000);
   };
 
   return (
-    <div className="flex min-w-0 flex-shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1.5">
-      {/* File info - can shrink */}
-      <div className="flex min-w-0 flex-1 shrink items-center gap-2">
-        <div className="min-w-0 shrink">
-          <div className="flex min-w-0 items-center gap-2">
-            <h3 className="truncate text-sm font-medium text-gray-900 dark:text-white">{file.name}</h3>
-            {hasUnsavedChanges && (
-              <span
-                role="img"
-                aria-label={labels.unsavedChanges}
-                title={labels.unsavedChanges}
-                className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
-              />
-            )}
-            {file.diffInfo && (
-              <span className="shrink-0 whitespace-nowrap rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-600 dark:bg-blue-900 dark:text-blue-300">
-                {labels.showingChanges}
-              </span>
-            )}
-          </div>
-          <div className="flex min-w-0 items-center gap-1">
-            <p className="truncate text-xs text-gray-500 dark:text-gray-400" title={file.path}>{file.path}</p>
-            <button
-              type="button"
-              onClick={handleCopyPath}
-              className={`flex shrink-0 items-center justify-center rounded p-0.5 transition-colors ${
-                pathCopied
-                  ? 'text-green-600 dark:text-green-400'
-                  : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-gray-200'
-              }`}
-              title={pathCopied ? labels.pathCopied : labels.copyPath}
-              aria-label={pathCopied ? labels.pathCopied : labels.copyPath}
-            >
-              {pathCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-            </button>
-          </div>
+    <div className="flex min-w-0 flex-shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <h3 className="truncate text-base font-semibold text-gray-900 dark:text-white">{file.name}</h3>
+          {hasUnsavedChanges && (
+            <span role="img" aria-label={unsavedLabel} title={unsavedLabel} className="h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+          )}
+          {file.diffInfo && (
+            <span className="shrink-0 whitespace-nowrap rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-600 dark:bg-blue-900 dark:text-blue-300">
+              {t('header.showingChanges')}
+            </span>
+          )}
+        </div>
+        <div className="flex min-w-0 items-center gap-1">
+          <p className="truncate text-xs text-gray-500 dark:text-gray-400" title={file.path}>{file.path}</p>
+          <button
+            type="button"
+            onClick={handleCopyPath}
+            className={`flex shrink-0 items-center justify-center rounded p-0.5 transition-colors ${
+              pathCopied
+                ? 'text-green-600 dark:text-green-400'
+                : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-gray-200'
+            }`}
+            title={copyLabel}
+            aria-label={copyLabel}
+          >
+            {pathCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+          </button>
         </div>
       </div>
 
-      {/* Buttons - don't shrink, always visible */}
       <div className="flex shrink-0 items-center gap-0.5">
-        {isMarkdownFile && (
-          <button
-            type="button"
-            onClick={onToggleMarkdownPreview}
-            className={`flex items-center justify-center rounded-md p-1.5 transition-colors ${
-              markdownPreview
-                ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white'
-            }`}
-            title={markdownPreview ? labels.editMarkdown : labels.previewMarkdown}
-          >
-            {markdownPreview ? <Code2 className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        <div ref={actionsSlotRef} className="flex items-center gap-0.5 empty:hidden" />
+        {onOpenInModal && (
+          <button type="button" onClick={onOpenInModal} className={headerButtonClassName} title={t('toolbar.popOut', 'Open in modal')} aria-label={t('toolbar.popOut', 'Open in modal')}>
+            <ExternalLink className="h-4 w-4" />
           </button>
         )}
-
-        {isCsvFile && (
-          <button
-            type="button"
-            onClick={onToggleCsvTableView}
-            className={`flex items-center justify-center rounded-md p-1.5 transition-colors ${
-              csvTableView
-                ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white'
-            }`}
-            title={csvTableView ? labels.showCsvText : labels.showCsvTable}
-          >
-            {csvTableView ? <Code2 className="h-4 w-4" /> : <Table className="h-4 w-4" />}
-          </button>
-        )}
-
-        {isHtmlPreviewFile && (
-          <button
-            type="button"
-            onClick={onOpenHtmlPreview}
-            className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
-            title={labels.previewHtml}
-          >
-            <Eye className="h-4 w-4" />
-          </button>
-        )}
-
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
-          title={labels.settings}
-        >
-          <SettingsIcon className="h-4 w-4" />
-        </button>
-
-        <button
-          type="button"
-          onClick={onDownload}
-          className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
-          title={labels.download}
-        >
-          <Download className="h-4 w-4" />
-        </button>
-
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={saving}
-          className={`flex items-center justify-center rounded-md p-1.5 transition-colors disabled:opacity-50 ${
-            saveSuccess
-              ? 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400'
-              : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white'
-          }`}
-          title={saveTitle}
-        >
-          {saveSuccess ? (
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-        </button>
-
-        {!isSidebar && (
-          <button
-            type="button"
-            onClick={onToggleFullscreen}
-            className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
-            title={isFullscreen ? labels.exitFullscreen : labels.fullscreen}
-          >
+        {onToggleFullscreen && (
+          <button type="button" onClick={onToggleFullscreen} className={headerButtonClassName} title={fullscreenLabel} aria-label={fullscreenLabel}>
             {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
           </button>
         )}
-
-        <button
-          type="button"
-          onClick={onClose}
-          className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
-          title={labels.close}
-        >
-          <X className="h-4 w-4" />
-        </button>
       </div>
     </div>
   );

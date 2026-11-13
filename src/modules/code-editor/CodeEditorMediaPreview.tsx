@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { ReactNode } from 'react';
+import { ExternalLink } from 'lucide-react';
 
 import { api } from '@/shared/api';
 import { ZoomableImage } from '@/shared/ui';
 import type { CodeEditorFile,PreviewKind } from '@/shared/types';
 import { getPreviewMimeType } from '@/modules/code-editor/utils/previewableFile';
+import CodeEditorHeaderActions from '@/modules/code-editor/CodeEditorHeaderActions';
+import { headerButtonClassName } from '@/modules/code-editor/utils/headerActionsSlot';
 
 type CodeEditorMediaPreviewProps = {
   file: CodeEditorFile;
@@ -12,19 +14,10 @@ type CodeEditorMediaPreviewProps = {
   // DB projectId used to build the raw-content URL; falls back to projectPath
   // for older callers, mirroring useCodeEditorDocument.
   projectId?: string;
-  isSidebar: boolean;
-  isFullscreen: boolean;
-  // The open-file tabs, drawn above the header.
-  tabStrip?: ReactNode;
-  onClose: () => void;
-  onToggleFullscreen: () => void;
   labels: {
     loading: string;
     error: string;
     openInNewTab: string;
-    fullscreen: string;
-    exitFullscreen: string;
-    close: string;
   };
 };
 
@@ -38,16 +31,11 @@ const looksLikePdf = async (blob: Blob): Promise<boolean> => {
   return new TextDecoder('latin1').decode(header).includes('%PDF-');
 };
 
-/** Rendered by CodeEditor inside the code-editor module to preview image and PDF files instead of opening them as text. */
+/** Rendered by CodeEditor inside the code-editor module as the body that previews image, PDF, audio and video files instead of opening them as text. */
 export default function CodeEditorMediaPreview({
   file,
   kind,
   projectId,
-  isSidebar,
-  isFullscreen,
-  tabStrip = null,
-  onClose,
-  onToggleFullscreen,
   labels,
 }: CodeEditorMediaPreviewProps) {
   const [url, setUrl] = useState<string | null>(null);
@@ -188,7 +176,7 @@ export default function CodeEditorMediaPreview({
   };
 
   const previewBody = (
-    <div className="relative flex h-full w-full flex-col items-center justify-center bg-muted/30 p-2">
+    <div className="relative flex min-h-0 w-full flex-1 flex-col items-center justify-center bg-muted/30 p-2">
       {loading && (
         <div className="text-sm text-muted-foreground">{labels.loading}</div>
       )}
@@ -204,89 +192,16 @@ export default function CodeEditorMediaPreview({
     </div>
   );
 
-  const headerActions = (
-    <div className="flex shrink-0 items-center gap-0.5">
-      {canOpenInNewTab && currentUrl && (
-        <a
-          href={currentUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
-          aria-label={labels.openInNewTab}
-          title={labels.openInNewTab}
-        >
-          <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-          </svg>
-        </a>
-      )}
-      {!isSidebar && (
-        <button
-          type="button"
-          onClick={onToggleFullscreen}
-          className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
-          aria-label={isFullscreen ? labels.exitFullscreen : labels.fullscreen}
-          title={isFullscreen ? labels.exitFullscreen : labels.fullscreen}
-        >
-          {isFullscreen ? (
-            <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.5 3.5M9 15v4.5M9 15H4.5M9 15l-5.5 5.5M15 9h4.5M15 9V4.5M15 9l5.5-5.5M15 15h4.5M15 15v4.5m0-4.5l5.5 5.5" />
-            </svg>
-          ) : (
-            <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-            </svg>
-          )}
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={onClose}
-        className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
-        aria-label={labels.close}
-        title={labels.close}
-      >
-        <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
-    </div>
-  );
-
-  const header = (
-    <div className="flex flex-shrink-0 items-center justify-between border-b border-border px-3 py-1.5">
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <h3 className="truncate text-sm font-medium text-gray-900 dark:text-white">{file.name}</h3>
-      </div>
-      {headerActions}
-    </div>
-  );
-
-  if (isSidebar) {
-    return (
-      <div className="flex h-full w-full flex-col bg-background">
-        {tabStrip}
-        {header}
-        {previewBody}
-      </div>
-    );
-  }
-
-  const containerClassName = isFullscreen
-    ? 'fixed inset-0 z-[9999] bg-background flex flex-col'
-    : 'fixed inset-0 z-[9999] md:bg-black/50 md:flex md:items-center md:justify-center md:p-4';
-
-  const innerClassName = isFullscreen
-    ? 'bg-background flex flex-col w-full h-full'
-    : 'bg-background shadow-2xl flex flex-col w-full h-full md:rounded-lg md:shadow-2xl md:w-full md:max-w-6xl md:h-[80vh] md:max-h-[80vh]';
-
   return (
-    <div className={containerClassName}>
-      <div className={innerClassName}>
-        {tabStrip}
-        {header}
-        {previewBody}
-      </div>
-    </div>
+    <>
+      {canOpenInNewTab && currentUrl && (
+        <CodeEditorHeaderActions>
+          <a href={currentUrl} target="_blank" rel="noopener noreferrer" className={headerButtonClassName} aria-label={labels.openInNewTab} title={labels.openInNewTab}>
+            <ExternalLink className="h-4 w-4" />
+          </a>
+        </CodeEditorHeaderActions>
+      )}
+      {previewBody}
+    </>
   );
 }

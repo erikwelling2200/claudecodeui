@@ -38,7 +38,6 @@ type EditorTabPaneProps = {
   tabStrip: ReactNode;
   lookupPanel: ReactNode;
   projectPath?: string;
-  onCloseTab: (tabKey: string) => void;
   onUnsavedChangesChange: (tabKey: string, hasUnsavedChanges: boolean) => void;
   onToggleEditorExpand: () => void;
   onPopOut: () => void;
@@ -57,7 +56,6 @@ const EditorTabPane = memo(function EditorTabPane({
   tabStrip,
   lookupPanel,
   projectPath,
-  onCloseTab,
   onUnsavedChangesChange,
   onToggleEditorExpand,
   onPopOut,
@@ -66,7 +64,6 @@ const EditorTabPane = memo(function EditorTabPane({
   onCloseLookup,
 }: EditorTabPaneProps) {
   const { key } = tab;
-  const handleClose = useCallback(() => onCloseTab(key), [key, onCloseTab]);
   const handleUnsavedChangesChange = useCallback(
     (hasUnsavedChanges: boolean) => onUnsavedChangesChange(key, hasUnsavedChanges),
     [key, onUnsavedChangesChange],
@@ -78,7 +75,6 @@ const EditorTabPane = memo(function EditorTabPane({
         file={tab.file}
         gotoTarget={tab.gotoTarget}
         isActive={isActive}
-        onClose={handleClose}
         onUnsavedChangesChange={handleUnsavedChangesChange}
         projectPath={projectPath}
         isSidebar={!isFloating}
@@ -190,10 +186,9 @@ export default function EditorSidebar({
     onCloseTab(tabKey);
   }, [onCloseTab]);
 
-  // The tab strip's close asks here, for any tab; the editor's own close button asks in CodeEditor.
+  // Closing goes through the tab strip only, so this is where a dirty tab asks first.
   const handleRequestCloseTab = useCallback((tabKey: string) => {
-    // No inline fallback here on purpose: CodeEditor's `requestClose` owns the one for this key.
-    if (dirtyTabKeysRef.current.has(tabKey) && !window.confirm(t('unsavedChanges.confirmClose'))) return;
+    if (dirtyTabKeysRef.current.has(tabKey) && !window.confirm(t('unsavedChanges.confirmClose', 'You have unsaved changes. Close this file and discard them?'))) return;
     handleCloseTab(tabKey);
   }, [handleCloseTab, t]);
 
@@ -279,7 +274,6 @@ export default function EditorSidebar({
             tabStrip={tab.key === activeTabKey ? tabStrip : null}
             lookupPanel={tab.key === activeTabKey ? lookupPanel : null}
             projectPath={projectPath}
-            onCloseTab={handleCloseTab}
             onUnsavedChangesChange={onUnsavedChangesChange}
             onToggleEditorExpand={onToggleEditorExpand}
             onPopOut={handlePopOut}

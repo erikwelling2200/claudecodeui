@@ -9,18 +9,12 @@ type EditorToolbarLabels = {
   nextChange: string;
   hideDiff: string;
   showDiff: string;
-  collapse: string;
-  expand: string;
 };
 
 type CreateEditorToolbarPanelParams = {
   file: CodeEditorFile;
   showDiff: boolean;
-  isSidebar: boolean;
-  isExpanded: boolean;
   onToggleDiff: () => void;
-  onPopOut: (() => void) | null;
-  onToggleExpand: (() => void) | null;
   labels: EditorToolbarLabels;
 };
 
@@ -30,14 +24,6 @@ const getDiffVisibilityIcon = (showDiff: boolean) => {
   }
 
   return '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />';
-};
-
-const getExpandIcon = (isExpanded: boolean) => {
-  if (isExpanded) {
-    return '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />';
-  }
-
-  return '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />';
 };
 
 const escapeHtml = (value: string): string => (
@@ -52,15 +38,10 @@ const escapeHtml = (value: string): string => (
 export const createEditorToolbarPanelExtension = ({
   file,
   showDiff,
-  isSidebar,
-  isExpanded,
   onToggleDiff,
-  onPopOut,
-  onToggleExpand,
   labels,
 }: CreateEditorToolbarPanelParams) => {
-  const hasToolbarButtons = Boolean(file.diffInfo || (isSidebar && onPopOut) || (isSidebar && onToggleExpand));
-  if (!hasToolbarButtons) {
+  if (!file.diffInfo) {
     return [];
   }
 
@@ -83,12 +64,9 @@ export const createEditorToolbarPanelExtension = ({
         nextChange: escapeHtml(labels.nextChange),
         hideDiff: escapeHtml(labels.hideDiff),
         showDiff: escapeHtml(labels.showDiff),
-        collapse: escapeHtml(labels.collapse),
-        expand: escapeHtml(labels.expand),
       };
       // Icons are static SVG path fragments controlled by this module.
       const diffVisibilityIcon = getDiffVisibilityIcon(showDiff);
-      const expandIcon = getExpandIcon(isExpanded);
 
       let toolbarHtml = '<div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">';
       toolbarHtml += '<div style="display: flex; align-items: center; gap: 8px;">';
@@ -117,26 +95,6 @@ export const createEditorToolbarPanelExtension = ({
           <button class="cm-toolbar-btn cm-toggle-diff-btn" title="${showDiff ? escapedLabels.hideDiff : escapedLabels.showDiff}">
             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               ${diffVisibilityIcon}
-            </svg>
-          </button>
-        `;
-      }
-
-      if (isSidebar && onPopOut) {
-        toolbarHtml += `
-          <button class="cm-toolbar-btn cm-popout-btn" title="Open in modal">
-            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
-            </svg>
-          </button>
-        `;
-      }
-
-      if (isSidebar && onToggleExpand) {
-        toolbarHtml += `
-          <button class="cm-toolbar-btn cm-expand-btn" title="${isExpanded ? escapedLabels.collapse : escapedLabels.expand}">
-            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              ${expandIcon}
             </svg>
           </button>
         `;
@@ -188,16 +146,6 @@ export const createEditorToolbarPanelExtension = ({
 
       const toggleDiffButton = dom.querySelector<HTMLButtonElement>('.cm-toggle-diff-btn');
       toggleDiffButton?.addEventListener('click', onToggleDiff);
-
-      const popOutButton = dom.querySelector<HTMLButtonElement>('.cm-popout-btn');
-      popOutButton?.addEventListener('click', () => {
-        onPopOut?.();
-      });
-
-      const expandButton = dom.querySelector<HTMLButtonElement>('.cm-expand-btn');
-      expandButton?.addEventListener('click', () => {
-        onToggleExpand?.();
-      });
     };
 
     updatePanel();
