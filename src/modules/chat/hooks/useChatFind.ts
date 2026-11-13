@@ -27,8 +27,9 @@ export type FindHit = {
 const fullTextCache = new WeakMap<ChatMessage, string>();
 const conversationTextCache = new WeakMap<ChatMessage, string>();
 
+/** Prompts, replies and thinking: everything but tool calls. */
 function isConversationMessage(message: ChatMessage): boolean {
-  return (message.type === 'user' || message.type === 'assistant') && !message.isToolUse && !message.isThinking;
+  return (message.type === 'user' || message.type === 'assistant') && !message.isToolUse;
 }
 
 function isInScope(message: ChatMessage, scope: FindScope): boolean {
@@ -41,9 +42,10 @@ function getScopedText(message: ChatMessage, scope: FindScope): string {
   const cache = scope === 'io' ? conversationTextCache : fullTextCache;
   let text = cache.get(message);
   if (text === undefined) {
+    // `reasoning` is the thinking shown inside a reply; it counts as conversation, and so as part of everything.
     text = scope === 'io'
-      ? [message.displayText, message.content].filter(Boolean).join('\n').toLowerCase()
-      : getSearchableText(message);
+      ? [message.displayText, message.content, message.reasoning].filter(Boolean).join('\n').toLowerCase()
+      : [getSearchableText(message), message.reasoning?.toLowerCase()].filter(Boolean).join('\n');
     cache.set(message, text);
   }
   return text;

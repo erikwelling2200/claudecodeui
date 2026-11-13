@@ -21,7 +21,7 @@ type ChatFindBarProps = {
 
 const SCOPES: Array<{ id: FindScope; labelKey: string; label: string; titleKey: string; title: string }> = [
   { id: 'all', labelKey: 'find.scope.all', label: 'All', titleKey: 'find.scope.allTitle', title: 'Everything, tool calls included' },
-  { id: 'io', labelKey: 'find.scope.io', label: 'I/O', titleKey: 'find.scope.ioTitle', title: 'Input/output: prompts and replies, no tool calls' },
+  { id: 'io', labelKey: 'find.scope.io', label: 'I/O', titleKey: 'find.scope.ioTitle', title: 'Input/output: prompts, replies and thinking, no tool calls' },
   { id: 'prompts', labelKey: 'find.scope.prompts', label: 'Prompts', titleKey: 'find.scope.promptsTitle', title: 'Only my prompts' },
 ];
 
