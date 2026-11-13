@@ -171,7 +171,8 @@ function SidebarProjectItem({
   };
 
   const selectAndToggleProject = () => {
-    if (selectedProject?.projectId !== project.projectId) {
+    // Selecting auto-expands the project, so a collapse must leave the selection where it is.
+    if (!isExpanded && selectedProject?.projectId !== project.projectId) {
       onProjectSelect(project);
     }
 
