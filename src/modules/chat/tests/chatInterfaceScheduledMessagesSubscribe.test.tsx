@@ -61,6 +61,7 @@ vi.mock('@/modules/chat/hooks/useChatComposerState', () => ({
   useChatComposerState: () => ({ input: '', setInput: () => {}, textareaRef: { current: null } }),
 }));
 vi.mock('@/modules/chat/hooks/useSessionStore', () => ({ useSessionStore: () => ({}) }));
+vi.mock('@/modules/chat/hooks/useChatFind', () => ({ useChatFind: () => ({ isOpen: false }) }));
 vi.mock('@/modules/chat/transcript/ChatMessagesPane', () => ({ default: () => null }));
 vi.mock('@/modules/chat/composer/ChatComposer', () => ({ default: () => null }));
 vi.mock('@/modules/chat/modals/CommandResultModal', () => ({ default: () => null }));
