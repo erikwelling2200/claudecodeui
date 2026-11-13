@@ -322,6 +322,8 @@
   "message": {
     "editAndResend": "Edit and resend",
     "forkFromHere": "Fork from here",
+    "pin": "Pin to sidebar",
+    "unpin": "Unpin",
     "answeredBy": "Answered by {{model}}"
   },
   "find": {

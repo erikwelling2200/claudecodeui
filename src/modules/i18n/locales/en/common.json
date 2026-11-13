@@ -459,6 +459,8 @@
   "sessionPrompts": {
     "first": "First message",
     "last": "Last message",
+    "pinned": "Pinned",
+    "unpin": "Unpin",
     "showMore": "Show more",
     "showLess": "Show less",
     "jump": "Scroll to this message"
