@@ -1,11 +1,14 @@
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, Loader2, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Loader2, UserRound, X } from 'lucide-react';
 import type { RefObject } from 'react';
 
 type ChatFindBarProps = {
   inputRef: RefObject<HTMLInputElement>;
   query: string;
   onQueryChange: (query: string) => void;
+  /** Whether only the user's own prompts are searched. */
+  promptsOnly: boolean;
+  onPromptsOnlyChange: (promptsOnly: boolean) => void;
   matchCount: number;
   /** 1-based position of the current match; 0 when there is none. */
   currentMatchNumber: number;
@@ -22,6 +25,8 @@ export default function ChatFindBar({
   inputRef,
   query,
   onQueryChange,
+  promptsOnly,
+  onPromptsOnlyChange,
   matchCount,
   currentMatchNumber,
   isLoadingTranscript,
@@ -60,6 +65,16 @@ export default function ChatFindBar({
         {isLoadingTranscript && <Loader2 className="mr-1 inline h-3 w-3 animate-spin" aria-hidden />}
         {hasQuery && `${matchCount === 0 ? 0 : currentMatchNumber}/${matchCount}`}
       </span>
+      <button
+        type="button"
+        className={`${BUTTON_CLASS} ${promptsOnly ? 'bg-primary/15 text-primary hover:bg-primary/25 hover:text-primary' : ''}`}
+        onClick={() => onPromptsOnlyChange(!promptsOnly)}
+        aria-pressed={promptsOnly}
+        title={t('find.promptsOnly', { defaultValue: 'Only my prompts' })}
+        aria-label={t('find.promptsOnly', { defaultValue: 'Only my prompts' })}
+      >
+        <UserRound className="h-4 w-4" aria-hidden />
+      </button>
       <button
         type="button"
         className={BUTTON_CLASS}

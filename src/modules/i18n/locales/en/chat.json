@@ -328,7 +328,8 @@
     "placeholder": "Find in chat",
     "previous": "Previous match (Shift+Enter)",
     "next": "Next match (Enter)",
-    "close": "Close (Esc)"
+    "close": "Close (Esc)",
+    "promptsOnly": "Only my prompts"
   },
   "export": {
     "trigger": "Export conversation",

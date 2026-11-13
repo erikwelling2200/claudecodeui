@@ -1172,6 +1172,14 @@ export function useChatSessionState({
     setVisibleMessageCount((prev) => prev + 100);
   }, []);
 
+  // Widens the render window so `message` has a row, without scrolling; for callers that aim the scroll themselves.
+  const ensureMessageRendered = useCallback((message: ChatMessage) => {
+    const index = chatMessages.indexOf(message);
+    if (index >= 0) {
+      setVisibleMessageCount((prev) => visibleCountToReveal(chatMessages.length, index, prev));
+    }
+  }, [chatMessages]);
+
   // Brings one row into view even when it is outside the visible window or
   // sits in a lazy row that has not mounted: widen the window to include it,
   // then scroll to the row's wrapper, which is in the DOM as soon as the row
@@ -1237,6 +1245,7 @@ export function useChatSessionState({
     visibleMessages,
     loadEarlierMessages,
     revealMessage,
+    ensureMessageRendered,
     jumpToPrompt,
     loadAllMessages,
     loadFullTranscript,

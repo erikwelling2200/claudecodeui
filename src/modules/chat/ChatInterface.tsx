@@ -168,6 +168,7 @@ function ChatInterface({
     visibleMessages,
     loadEarlierMessages,
     revealMessage,
+    ensureMessageRendered,
     jumpToPrompt,
     loadAllMessages,
     loadFullTranscript,
@@ -204,7 +205,7 @@ function ChatInterface({
     scrollContainerRef,
     chatMessages,
     loadFullTranscript,
-    revealMessage,
+    ensureMessageRendered,
     sessionId: selectedSession?.id ?? null,
   });
 
@@ -521,6 +522,8 @@ function ChatInterface({
             inputRef={chatFind.inputRef}
             query={chatFind.query}
             onQueryChange={chatFind.setQuery}
+            promptsOnly={chatFind.promptsOnly}
+            onPromptsOnlyChange={chatFind.setPromptsOnly}
             matchCount={chatFind.matchCount}
             currentMatchNumber={chatFind.currentMatchNumber}
             isLoadingTranscript={chatFind.isLoadingTranscript}
