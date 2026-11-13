@@ -82,5 +82,23 @@
     "deleteRow": "Delete row",
     "insertColumn": "Insert column right",
     "deleteColumn": "Delete column"
+  },
+  "find": {
+    "open": "Find (Ctrl+F)",
+    "placeholder": "Find",
+    "replacePlaceholder": "Replace",
+    "matchCase": "Match case (Alt+C)",
+    "wholeWord": "Whole word (Alt+W)",
+    "regex": "Regular expression (Alt+R)",
+    "previous": "Previous match (Shift+Enter)",
+    "next": "Next match (Enter)",
+    "close": "Close (Esc)",
+    "toggleReplace": "Toggle replace (Ctrl+H)",
+    "replace": "Replace (Enter)",
+    "replaceAll": "Replace all (Ctrl+Enter)",
+    "readOnly": "Read-only",
+    "noResults": "No results",
+    "invalidPattern": "Invalid pattern",
+    "position": "{{current}} of {{count}}"
   }
 }

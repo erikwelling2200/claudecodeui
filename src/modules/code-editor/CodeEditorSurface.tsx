@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { EditorView } from '@codemirror/view';
 import { oneDark } from '@codemirror/theme-one-dark';
@@ -7,6 +7,8 @@ import type { Extension } from '@codemirror/state';
 
 import type { CodeEditorGotoTarget } from '@/shared/types';
 
+import { createCodeMirrorSearchProvider, fileFindExtension } from '@/modules/code-editor/utils/codeMirrorSearch';
+import { useFileSearchProvider } from '@/modules/code-editor/hooks/useFileSearchProvider';
 import MarkdownPreview from '@/modules/code-editor/markdown/MarkdownPreview';
 import CodeEditorCsvTable from '@/modules/code-editor/CodeEditorCsvTable';
 
@@ -91,6 +93,18 @@ export default function CodeEditorSurface({
     });
   }, [view, gotoTarget, content]);
 
+  const showsText = !csvTableView && !(markdownPreview && isMarkdownFile);
+  // Rebuilt with the content so an open find bar recounts after every edit. The CSV table registers its own; the markdown
+  // preview is searched by the frame as rendered text.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const searchProvider = useMemo(() => (view && showsText ? createCodeMirrorSearchProvider(view) : null), [content, showsText, view]);
+  // The CodeMirror view unmounts behind the table and the preview; a fresh one arrives through onCreateEditor.
+  useEffect(() => {
+    if (!showsText) setView(null);
+  }, [showsText]);
+  useFileSearchProvider(searchProvider);
+  const surfaceExtensions = useMemo(() => [...extensions, fileFindExtension], [extensions]);
+
   if (csvTableView) {
     return <CodeEditorCsvTable content={content} onChange={onChange} fileName={fileName} fontSize={fontSize} />;
   }
@@ -110,7 +124,7 @@ export default function CodeEditorSurface({
       onCreateEditor={setView}
       value={content}
       onChange={onChange}
-      extensions={extensions}
+      extensions={surfaceExtensions}
       theme={isDarkMode ? DARK_THEME : LIGHT_THEME}
       height="100%"
       style={{
@@ -127,7 +141,8 @@ export default function CodeEditorSurface({
         closeBrackets: true,
         autocompletion: true,
         highlightSelectionMatches: true,
-        searchKeymap: true,
+        // The frame's find bar replaces CodeMirror's own search panel.
+        searchKeymap: false,
       }}
     />
   );
