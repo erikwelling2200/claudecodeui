@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { createRef } from 'react';
 import { expect, test, vi } from 'vitest';
 
-import { findMessageMatches, useChatFind } from '@/modules/chat/hooks/useChatFind';
+import { findHits, useChatFind } from '@/modules/chat/hooks/useChatFind';
 import type { ChatMessage } from '@/shared/types';
 
 const message = (content: string, timestamp: string, extra: Partial<ChatMessage> = {}): ChatMessage => ({
@@ -12,15 +12,29 @@ const message = (content: string, timestamp: string, extra: Partial<ChatMessage>
   ...extra,
 });
 
-test('findMessageMatches is case-insensitive, oldest first, and covers tool results', () => {
+test('findHits yields one hit per occurrence, case-insensitive, oldest first, including tool results', () => {
   const messages = [
-    message('Alpha bravo', '2026-01-01T00:00:00Z'),
+    message('Alpha bravo, BRAVO again', '2026-01-01T00:00:00Z'),
     message('nothing here', '2026-01-01T00:00:01Z'),
-    message('', '2026-01-01T00:00:02Z', { toolResult: { content: 'error: BRAVO failed' } as ChatMessage['toolResult'] }),
+    message('', '2026-01-01T00:00:02Z', { toolResult: { content: 'error: bravo failed' } as ChatMessage['toolResult'] }),
   ];
 
-  expect(findMessageMatches(messages, 'bravo')).toEqual([messages[0], messages[2]]);
-  expect(findMessageMatches(messages, '   ')).toEqual([]);
+  expect(findHits(messages, 'bravo')).toEqual([
+    { message: messages[0], occurrence: 0 },
+    { message: messages[0], occurrence: 1 },
+    { message: messages[2], occurrence: 0 },
+  ]);
+  expect(findHits(messages, '   ')).toEqual([]);
+});
+
+test('prompts-only mode searches only the messages the user sent', () => {
+  const messages = [
+    message('deploy the build', '2026-01-01T00:00:00Z', { type: 'user' }),
+    message('I will deploy it now', '2026-01-01T00:00:01Z'),
+  ];
+
+  expect(findHits(messages, 'deploy')).toHaveLength(2);
+  expect(findHits(messages, 'deploy', true)).toEqual([{ message: messages[0], occurrence: 0 }]);
 });
 
 function renderFind(chatMessages: ChatMessage[]) {
@@ -28,54 +42,53 @@ function renderFind(chatMessages: ChatMessage[]) {
   document.body.appendChild(root);
   const rootRef = { current: root };
   const loadFullTranscript = vi.fn(async () => chatMessages);
-  const revealMessage = vi.fn();
   const hook = renderHook((props: { chatMessages: ChatMessage[] }) => useChatFind({
     isActive: true,
     rootRef,
     scrollContainerRef: createRef<HTMLElement>(),
     chatMessages: props.chatMessages,
     loadFullTranscript,
-    revealMessage,
+    ensureMessageRendered: vi.fn(),
     sessionId: 'session-1',
   }), { initialProps: { chatMessages } });
-  return { hook, loadFullTranscript, revealMessage };
+  return { hook, loadFullTranscript };
 }
 
-test('Ctrl+F opens the bar and loads the full transcript; navigation starts at the newest match and wraps', async () => {
+async function openWithQuery(hook: ReturnType<typeof renderFind>['hook'], query: string) {
+  await act(async () => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true }));
+  });
+  await act(async () => hook.result.current.setQuery(query));
+}
+
+test('Ctrl+F opens the bar and loads the full transcript; navigation steps per occurrence and wraps', async () => {
   const messages = [
-    message('find me first', '2026-01-01T00:00:00Z'),
+    message('find me first, then find me again', '2026-01-01T00:00:00Z'),
     message('unrelated', '2026-01-01T00:00:01Z'),
     message('find me last', '2026-01-01T00:00:02Z'),
   ];
-  const { hook, loadFullTranscript, revealMessage } = renderFind(messages);
+  const { hook, loadFullTranscript } = renderFind(messages);
 
-  await act(async () => {
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true }));
-  });
+  await openWithQuery(hook, 'FIND ME');
   expect(hook.result.current.isOpen).toBe(true);
   expect(loadFullTranscript).toHaveBeenCalledTimes(1);
-
-  await act(async () => hook.result.current.setQuery('FIND ME'));
-  expect(hook.result.current.matchCount).toBe(2);
-  expect(hook.result.current.currentMatchNumber).toBe(2);
-  expect(revealMessage).toHaveBeenLastCalledWith(messages[2]);
+  expect(hook.result.current.matchCount).toBe(3);
+  expect(hook.result.current.currentMatchNumber).toBe(3);
 
   act(() => hook.result.current.goToNext());
   expect(hook.result.current.currentMatchNumber).toBe(1);
-  expect(revealMessage).toHaveBeenLastCalledWith(messages[0]);
-
-  act(() => hook.result.current.goToPrevious());
+  act(() => hook.result.current.goToNext());
   expect(hook.result.current.currentMatchNumber).toBe(2);
+  act(() => hook.result.current.goToPrevious());
+  act(() => hook.result.current.goToPrevious());
+  expect(hook.result.current.currentMatchNumber).toBe(3);
 });
 
-test('the current match stays put when older messages arrive in front of it', async () => {
+test('the current hit stays put when older messages arrive in front of it', async () => {
   const tail = [message('needle new', '2026-01-01T00:00:05Z'), message('needle newer', '2026-01-01T00:00:06Z')];
   const { hook } = renderFind(tail);
 
-  await act(async () => {
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true }));
-  });
-  await act(async () => hook.result.current.setQuery('needle'));
+  await openWithQuery(hook, 'needle');
   act(() => hook.result.current.goToPrevious());
   expect(hook.result.current.currentMatchNumber).toBe(1);
 
