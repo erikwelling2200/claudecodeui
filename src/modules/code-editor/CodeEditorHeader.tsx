@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Ref } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, ExternalLink, Maximize2, Minimize2 } from 'lucide-react';
+import { Check, Copy, ExternalLink, Maximize2, Minimize2, Search } from 'lucide-react';
 
 import { copyTextToClipboard } from '@/shared/utils';
 import type { CodeEditorFile } from '@/shared/types';
-import { headerButtonClassName } from '@/modules/code-editor/utils/headerActionsSlot';
+import { headerButtonActiveClassName, headerButtonClassName } from '@/modules/code-editor/utils/headerActionsSlot';
 
 type CodeEditorHeaderProps = {
   file: CodeEditorFile;
   hasUnsavedChanges: boolean;
   // Where CodeEditorHeaderActions portals the open file type's own buttons.
   actionsSlotRef: Ref<HTMLDivElement>;
+  isFindOpen: boolean;
+  onToggleFind: () => void;
   // Whether the fullscreen toggle is on: the docked panel's expansion, or the modal's fullscreen.
   isFullscreen: boolean;
   onToggleFullscreen: (() => void) | null;
@@ -24,6 +26,8 @@ export default function CodeEditorHeader({
   file,
   hasUnsavedChanges,
   actionsSlotRef,
+  isFindOpen,
+  onToggleFind,
   isFullscreen,
   onToggleFullscreen,
   onOpenInModal,
@@ -81,6 +85,16 @@ export default function CodeEditorHeader({
 
       <div className="flex shrink-0 items-center gap-0.5">
         <div ref={actionsSlotRef} className="flex items-center gap-0.5 empty:hidden" />
+        <button
+          type="button"
+          onClick={onToggleFind}
+          className={isFindOpen ? headerButtonActiveClassName : headerButtonClassName}
+          title={t('find.open', 'Find (Ctrl+F)')}
+          aria-label={t('find.open', 'Find (Ctrl+F)')}
+          aria-pressed={isFindOpen}
+        >
+          <Search className="h-4 w-4" />
+        </button>
         {onOpenInModal && (
           <button type="button" onClick={onOpenInModal} className={headerButtonClassName} title={t('toolbar.popOut', 'Open in modal')} aria-label={t('toolbar.popOut', 'Open in modal')}>
             <ExternalLink className="h-4 w-4" />

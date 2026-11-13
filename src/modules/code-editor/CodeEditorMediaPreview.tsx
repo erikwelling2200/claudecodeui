@@ -5,6 +5,7 @@ import { api } from '@/shared/api';
 import { ZoomableImage } from '@/shared/ui';
 import type { CodeEditorFile,PreviewKind } from '@/shared/types';
 import { getPreviewMimeType } from '@/modules/code-editor/utils/previewableFile';
+import CodeEditorPdfView from '@/modules/code-editor/CodeEditorPdfView';
 import CodeEditorHeaderActions from '@/modules/code-editor/CodeEditorHeaderActions';
 import { headerButtonClassName } from '@/modules/code-editor/utils/headerActionsSlot';
 
@@ -21,8 +22,8 @@ type CodeEditorMediaPreviewProps = {
   };
 };
 
-// Reject a "PDF" whose bytes aren't actually a PDF before handing it to the
-// same-origin iframe, so a mislabeled HTML/SVG file can't run in the app origin.
+// Reject a "PDF" whose bytes aren't actually a PDF, so a mislabeled HTML/SVG file
+// opened through the new-tab link can't run in the app origin.
 const PDF_HEADER_SCAN_BYTES = 1024;
 
 const looksLikePdf = async (blob: Blob): Promise<boolean> => {
@@ -86,10 +87,10 @@ export default function CodeEditorMediaPreview({
         let outType = isGenericType || isMislabeledVideo ? (fallbackMime ?? blob.type) : blob.type;
 
         if (kind === 'pdf') {
-          // The PDF renders in a same-origin <iframe>, so verify the bytes are
-          // really a PDF and pin the type to application/pdf. That forces the
-          // browser's PDF handler and prevents a mislabeled HTML/SVG file from
-          // executing scripts in the app's origin.
+          // The new-tab link opens this blob in the app's origin, so verify the
+          // bytes are really a PDF and pin the type to application/pdf. That
+          // forces the browser's PDF handler and prevents a mislabeled HTML/SVG
+          // file from executing scripts there.
           if (!(await looksLikePdf(blob))) {
             throw new Error('File is not a valid PDF');
           }
@@ -150,11 +151,7 @@ export default function CodeEditorMediaPreview({
           <ZoomableImage src={currentUrl} alt={file.name} className="h-full w-full" />
         );
       case 'pdf':
-        // Not sandboxed on purpose: the browser's built-in PDF viewer refuses to
-        // load inside a sandboxed frame (any `sandbox` value yields a broken
-        // viewer). Script execution is instead prevented upstream by validating
-        // the PDF magic bytes and pinning the blob's MIME type to application/pdf.
-        return <iframe src={currentUrl} title={file.name} className="h-full w-full border-0 bg-white" />;
+        return <CodeEditorPdfView url={currentUrl} title={file.name} errorLabel={labels.error} />;
       case 'video':
         return (
           <video src={currentUrl} controls className="max-h-full max-w-full" autoPlay={false}>

@@ -17,6 +17,9 @@ import {
   setCells,
 } from '@/modules/code-editor/utils/csvDocument';
 import type { CsvDocument } from '@/modules/code-editor/utils/csvDocument';
+import { buildSearchPattern, expandReplacement, findTextMatches } from '@/modules/code-editor/utils/fileSearch';
+import type { FileSearchProvider, FileSearchQuery } from '@/modules/code-editor/utils/fileSearch';
+import { useFileSearchProvider } from '@/modules/code-editor/hooks/useFileSearchProvider';
 
 const ROW_HEIGHT = 28;
 const OVERSCAN = 12;
@@ -26,6 +29,8 @@ const COLUMN_WIDTH_SAMPLE_ROWS = 500;
 const UNDO_LIMIT = 200;
 
 type CellPosition = { row: number; column: number };
+// One find hit: a match inside one cell, by row index in the file and character offsets in the cell's text.
+type CellHit = CellPosition & { from: number; to: number };
 type SortState = { column: number; direction: 'asc' | 'desc' };
 
 const columnLetter = (index: number): string => {
@@ -35,6 +40,12 @@ const columnLetter = (index: number): string => {
   }
   return letters;
 };
+
+const cellKey = (row: number, column: number): string => `${row}:${column}`;
+
+const replaceInCell = (value: string, from: number, to: number, query: FileSearchQuery, replacement: string): string => (
+  value.slice(0, from) + expandReplacement(value.slice(from, to), query, replacement) + value.slice(to)
+);
 
 const displayText = (value: string): string => value.replace(/\r\n|\r|\n/g, ' ↵ ');
 
@@ -73,6 +84,9 @@ export default function CodeEditorCsvTable({ content, onChange, fileName, fontSi
   // Scroll offset and viewport height, which decide the slice of rows that is actually rendered.
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+
+  // The editor find bar's hits, painted on the cells that hold them; `current` is the cell of the hit it points at.
+  const [findPaint, setFindPaint] = useState<{ cells: Set<string>; current: string | null } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Set and cleared together with `editing`, but synchronously: refocusing the table blurs the cell editor, whose blur
@@ -159,6 +173,66 @@ export default function CodeEditorCsvTable({ content, onChange, fileName, fontSi
     setSelection(next);
     scrollRowIntoView(next.row);
   }, [columnCount, dataRowPositions, dataRows, headerRow, scrollRowIntoView, selection]);
+
+  // Searches the cells in on-screen order (header, then the filtered and sorted rows); rows the filter hides are skipped.
+  const searchProvider = useMemo<FileSearchProvider>(() => {
+    let hits: CellHit[] = [];
+    let lastQuery: FileSearchQuery | null = null;
+    const searchedRows = headerRow === null ? dataRows : [headerRow, ...dataRows];
+
+    const revealColumn = (column: number) => {
+      const element = scrollRef.current;
+      if (!element) return;
+      const left = columnWidths.slice(0, column).reduce((sum, width) => sum + width, 0);
+      const visibleWidth = element.clientWidth - rowNumberWidth;
+      if (left < element.scrollLeft) element.scrollLeft = left;
+      else if (left + columnWidths[column] > element.scrollLeft + visibleWidth) element.scrollLeft = left + columnWidths[column] - visibleWidth;
+    };
+
+    return {
+      search: (query) => {
+        lastQuery = query;
+        hits = [];
+        const pattern = buildSearchPattern(query);
+        if (pattern) {
+          for (const row of searchedRows) {
+            csv.rows[row].cells.forEach((cell, column) => {
+              for (const match of findTextMatches(cell, pattern)) hits.push({ row, column, ...match });
+            });
+          }
+        }
+        setFindPaint(hits.length > 0 ? { cells: new Set(hits.map((hit) => cellKey(hit.row, hit.column))), current: null } : null);
+        return hits.length;
+      },
+      reveal: (index, scroll) => {
+        const hit = hits[index];
+        if (!hit) return;
+        setFindPaint((previous) => (previous ? { ...previous, current: cellKey(hit.row, hit.column) } : previous));
+        if (!scroll) return;
+        setSelection({ row: hit.row, column: hit.column });
+        if (hit.row !== headerRow) scrollRowIntoView(hit.row);
+        revealColumn(hit.column);
+      },
+      replace: (index, replacement) => {
+        const hit = hits[index];
+        if (!hit || !lastQuery) return;
+        const value = csv.rows[hit.row].cells[hit.column] ?? '';
+        applyDocument(setCells(csv, hit.row, hit.column, [[replaceInCell(value, hit.from, hit.to, lastQuery, replacement)]]));
+      },
+      replaceAll: (replacement) => {
+        if (hits.length === 0 || !lastQuery) return;
+        let next = csv;
+        // Last hit first, so earlier offsets in the same cell stay valid.
+        for (const hit of [...hits].reverse()) {
+          const value = next.rows[hit.row].cells[hit.column] ?? '';
+          next = setCells(next, hit.row, hit.column, [[replaceInCell(value, hit.from, hit.to, lastQuery, replacement)]]);
+        }
+        applyDocument(next);
+      },
+      clear: () => setFindPaint(null),
+    };
+  }, [applyDocument, columnWidths, csv, dataRows, headerRow, rowNumberWidth, scrollRowIntoView]);
+  useFileSearchProvider(searchProvider);
 
   const startEditing = (cell: CellPosition, initialValue?: string) => {
     setSelection(cell);
@@ -300,6 +374,10 @@ export default function CodeEditorCsvTable({ content, onChange, fileName, fontSi
     const value = csv.rows[row]?.cells[column] ?? '';
     const isSelected = selection?.row === row && selection.column === column;
     const isEditing = editing?.row === row && editing.column === column;
+    const key = cellKey(row, column);
+    const findClass = findPaint?.current === key
+      ? 'bg-orange-400/60 dark:bg-orange-500/50'
+      : findPaint?.cells.has(key) ? 'bg-yellow-300/40 dark:bg-yellow-400/25' : '';
     const Tag = isHeader ? 'th' : 'td';
     return (
       <Tag
@@ -314,7 +392,7 @@ export default function CodeEditorCsvTable({ content, onChange, fileName, fontSi
         onDoubleClick={() => startEditing({ row, column })}
         className={`relative overflow-hidden text-ellipsis whitespace-nowrap border-b border-r border-border px-2 text-left ${
           isHeader ? 'font-semibold' : 'font-normal'
-        } ${isSelected ? 'outline outline-2 -outline-offset-2 outline-blue-500' : ''}`}
+        } ${findClass} ${isSelected ? 'outline outline-2 -outline-offset-2 outline-blue-500' : ''}`}
         title={value.length > 40 ? value : undefined}
       >
         {isEditing ? (
