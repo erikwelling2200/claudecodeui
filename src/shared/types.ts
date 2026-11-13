@@ -2152,3 +2152,12 @@ export type WorktreeCheckoutState = {
   lastCommitBranch?: string | null;
   changedFiles?: number;
 };
+
+// ---------------------------
+//----------------- CHAT FIND ------------
+
+/**
+ * What the in-chat find (Ctrl+F) searches: everything, the conversation itself (prompts, replies and thinking,
+ * without tool calls), or only the user's prompts. Chosen in ChatFindBar, applied by useChatFind.
+ */
+export type FindScope = 'all' | 'io' | 'prompts';

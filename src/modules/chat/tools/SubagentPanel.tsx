@@ -5,6 +5,7 @@ import type { DiffLine, LiveTaskStatus, Project, SubagentActivity, SubagentInfo,
 import { cn } from '@/shared/utils';
 import { SubagentTimeline } from '@/modules/chat/tools/SubagentTimeline';
 import { useIsExportingTranscript } from '@/modules/chat/context/TranscriptRenderContext';
+import { useDisclosureReveal } from '@/shared/context/DisclosureRevealContext';
 import { MarkdownContent } from '@/modules/chat/tools/ContentRenderers/MarkdownContent';
 import { resolveBackgroundTaskStatus } from '@/modules/chat/utils/backgroundTasks';
 
@@ -88,6 +89,7 @@ export const SubagentPanel = memo(({
   const isExporting = useIsExportingTranscript();
   const [isOpen, setIsOpen] = useState(false);
   const showTimeline = isOpen || isExporting;
+  useDisclosureReveal(() => setIsOpen(true));
 
   const parsedInput = useMemo(() => parseToolInput(toolInput), [toolInput]);
   const resultText = useMemo(() => readResultText(toolResult?.content), [toolResult?.content]);

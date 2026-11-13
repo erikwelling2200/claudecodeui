@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { cn } from '@/shared/utils';
+import { useDisclosureReveal } from '@/shared/context/DisclosureRevealContext';
 
 type CollapsibleContextValue = {
   open: boolean;
@@ -34,6 +35,8 @@ export const Collapsible = React.forwardRef<HTMLDivElement, CollapsibleProps>(
       },
       [isControlled, controlledOnOpenChange]
     );
+
+    useDisclosureReveal(() => onOpenChange(true));
 
     const value = React.useMemo(() => ({ open, onOpenChange }), [open, onOpenChange]);
 

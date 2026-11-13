@@ -1,10 +1,11 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 
 import type { ChatMessage, ClaudePermissionSuggestion, PermissionGrantResult, LLMProvider,DiffLine,DiffStats,Project,ToolGroupItem } from '@/shared/types';
 import { getToolConfig } from '@/modules/chat/tools';
 import MessageComponent from '@/modules/chat/transcript/MessageComponent';
 import { useIsExportingTranscript } from '@/modules/chat/context/TranscriptRenderContext';
+import { useFindRevealRequest } from '@/modules/chat/context/FindRevealContext';
 import { DiffStatsBadge } from '@/modules/chat/tools/DiffStatsBadge';
 import { parseToolPayload, summarizeDiff } from '@/modules/chat/utils/messageTransforms';
 
@@ -92,6 +93,11 @@ function ToolGroupContainer({
   // has no way to ask.
   const [isExpanded, setIsExpanded] = useState(false);
   const showChildren = isExpanded || isExporting;
+  // A find hit in one of the group's calls opens the group, so the jump lands on text that is on screen.
+  const findRevealRequest = useFindRevealRequest(group.messages);
+  useEffect(() => {
+    if (findRevealRequest > 0) setIsExpanded(true);
+  }, [findRevealRequest]);
   const config = getToolConfig(group.toolName).input;
   const label = config.label || group.toolName;
   const borderClass = config.colorScheme?.border || 'border-border';

@@ -5,6 +5,7 @@ import { ChevronRight, Copy, Check } from 'lucide-react';
 import { cn,copyTextToClipboard } from '@/shared/utils';
 import { ToolStatusBadge } from '@/modules/chat/tools/ToolStatusBadge';
 import { useIsExportingTranscript } from '@/modules/chat/context/TranscriptRenderContext';
+import { useDisclosureReveal } from '@/shared/context/DisclosureRevealContext';
 import { formatTaskDuration } from '@/modules/chat/utils/backgroundTasks';
 import type { ToolStatus } from '@/shared/types';
 
@@ -80,6 +81,9 @@ export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
   const [openState, setOpen] = useState(false);
   const open = openState || isExporting;
   const [copied, setCopied] = useState(false);
+  useDisclosureReveal(() => {
+    if (hasOutput) setOpen(true);
+  });
 
   // Output often arrives after this component first mounts, so apply the
   // auto-open intent once when there is finally something to show. After that
