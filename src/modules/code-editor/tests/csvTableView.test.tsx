@@ -39,7 +39,7 @@ const file: CodeEditorFile = { name: 'people.csv', path: '/repo/people.csv', pro
 const cell = (text: string) => screen.getByText(text).closest('td, th') as HTMLElement;
 
 test('a CSV file opens as a table and a cell edit is saved as one changed line', async () => {
-  render(<CodeEditor file={file} onClose={() => undefined} />);
+  render(<CodeEditor file={file} />);
   await screen.findByText('Utrecht');
   const table = screen.getByTestId('csv-table');
 
@@ -62,7 +62,7 @@ test('a CSV file opens as a table and a cell edit is saved as one changed line',
 });
 
 test('Escape abandons a cell edit and the text view shows the same buffer', async () => {
-  render(<CodeEditor file={file} onClose={() => undefined} />);
+  render(<CodeEditor file={file} />);
   await screen.findByText('Utrecht');
 
   fireEvent.doubleClick(cell('Utrecht'));
@@ -78,15 +78,15 @@ test('Escape abandons a cell edit and the text view shows the same buffer', asyn
   assert.equal(editor.value, 'name;city\n"Ann";Utrecht\nBob;Delft\n');
 });
 
-test('the docked table view keeps the pop-out and expand buttons of the text view', async () => {
+test('the docked table view has the shared open-in-modal and fullscreen toggles', async () => {
   const onPopOut = vi.fn();
   const onToggleExpand = vi.fn();
-  render(<CodeEditor file={file} onClose={() => undefined} isSidebar onPopOut={onPopOut} onToggleExpand={onToggleExpand} />);
+  render(<CodeEditor file={file} isSidebar onPopOut={onPopOut} onToggleExpand={onToggleExpand} />);
   await screen.findByText('Utrecht');
 
   fireEvent.click(screen.getByTitle('Open in modal'));
   // No i18n instance is initialised here, so a label without a default renders as its key.
-  fireEvent.click(screen.getByTitle('toolbar.expand'));
+  fireEvent.click(screen.getByTitle('actions.fullscreen'));
 
   assert.equal(onPopOut.mock.calls.length, 1);
   assert.equal(onToggleExpand.mock.calls.length, 1);

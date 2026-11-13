@@ -31,7 +31,6 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
   const [savedContent, setSavedContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isBinary, setIsBinary] = useState(false);
   // Some binaries (images, PDFs, audio, video) can be rendered natively, so the
@@ -167,8 +166,6 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
       // Baseline is the text that was actually sent: anything typed while the
       // request was in flight is still unsaved.
       setSavedContent(content);
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 2000);
     } catch (error) {
       const message = getErrorMessage(error);
       console.error('Error saving file:', error);
@@ -220,7 +217,6 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
     setContent,
     loading,
     saving,
-    saveSuccess,
     saveError,
     isBinary,
     previewKind,

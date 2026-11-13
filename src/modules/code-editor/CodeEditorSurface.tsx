@@ -4,7 +4,6 @@ import { EditorView } from '@codemirror/view';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { Prec } from '@codemirror/state';
 import type { Extension } from '@codemirror/state';
-import type { ReactNode } from 'react';
 
 import type { CodeEditorGotoTarget } from '@/shared/types';
 
@@ -45,8 +44,6 @@ type CodeEditorSurfaceProps = {
   // The CSV/TSV spreadsheet view replaces the text surface while on.
   csvTableView?: boolean;
   fileName?: string;
-  // Layout buttons for the CSV table, standing in for the ones in CodeMirror's toolbar panel.
-  csvWindowControls?: ReactNode;
   isDarkMode: boolean;
   fontSize: number;
   showLineNumbers: boolean;
@@ -63,7 +60,6 @@ export default function CodeEditorSurface({
   isMarkdownFile,
   csvTableView = false,
   fileName = '',
-  csvWindowControls = null,
   isDarkMode,
   fontSize,
   showLineNumbers,
@@ -96,7 +92,7 @@ export default function CodeEditorSurface({
   }, [view, gotoTarget, content]);
 
   if (csvTableView) {
-    return <CodeEditorCsvTable content={content} onChange={onChange} fileName={fileName} fontSize={fontSize} windowControls={csvWindowControls} />;
+    return <CodeEditorCsvTable content={content} onChange={onChange} fileName={fileName} fontSize={fontSize} />;
   }
 
   if (markdownPreview && isMarkdownFile) {
