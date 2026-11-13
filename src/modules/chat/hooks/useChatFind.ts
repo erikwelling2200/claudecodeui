@@ -1,9 +1,9 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 
-import type { ChatMessage } from '@/shared/types';
+import type { ChatMessage, FindScope } from '@/shared/types';
 import { getSearchableText } from '@/modules/chat/utils/searchTargetLocator';
-import { getIntrinsicMessageKey } from '@/modules/chat/utils/messageKeys';
+import { createFindRevealStore, getFindMessageKey } from '@/modules/chat/context/FindRevealContext';
 
 /** Names in the CSS highlight registry; styled by `::highlight(...)` rules in index.css. */
 const MATCH_HIGHLIGHT_NAME = 'chat-find-match';
@@ -23,14 +23,28 @@ export type FindHit = {
   occurrence: number;
 };
 
-/** Lowercasing a long tool result on every keystroke adds up, so each message's text is computed once. */
-const searchableTextCache = new WeakMap<ChatMessage, string>();
+/** Lowercasing a long tool result on every keystroke adds up, so each message's text is computed once per scope. */
+const fullTextCache = new WeakMap<ChatMessage, string>();
+const conversationTextCache = new WeakMap<ChatMessage, string>();
 
-function getCachedSearchableText(message: ChatMessage): string {
-  let text = searchableTextCache.get(message);
+function isConversationMessage(message: ChatMessage): boolean {
+  return (message.type === 'user' || message.type === 'assistant') && !message.isToolUse && !message.isThinking;
+}
+
+function isInScope(message: ChatMessage, scope: FindScope): boolean {
+  if (scope === 'prompts') return message.type === 'user';
+  if (scope === 'io') return isConversationMessage(message);
+  return true;
+}
+
+function getScopedText(message: ChatMessage, scope: FindScope): string {
+  const cache = scope === 'io' ? conversationTextCache : fullTextCache;
+  let text = cache.get(message);
   if (text === undefined) {
-    text = getSearchableText(message);
-    searchableTextCache.set(message, text);
+    text = scope === 'io'
+      ? [message.displayText, message.content].filter(Boolean).join('\n').toLowerCase()
+      : getSearchableText(message);
+    cache.set(message, text);
   }
   return text;
 }
@@ -41,28 +55,21 @@ function countOccurrences(text: string, needle: string): number {
   return count;
 }
 
-function isOwnPrompt(message: ChatMessage): boolean {
-  return message.type === 'user';
-}
-
-/**
- * Every occurrence of `query` (case-insensitive) across `messages`, oldest first; with `promptsOnly`, only in the
- * user's own messages. Exported for tests.
- */
-export function findHits(messages: ChatMessage[], query: string, promptsOnly = false): FindHit[] {
+/** Every occurrence of `query` (case-insensitive) in the `scope` part of `messages`, oldest first. Exported for tests. */
+export function findHits(messages: ChatMessage[], query: string, scope: FindScope = 'all'): FindHit[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
   const hits: FindHit[] = [];
   for (const message of messages) {
-    if (promptsOnly && !isOwnPrompt(message)) continue;
-    const count = countOccurrences(getCachedSearchableText(message), needle);
+    if (!isInScope(message, scope)) continue;
+    const count = countOccurrences(getScopedText(message, scope), needle);
     for (let occurrence = 0; occurrence < count; occurrence += 1) hits.push({ message, occurrence });
   }
   return hits;
 }
 
 function hitKey(hit: FindHit): string {
-  return `${getIntrinsicMessageKey(hit.message) ?? String(hit.message.timestamp)}#${hit.occurrence}`;
+  return `${getFindMessageKey(hit.message)}#${hit.occurrence}`;
 }
 
 function supportsHighlights(): boolean {
@@ -127,7 +134,7 @@ function pickCurrentRange(ranges: Range[], occurrence: number): Range | null {
   return ranges.length === 0 ? null : ranges[Math.min(occurrence, ranges.length - 1)];
 }
 
-/** `rowTimestamps`, when given, limits painting to those rows (the user's prompts in prompts-only mode). */
+/** `rowTimestamps`, when given, limits painting to those rows (the rows of in-scope messages). */
 function paintHighlights(container: HTMLElement, needle: string, current: FindHit | null, rowTimestamps: Set<string> | null) {
   const matchHighlight = new Highlight();
   const currentHighlight = new Highlight();
@@ -177,20 +184,24 @@ export function useChatFind({
   // Identity of the hit the user is on, kept as a key rather than an index so it survives older messages being
   // prepended when the full transcript arrives.
   const [currentHitKey, setCurrentHitKey] = useState<string | null>(null);
-  // Limits the search to the user's own prompts; kept across closing the bar, like a find dialog's options.
-  const [promptsOnly, setPromptsOnly] = useState(false);
+  // Which part of the chat is searched; kept across closing the bar, like a find dialog's options.
+  const [scope, setScope] = useState<FindScope>('all');
   // True while the rest of the transcript is being fetched; the count is incomplete until it lands.
   const [isLoadingTranscript, setIsLoadingTranscript] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   // Bumped by every jump, so a scroll loop from an earlier jump stops aiming.
   const scrollJobRef = useRef(0);
+  // Tells the transcript which message holds the current hit, so folded tool calls around it open.
+  const [revealStore] = useState(createFindRevealStore);
 
   const deferredQuery = useDeferredValue(query);
   const needle = deferredQuery.trim().toLowerCase();
-  const hits = useMemo(() => findHits(chatMessages, deferredQuery, promptsOnly), [chatMessages, deferredQuery, promptsOnly]);
-  const promptRowTimestamps = useMemo(
-    () => (promptsOnly ? new Set(chatMessages.filter(isOwnPrompt).map((message) => String(message.timestamp))) : null),
-    [chatMessages, promptsOnly],
+  const hits = useMemo(() => findHits(chatMessages, deferredQuery, scope), [chatMessages, deferredQuery, scope]);
+  const scopedRowTimestamps = useMemo(
+    () => (scope === 'all'
+      ? null
+      : new Set(chatMessages.filter((message) => isInScope(message, scope)).map((message) => String(message.timestamp)))),
+    [chatMessages, scope],
   );
 
   const keyedIndex = currentHitKey === null ? -1 : hits.findIndex((hit) => hitKey(hit) === currentHitKey);
@@ -203,6 +214,7 @@ export function useChatFind({
     const container = scrollContainerRef.current;
     if (!container) return;
     ensureMessageRendered(hit.message);
+    revealStore.set(hit.message);
 
     const job = ++scrollJobRef.current;
     let cancelled = false;
@@ -245,7 +257,7 @@ export function useChatFind({
       requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
-  }, [ensureMessageRendered, needle, scrollContainerRef]);
+  }, [ensureMessageRendered, needle, revealStore, scrollContainerRef]);
 
   const open = useCallback(() => {
     setIsOpen(true);
@@ -309,10 +321,10 @@ export function useChatFind({
   useEffect(() => {
     setCurrentHitKey(null);
     if (!isOpen || !needle) return;
-    const newest = findHits(chatMessages, deferredQuery, promptsOnly).at(-1);
+    const newest = findHits(chatMessages, deferredQuery, scope).at(-1);
     if (newest) scrollToHit(newest);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needle, isOpen, promptsOnly]);
+  }, [needle, isOpen, scope]);
 
   // Rows mount lazily as they near the viewport and replies stream in, so highlights are repainted on DOM changes.
   useEffect(() => {
@@ -327,7 +339,7 @@ export function useChatFind({
       if (frame !== null) return;
       frame = requestAnimationFrame(() => {
         frame = null;
-        paintHighlights(container, needle, currentHit, promptRowTimestamps);
+        paintHighlights(container, needle, currentHit, scopedRowTimestamps);
       });
     };
 
@@ -338,7 +350,7 @@ export function useChatFind({
       observer.disconnect();
       if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [currentHit, isActive, isOpen, needle, promptRowTimestamps, scrollContainerRef]);
+  }, [currentHit, isActive, isOpen, needle, scopedRowTimestamps, scrollContainerRef]);
 
   useEffect(() => () => clearHighlights(), []);
 
@@ -346,8 +358,9 @@ export function useChatFind({
     isOpen,
     query,
     setQuery,
-    promptsOnly,
-    setPromptsOnly,
+    scope,
+    setScope,
+    revealStore,
     matchCount: hits.length,
     currentMatchNumber: currentIndex + 1,
     isLoadingTranscript,

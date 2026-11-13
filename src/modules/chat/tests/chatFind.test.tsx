@@ -27,14 +27,17 @@ test('findHits yields one hit per occurrence, case-insensitive, oldest first, in
   expect(findHits(messages, '   ')).toEqual([]);
 });
 
-test('prompts-only mode searches only the messages the user sent', () => {
+test('scopes: all covers tool calls, io only prompts and replies, prompts only what the user sent', () => {
   const messages = [
     message('deploy the build', '2026-01-01T00:00:00Z', { type: 'user' }),
     message('I will deploy it now', '2026-01-01T00:00:01Z'),
+    message('', '2026-01-01T00:00:02Z', { isToolUse: true, toolInput: 'npm run deploy', toolName: 'Bash' }),
+    message('thinking about deploy', '2026-01-01T00:00:03Z', { isThinking: true }),
   ];
 
-  expect(findHits(messages, 'deploy')).toHaveLength(2);
-  expect(findHits(messages, 'deploy', true)).toEqual([{ message: messages[0], occurrence: 0 }]);
+  expect(findHits(messages, 'deploy', 'all')).toHaveLength(4);
+  expect(findHits(messages, 'deploy', 'io').map((hit) => hit.message)).toEqual([messages[0], messages[1]]);
+  expect(findHits(messages, 'deploy', 'prompts')).toEqual([{ message: messages[0], occurrence: 0 }]);
 });
 
 function renderFind(chatMessages: ChatMessage[]) {

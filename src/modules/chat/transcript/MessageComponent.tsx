@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { GitBranchIcon, PencilIcon } from 'lucide-react';
 
@@ -16,6 +16,8 @@ import MessageModelLabel from '@/modules/chat/transcript/MessageModelLabel';
 import MessageSpeakControl from '@/modules/chat/transcript/MessageSpeakControl';
 import { useIsExportingTranscript } from '@/modules/chat/context/TranscriptRenderContext';
 import { MemoryCitations } from '@/modules/chat/transcript/MemoryCitations';
+import { useFindRevealRequest } from '@/modules/chat/context/FindRevealContext';
+import { DisclosureRevealContext } from '@/shared/context/DisclosureRevealContext';
 
 type MessageComponentProps = {
   message: ChatMessage;
@@ -57,6 +59,12 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
       (prevMessage.type === 'tool') ||
       (prevMessage.type === 'error'));
   const messageRef = useRef<HTMLDivElement | null>(null);
+  const findRevealRequest = useFindRevealRequest([message]);
+  // Plain <details> blocks hold their own open state, so a find hit inside one is revealed through the DOM.
+  useEffect(() => {
+    if (findRevealRequest === 0) return;
+    for (const details of messageRef.current?.querySelectorAll<HTMLDetailsElement>('details:not([open])') ?? []) details.open = true;
+  }, [findRevealRequest]);
   const userCopyContent = String(message.content || '');
   const formattedMessageContent = useMemo(
     () => {
@@ -94,6 +102,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
   }
 
   return (
+    <DisclosureRevealContext.Provider value={findRevealRequest}>
     <div
       ref={messageRef}
       data-message-timestamp={message.timestamp || undefined}
@@ -459,6 +468,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
         </div>
       )}
     </div>
+    </DisclosureRevealContext.Provider>
   );
 });
 

@@ -8,6 +8,7 @@ import { useWebSocket } from '@/shared/context/WebSocketContext';
 import PermissionContext from '@/modules/chat/context/PermissionContext';
 import { MarkdownWorkspaceContext } from '@/modules/chat/context/MarkdownWorkspaceContext';
 import { TranscriptSessionContext } from '@/modules/chat/context/TranscriptSessionContext';
+import { FindRevealContext } from '@/modules/chat/context/FindRevealContext';
 import { ExpandThinkingContext } from '@/modules/chat/context/ExpandThinkingContext';
 import { api } from '@/shared/api';
 import { useSingleFolderProviders } from '@/shared/hooks/useProviderCapabilities';
@@ -522,8 +523,8 @@ function ChatInterface({
             inputRef={chatFind.inputRef}
             query={chatFind.query}
             onQueryChange={chatFind.setQuery}
-            promptsOnly={chatFind.promptsOnly}
-            onPromptsOnlyChange={chatFind.setPromptsOnly}
+            scope={chatFind.scope}
+            onScopeChange={chatFind.setScope}
             matchCount={chatFind.matchCount}
             currentMatchNumber={chatFind.currentMatchNumber}
             isLoadingTranscript={chatFind.isLoadingTranscript}
@@ -535,6 +536,7 @@ function ChatInterface({
         <MarkdownWorkspaceContext.Provider value={markdownWorkspaceValue}>
           <TranscriptSessionContext.Provider value={transcriptSessionValue}>
           <ExpandThinkingContext.Provider value={expandThinking}>
+          <FindRevealContext.Provider value={chatFind.revealStore}>
             <ChatMessagesPane
               scrollContainerRef={scrollContainerRef}
               // Not redundant with the `scroll` listener. A first page is 20 rows,
@@ -591,6 +593,7 @@ function ChatInterface({
               onForkFromMessage={supportsSessionForking ? handleForkFromMessage : undefined}
               onLoadFullTranscript={loadFullTranscript}
             />
+          </FindRevealContext.Provider>
           </ExpandThinkingContext.Provider>
           </TranscriptSessionContext.Provider>
         </MarkdownWorkspaceContext.Provider>

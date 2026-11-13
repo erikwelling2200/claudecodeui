@@ -1,14 +1,15 @@
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, Loader2, UserRound, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Loader2, X } from 'lucide-react';
 import type { RefObject } from 'react';
+
+import type { FindScope } from '@/shared/types';
 
 type ChatFindBarProps = {
   inputRef: RefObject<HTMLInputElement>;
   query: string;
   onQueryChange: (query: string) => void;
-  /** Whether only the user's own prompts are searched. */
-  promptsOnly: boolean;
-  onPromptsOnlyChange: (promptsOnly: boolean) => void;
+  scope: FindScope;
+  onScopeChange: (scope: FindScope) => void;
   matchCount: number;
   /** 1-based position of the current match; 0 when there is none. */
   currentMatchNumber: number;
@@ -18,6 +19,12 @@ type ChatFindBarProps = {
   onClose: () => void;
 };
 
+const SCOPES: Array<{ id: FindScope; labelKey: string; label: string; titleKey: string; title: string }> = [
+  { id: 'all', labelKey: 'find.scope.all', label: 'All', titleKey: 'find.scope.allTitle', title: 'Everything, tool calls included' },
+  { id: 'io', labelKey: 'find.scope.io', label: 'I/O', titleKey: 'find.scope.ioTitle', title: 'Input/output: prompts and replies, no tool calls' },
+  { id: 'prompts', labelKey: 'find.scope.prompts', label: 'Prompts', titleKey: 'find.scope.promptsTitle', title: 'Only my prompts' },
+];
+
 const BUTTON_CLASS = 'flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent';
 
 /** The Ctrl+F bar floating over the top of a chat's transcript; state lives in useChatFind. */
@@ -25,8 +32,8 @@ export default function ChatFindBar({
   inputRef,
   query,
   onQueryChange,
-  promptsOnly,
-  onPromptsOnlyChange,
+  scope,
+  onScopeChange,
   matchCount,
   currentMatchNumber,
   isLoadingTranscript,
@@ -65,16 +72,23 @@ export default function ChatFindBar({
         {isLoadingTranscript && <Loader2 className="mr-1 inline h-3 w-3 animate-spin" aria-hidden />}
         {hasQuery && `${matchCount === 0 ? 0 : currentMatchNumber}/${matchCount}`}
       </span>
-      <button
-        type="button"
-        className={`${BUTTON_CLASS} ${promptsOnly ? 'bg-primary/15 text-primary hover:bg-primary/25 hover:text-primary' : ''}`}
-        onClick={() => onPromptsOnlyChange(!promptsOnly)}
-        aria-pressed={promptsOnly}
-        title={t('find.promptsOnly', { defaultValue: 'Only my prompts' })}
-        aria-label={t('find.promptsOnly', { defaultValue: 'Only my prompts' })}
-      >
-        <UserRound className="h-4 w-4" aria-hidden />
-      </button>
+      <div role="radiogroup" className="flex items-center rounded border border-border/60 p-px text-[11px]">
+        {SCOPES.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            role="radio"
+            aria-checked={scope === option.id}
+            onClick={() => onScopeChange(option.id)}
+            title={t(option.titleKey, { defaultValue: option.title })}
+            className={`rounded-sm px-1.5 py-0.5 ${
+              scope === option.id ? 'bg-primary/15 font-medium text-primary' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {t(option.labelKey, { defaultValue: option.label })}
+          </button>
+        ))}
+      </div>
       <button
         type="button"
         className={BUTTON_CLASS}

@@ -329,7 +329,14 @@
     "previous": "Previous match (Shift+Enter)",
     "next": "Next match (Enter)",
     "close": "Close (Esc)",
-    "promptsOnly": "Only my prompts"
+    "scope": {
+      "all": "All",
+      "allTitle": "Everything, tool calls included",
+      "io": "I/O",
+      "ioTitle": "Input/output: prompts and replies, no tool calls",
+      "prompts": "Prompts",
+      "promptsTitle": "Only my prompts"
+    }
   },
   "export": {
     "trigger": "Export conversation",
