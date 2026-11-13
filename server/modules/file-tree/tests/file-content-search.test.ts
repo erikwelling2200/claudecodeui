@@ -74,21 +74,91 @@ const projectRoot = path.resolve('content-search-project');
 const nestedRoot = path.join(projectRoot, 'packages', 'core');
 const otherRoot = path.resolve('content-search-other');
 
-test('a literal search passes the query as a fixed string after the option terminator', async () => {
+test('a one-word literal search passes the query as a fixed string after the option terminator', async () => {
   const { runRipgrep, calls } = createFakeRipgrep({});
-  await collect(runRipgrep, [projectRoot], '--files (x');
+  await collect(runRipgrep, [projectRoot], ' --files(x ');
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].folderPath, projectRoot);
   assert.ok(calls[0].args.includes('--fixed-strings'));
-  assert.deepEqual(calls[0].args.slice(-3), ['--', '--files (x', './']);
+  assert.equal(calls[0].args.includes('--multiline'), false);
+  assert.deepEqual(calls[0].args.slice(-3), ['--', ' --files(x ', './']);
 });
 
-test('a regex search leaves out the fixed-string flag', async () => {
+test('a literal phrase lets its words be separated by any whitespace, line breaks included', async () => {
   const { runRipgrep, calls } = createFakeRipgrep({});
-  await collect(runRipgrep, [projectRoot], 'a|b', { regex: true });
+  await collect(runRipgrep, [projectRoot], ' a.b  (c)\td ');
+
+  assert.ok(calls[0].args.includes('--multiline'));
+  assert.equal(calls[0].args.includes('--fixed-strings'), false);
+  // The words are escaped, and the spaces around the phrase stay plain spaces.
+  assert.deepEqual(calls[0].args.slice(-3), ['--', ' a\\.b\\s+\\(c\\)\\s+d ', './']);
+});
+
+test('a regex search is passed on as written, without either flag', async () => {
+  const { runRipgrep, calls } = createFakeRipgrep({});
+  await collect(runRipgrep, [projectRoot], 'a b|c', { regex: true });
 
   assert.equal(calls[0].args.includes('--fixed-strings'), false);
+  assert.equal(calls[0].args.includes('--multiline'), false);
+  assert.deepEqual(calls[0].args.slice(-3), ['--', 'a b|c', './']);
+});
+
+test('a phrase wrapped over two lines is shown on one line, at the line it starts on', async () => {
+  const block = '    Van de {aantal} verwachte zelfstandige\r\n            reizigers telt mee.\n';
+  const start = block.indexOf('verwachte');
+  const end = block.indexOf('reizigers') + 'reizigers'.length;
+  const { runRipgrep } = createFakeRipgrep({
+    [projectRoot]: {
+      lines: [JSON.stringify({
+        type: 'match',
+        data: { path: { text: './a.tsx' }, lines: { text: block }, line_number: 118, submatches: [{ start, end }] },
+      })],
+    },
+  });
+
+  const { matches } = await collect(runRipgrep, [projectRoot], 'verwachte zelfstandige reizigers');
+
+  assert.equal(matches[0].line, 118);
+  assert.equal(matches[0].character, start);
+  assert.equal(matches[0].snippet, 'Van de {aantal} verwachte zelfstandige reizigers telt mee.');
+  assert.deepEqual(
+    matches[0].highlights.map(({ start: from, end: to }) => matches[0].snippet.slice(from, to)),
+    ['verwachte zelfstandige reizigers'],
+  );
+});
+
+test('a second hit further down a multi-line match is marked too, and the first one decides the line', async () => {
+  // Two overlapping line ranges arrive as one block: "é b" on lines 7-8 and "a b" on lines 8-9.
+  const block = 'x é\n  b a\n\n  b\n';
+  const bytes = (text: string) => Buffer.byteLength(text, 'utf8');
+  const { runRipgrep } = createFakeRipgrep({
+    [projectRoot]: {
+      lines: [JSON.stringify({
+        type: 'match',
+        data: {
+          path: { text: './a.txt' },
+          lines: { text: block },
+          line_number: 7,
+          submatches: [
+            { start: bytes('x '), end: bytes('x é\n  b') },
+            { start: bytes('x é\n  b '), end: bytes('x é\n  b a\n\n  b') },
+          ],
+        },
+      })],
+    },
+  });
+
+  const { matches } = await collect(runRipgrep, [projectRoot], 'a b');
+
+  assert.equal(matches[0].line, 7);
+  assert.equal(matches[0].character, 2);
+  // The blank line in between collapses along with the line breaks around it.
+  assert.equal(matches[0].snippet, 'x é b a b');
+  assert.deepEqual(
+    matches[0].highlights.map(({ start: from, end: to }) => matches[0].snippet.slice(from, to)),
+    ['é b', 'a b'],
+  );
 });
 
 test('the file filters come before the skipped and nested folders, which therefore win', async () => {
@@ -301,6 +371,26 @@ test('the bundled ripgrep finds text in a real folder, honouring filters, skippe
     // An upper-case letter in the query makes the search case-sensitive.
     const caseSensitive = await collect(runRipgrepJson, [folderPath], 'NEEDLE');
     assert.deepEqual(caseSensitive.matches, []);
+
+    // A phrase is found on one line and wrapped onto the next; its words in another order are not.
+    await fsPromises.writeFile(
+      path.join(folderPath, 'src', 'text.tsx'),
+      'intro\n  <p>\n    de verwachte zelfstandige\n        reizigers (1.5x) tellen\n  </p>\nverwachte zelfstandige reizigers op een regel\n',
+    );
+    const phrase = await collect(runRipgrepJson, [folderPath], 'Verwachte zelfstandige reizigers', { globs: ['*.tsx'] });
+    assert.deepEqual(phrase.matches, []);
+    const wrapped = await collect(runRipgrepJson, [folderPath], 'verwachte zelfstandige reizigers', { globs: ['*.tsx'] });
+    assert.deepEqual(
+      wrapped.matches.map((match) => [match.line, match.character, match.snippet, match.highlights]),
+      [
+        [3, 7, 'de verwachte zelfstandige reizigers (1.5x) tellen', [{ start: 3, end: 35 }]],
+        [6, 0, 'verwachte zelfstandige reizigers op een regel', [{ start: 0, end: 32 }]],
+      ],
+    );
+    const escaped = await collect(runRipgrepJson, [folderPath], 'reizigers (1.5x)', { globs: ['*.tsx'] });
+    assert.deepEqual(escaped.matches.map((match) => [match.line, match.character]), [[4, 8]]);
+    const reordered = await collect(runRipgrepJson, [folderPath], 'zelfstandige verwachte', { globs: ['*.tsx'] });
+    assert.deepEqual(reordered.matches, []);
 
     await assert.rejects(
       collect(runRipgrepJson, [folderPath], 'a(', { regex: true }),

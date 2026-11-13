@@ -21,6 +21,25 @@ function escapeGlobLiteral(relativePath: string): string {
   return relativePath.replace(/[[\]*?{}]/g, '[$&]');
 }
 
+function escapeRegexLiteral(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * A phrase is found wherever its words follow each other, also when the file
+ * wraps it onto the next line: whitespace between words stands for any
+ * whitespace, line breaks included. Spaces around the phrase stay literal, so
+ * ` word` does not match a `word` that merely starts an indented line.
+ * `null` for a query of one word, which needs none of this.
+ */
+function buildWhitespaceTolerantPattern(query: string): string | null {
+  const leadingSpaces = /^\s*/.exec(query)?.[0] ?? '';
+  const trailingSpaces = /\s*$/.exec(query.slice(leadingSpaces.length))?.[0] ?? '';
+  const words = query.slice(leadingSpaces.length, query.length - trailingSpaces.length).split(/\s+/);
+  if (words.length < 2) return null;
+  return `${leadingSpaces}${words.map(escapeRegexLiteral).join('\\s+')}${trailingSpaces}`;
+}
+
 /**
  * A later glob overrules an earlier one, so the user's globs come first: they
  * can narrow the search but never reopen a skipped or nested folder.
@@ -36,14 +55,18 @@ function buildRipgrepArguments(
     .filter((other) => isPathInsideFolder(folderPath, other))
     .map((other) => `!${escapeGlobLiteral(path.relative(folderPath, other).split(path.sep).join('/'))}/**`);
 
+  // Matching across lines makes ripgrep read whole files, so only a literal phrase of several words pays for it.
+  const phrasePattern = options.regex ? null : buildWhitespaceTolerantPattern(query);
+  const patternArguments = options.regex ? [] : phrasePattern === null ? ['--fixed-strings'] : ['--multiline'];
+
   return [
     '--json', '--smart-case', '--hidden', '--no-require-git', '--no-messages',
     '--max-count', String(MAXIMUM_MATCHES_PER_FILE),
-    ...(options.regex ? [] : ['--fixed-strings']),
+    ...patternArguments,
     ...options.globs.flatMap((glob) => ['--glob', glob]),
     ...SEARCH_SKIPPED_FOLDER_NAMES.flatMap((folderName) => ['--glob', `!${folderName}`]),
     ...nestedFolderGlobs.flatMap((glob) => ['--glob', glob]),
-    '--', query, './',
+    '--', phrasePattern ?? query, './',
   ];
 }
 
@@ -60,24 +83,58 @@ function resolveRootIndexes(folderCount: number, rootIndexes: number[] | undefin
 }
 
 /**
- * Cuts a matching line down to a window around its first match and moves the
- * match ranges into that window. ripgrep counts bytes; the editor and the
- * snippet count UTF-16 units.
+ * Turns the text of a match into one displayable line: a match that runs over
+ * several lines has each line break, with the indentation around it, shown as
+ * a single space. The line is then cut down to a window around its first match
+ * and the match ranges are moved into that window. ripgrep counts bytes; the
+ * editor and the snippet count UTF-16 units.
  */
-function buildSnippet(lineText: string, submatches: RipgrepSubmatch[]): Pick<FileContentMatch, 'character' | 'snippet' | 'highlights'> {
-  const text = lineText.replace(/\r?\n$/, '');
-  const lineBytes = Buffer.byteLength(lineText, 'utf8') === lineText.length ? null : Buffer.from(lineText, 'utf8');
+function buildSnippet(
+  matchedText: string,
+  submatches: RipgrepSubmatch[],
+): Pick<FileContentMatch, 'character' | 'snippet' | 'highlights'> & { lineOffset: number } {
+  const block = matchedText.replace(/\r?\n$/, '');
+  const blockBytes = Buffer.byteLength(matchedText, 'utf8') === matchedText.length ? null : Buffer.from(matchedText, 'utf8');
   let convertedBytes = 0;
   let convertedCharacters = 0;
   // Offsets are asked for in rising order, so each call only decodes the bytes since the previous one.
   const toCharacterOffset = (byteOffset: number): number => {
-    if (lineBytes === null) return byteOffset;
-    convertedCharacters += lineBytes.toString('utf8', convertedBytes, byteOffset).length;
+    if (blockBytes === null) return byteOffset;
+    convertedCharacters += blockBytes.toString('utf8', convertedBytes, byteOffset).length;
     convertedBytes = byteOffset;
     return convertedCharacters;
   };
 
-  const firstMatchStart = submatches.length > 0 ? toCharacterOffset(submatches[0].start) : 0;
+  const firstMatchInBlock = submatches.length > 0 ? toCharacterOffset(submatches[0].start) : 0;
+  // Where the first match sits in the file: the line it starts on, and its offset on that line.
+  const matchLineStart = firstMatchInBlock === 0 ? 0 : block.lastIndexOf('\n', firstMatchInBlock - 1) + 1;
+  let lineOffset = 0;
+  for (let lineBreak = block.indexOf('\n'); lineBreak !== -1 && lineBreak < matchLineStart; lineBreak = block.indexOf('\n', lineBreak + 1)) {
+    lineOffset += 1;
+  }
+
+  // Every collapsed line break, so an offset into the block can be moved into the one-line text.
+  const collapsedRuns: Array<{ start: number; length: number }> = [];
+  const text = block.includes('\n')
+    ? block.replace(/[ \t]*(?:\r?\n[ \t]*)+/g, (run: string, start: number) => {
+      collapsedRuns.push({ start, length: run.length });
+      return ' ';
+    })
+    : block;
+  let passedRuns = 0;
+  let removedCharacters = 0;
+  // Asked for in rising order too.
+  const toTextOffset = (blockOffset: number): number => {
+    while (passedRuns < collapsedRuns.length && collapsedRuns[passedRuns].start + collapsedRuns[passedRuns].length <= blockOffset) {
+      removedCharacters += collapsedRuns[passedRuns].length - 1;
+      passedRuns += 1;
+    }
+    const run = collapsedRuns[passedRuns];
+    // An offset inside a collapsed run lands just behind the space that replaced it.
+    return run !== undefined && blockOffset > run.start ? run.start - removedCharacters + 1 : blockOffset - removedCharacters;
+  };
+
+  const firstMatchStart = toTextOffset(firstMatchInBlock);
   const indentation = text.length - text.trimStart().length;
   let windowStart = Math.min(indentation, firstMatchStart);
   if (text.length - windowStart > SNIPPET_MAXIMUM_LENGTH) {
@@ -89,15 +146,15 @@ function buildSnippet(lineText: string, submatches: RipgrepSubmatch[]): Pick<Fil
 
   const highlights: FileContentMatch['highlights'] = [];
   for (let index = 0; index < submatches.length; index += 1) {
-    const start = index === 0 ? firstMatchStart : toCharacterOffset(submatches[index].start);
+    const start = index === 0 ? firstMatchStart : toTextOffset(toCharacterOffset(submatches[index].start));
     if (start >= windowEnd) break;
-    const end = Math.min(toCharacterOffset(submatches[index].end), windowEnd);
+    const end = Math.min(toTextOffset(toCharacterOffset(submatches[index].end)), windowEnd);
     if (end > start) {
       highlights.push({ start: start - windowStart + prefix.length, end: end - windowStart + prefix.length });
     }
   }
 
-  return { character: firstMatchStart, snippet, highlights };
+  return { character: firstMatchInBlock - matchLineStart, lineOffset, snippet, highlights };
 }
 
 /** Turns one line of `rg --json` output into a match; every other kind of line is `null`. */
@@ -113,18 +170,20 @@ function parseMatchLine(outputLine: string, folderPath: string, rootIndex: numbe
   }
 
   const filePath = event.data?.path?.text;
-  const lineText = event.data?.lines?.text;
+  // Every line the match touches: one line, or several for a phrase that wraps.
+  const matchedText = event.data?.lines?.text;
   // A path or line that is not valid UTF-8 arrives as base64 under `bytes` and has nothing to show.
-  if (event.type !== 'match' || typeof filePath !== 'string' || typeof lineText !== 'string') return null;
+  if (event.type !== 'match' || typeof filePath !== 'string' || typeof matchedText !== 'string') return null;
 
   const relativePath = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+  const { lineOffset, ...snippet } = buildSnippet(matchedText, event.data?.submatches ?? []);
   return {
     path: path.join(folderPath, ...relativePath.split('/')),
     relativePath,
     rootPath: folderPath,
     rootIndex,
-    line: event.data?.line_number ?? 1,
-    ...buildSnippet(lineText, event.data?.submatches ?? []),
+    line: (event.data?.line_number ?? 1) + lineOffset,
+    ...snippet,
   };
 }
 
