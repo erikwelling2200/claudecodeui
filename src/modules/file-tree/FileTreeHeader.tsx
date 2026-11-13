@@ -23,6 +23,8 @@ type FileTreeHeaderProps = {
   // Empty for a single-folder project, which has nothing to choose from.
   contentSearchFolders: ContentSearchFolder[];
   onToggleContentSearchFolder: (folderPath: string) => void;
+  // Ctrl/Cmd+click on a folder: search only that folder.
+  onSoloContentSearchFolder: (folderPath: string) => void;
   // Toolbar actions
   onNewFile?: () => void;
   onNewFolder?: () => void;
@@ -50,6 +52,7 @@ export default function FileTreeHeader({
   onContentSearchGlobTextChange,
   contentSearchFolders,
   onToggleContentSearchFolder,
+  onSoloContentSearchFolder,
   onNewFile,
   onNewFolder,
   onUploadFiles,
@@ -279,7 +282,7 @@ export default function FileTreeHeader({
             <button
               key={folder.path}
               type="button"
-              onClick={() => onToggleContentSearchFolder(folder.path)}
+              onClick={(event) => (event.ctrlKey || event.metaKey ? onSoloContentSearchFolder : onToggleContentSearchFolder)(folder.path)}
               aria-pressed={folder.selected}
               title={folder.path}
               className={cn(

@@ -16,6 +16,7 @@ type UseContentSearchFoldersResult = {
   // What to send with a search: absent when every folder is searched.
   rootIndexes: number[] | undefined;
   toggleFolder: (folderPath: string) => void;
+  soloFolder: (folderPath: string) => void;
 };
 
 function readExclusions(projectId: string | undefined): StoredExclusions {
@@ -59,10 +60,7 @@ export function useContentSearchFolders(projectId: string | undefined, files: Fi
     };
   }, [exclusions.excludedPaths, files]);
 
-  const toggleFolder = useCallback((folderPath: string) => {
-    const excludedPaths = exclusions.excludedPaths.includes(folderPath)
-      ? exclusions.excludedPaths.filter((excludedPath) => excludedPath !== folderPath)
-      : [...exclusions.excludedPaths, folderPath];
+  const storeExclusions = useCallback((excludedPaths: string[]) => {
     try {
       if (projectId) {
         localStorage.setItem(`${EXCLUDED_FOLDERS_STORAGE_KEY_PREFIX}${projectId}`, JSON.stringify(excludedPaths));
@@ -71,7 +69,19 @@ export function useContentSearchFolders(projectId: string | undefined, files: Fi
       // The choice still holds for this session when it cannot be stored.
     }
     setExclusions({ projectId, excludedPaths });
-  }, [exclusions.excludedPaths, projectId]);
+  }, [projectId]);
 
-  return { folders, rootIndexes, toggleFolder };
+  const toggleFolder = useCallback((folderPath: string) => {
+    storeExclusions(exclusions.excludedPaths.includes(folderPath)
+      ? exclusions.excludedPaths.filter((excludedPath) => excludedPath !== folderPath)
+      : [...exclusions.excludedPaths, folderPath]);
+  }, [exclusions.excludedPaths, storeExclusions]);
+
+  // Searches only this folder; when it already is the only one searched, searches every folder again.
+  const soloFolder = useCallback((folderPath: string) => {
+    const isAlreadySolo = folders.every((folder) => folder.selected === (folder.path === folderPath));
+    storeExclusions(isAlreadySolo ? [] : folders.filter((folder) => folder.path !== folderPath).map((folder) => folder.path));
+  }, [folders, storeExclusions]);
+
+  return { folders, rootIndexes, toggleFolder, soloFolder };
 }
