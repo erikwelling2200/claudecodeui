@@ -27,6 +27,7 @@ import { useChatRealtimeHandlers } from '@/modules/chat/hooks/useChatRealtimeHan
 import { useChatComposerState } from '@/modules/chat/hooks/useChatComposerState';
 import { useSessionStore } from '@/modules/chat/hooks/useSessionStore';
 import { useSessionPromptBookends } from '@/modules/chat/hooks/useSessionPromptBookends';
+import { useChatFind } from '@/modules/chat/hooks/useChatFind';
 import { setRemoteControlWanted, useRemoteControl } from '@/modules/chat/utils/remoteControl';
 import {
   useProcessingSessions,
@@ -34,6 +35,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
+import ChatFindBar from '@/modules/chat/transcript/ChatFindBar';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -193,6 +195,17 @@ function ChatInterface({
     statusCheckSentAtRef,
     lastSeqRef,
     sessionStore,
+  });
+
+  const chatRootRef = useRef<HTMLDivElement>(null);
+  const chatFind = useChatFind({
+    isActive,
+    rootRef: chatRootRef,
+    scrollContainerRef,
+    chatMessages,
+    loadFullTranscript,
+    revealMessage,
+    sessionId: selectedSession?.id ?? null,
   });
 
   const promptBookends = useSessionPromptBookends({
@@ -501,7 +514,21 @@ function ChatInterface({
 
   return (
     <PermissionContext.Provider value={permissionContextValue}>
-      <div className="flex h-full min-h-0 flex-col">
+      <div ref={chatRootRef} className="flex h-full min-h-0 flex-col">
+        <div className="relative flex min-h-0 flex-1 flex-col">
+        {chatFind.isOpen && (
+          <ChatFindBar
+            inputRef={chatFind.inputRef}
+            query={chatFind.query}
+            onQueryChange={chatFind.setQuery}
+            matchCount={chatFind.matchCount}
+            currentMatchNumber={chatFind.currentMatchNumber}
+            isLoadingTranscript={chatFind.isLoadingTranscript}
+            onNext={chatFind.goToNext}
+            onPrevious={chatFind.goToPrevious}
+            onClose={chatFind.close}
+          />
+        )}
         <MarkdownWorkspaceContext.Provider value={markdownWorkspaceValue}>
           <TranscriptSessionContext.Provider value={transcriptSessionValue}>
           <ExpandThinkingContext.Provider value={expandThinking}>
@@ -564,6 +591,7 @@ function ChatInterface({
           </ExpandThinkingContext.Provider>
           </TranscriptSessionContext.Provider>
         </MarkdownWorkspaceContext.Provider>
+        </div>
 
         <div className="relative flex-shrink-0">
           {isUserScrolledUp && chatMessages.length > 0 && (

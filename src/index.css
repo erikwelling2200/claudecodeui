@@ -987,6 +987,17 @@
     }
   }
 
+  /* In-chat find (Ctrl+F) matches, painted through the CSS Custom Highlight API */
+  ::highlight(chat-find-match) {
+    background-color: rgb(250 204 21 / 0.45);
+    color: inherit;
+  }
+
+  ::highlight(chat-find-current) {
+    background-color: rgb(249 115 22 / 0.85);
+    color: #000;
+  }
+
   /* Search result highlight flash */
   .search-highlight-flash {
     animation: search-flash 4s ease-out;

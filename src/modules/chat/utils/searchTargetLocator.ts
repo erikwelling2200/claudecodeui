@@ -22,8 +22,11 @@ export type SearchTarget = {
   timestamp?: string;
 };
 
-/** Every field of a message that ends up as rendered text. */
-function getSearchableText(message: ChatMessage): string {
+/**
+ * Every field of a message that ends up as rendered text, lowercased. Shared with
+ * the in-chat find bar so a sidebar hit and a Ctrl+F hit agree on what a message says.
+ */
+export function getSearchableText(message: ChatMessage): string {
   const parts = [message.displayText, message.content];
 
   if (typeof message.toolInput === 'string') {

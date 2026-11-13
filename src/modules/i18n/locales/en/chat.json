@@ -324,6 +324,12 @@
     "forkFromHere": "Fork from here",
     "answeredBy": "Answered by {{model}}"
   },
+  "find": {
+    "placeholder": "Find in chat",
+    "previous": "Previous match (Shift+Enter)",
+    "next": "Next match (Enter)",
+    "close": "Close (Esc)"
+  },
   "export": {
     "trigger": "Export conversation",
     "heading": "Export as",
