@@ -134,6 +134,25 @@ test('a folder switched off is left out of the request and stays off for the nex
   assert.equal(screen.getByRole('button', { name: 'beta' }).getAttribute('aria-pressed'), 'false');
 });
 
+test('ctrl+click searches only that folder, and ctrl+click on the lone folder searches every folder again', async () => {
+  tree = [...multiFolderTree, { type: 'directory', name: 'gamma', path: '/work/gamma', isProjectRoot: true, children: [] }];
+  render(<FileTree selectedProject={project} />);
+
+  fireEvent.click(await screen.findByTitle('fileTree.searchInContents'));
+  const pressedChips = () => ['alpha', 'beta', 'gamma'].map((name) => screen.getByRole('button', { name }).getAttribute('aria-pressed'));
+  // beta starts switched off: the solo switches it on as well as switching the others off.
+  fireEvent.click(screen.getByRole('button', { name: 'beta' }));
+  fireEvent.click(screen.getByRole('button', { name: 'beta' }), { ctrlKey: true });
+  assert.deepEqual(pressedChips(), ['false', 'true', 'false']);
+
+  fireEvent.change(screen.getByPlaceholderText('fileTree.contentSearchPlaceholder'), { target: { value: 'needle' } });
+  await waitFor(() => assert.equal(searchRequests.length, 1));
+  assert.deepEqual(searchRequests[0][2], { regex: false, globs: [], rootIndexes: [1] });
+
+  fireEvent.click(screen.getByRole('button', { name: 'beta' }), { metaKey: true });
+  assert.deepEqual(pressedChips(), ['true', 'true', 'true']);
+});
+
 test('with every folder switched off nothing is searched', async () => {
   render(<FileTree selectedProject={project} />);
 

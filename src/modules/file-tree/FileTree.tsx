@@ -284,6 +284,7 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
         onContentSearchGlobTextChange={setContentSearchGlobText}
         contentSearchFolders={contentSearchFolders.folders}
         onToggleContentSearchFolder={contentSearchFolders.toggleFolder}
+        onSoloContentSearchFolder={contentSearchFolders.soloFolder}
         onUploadFiles={upload.handleFileSelect}
         onNewFile={() => operations.handleStartCreate('', 'file')}
         onNewFolder={() => operations.handleStartCreate('', 'directory')}
