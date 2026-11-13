@@ -4,7 +4,7 @@ import type { Extension } from '@codemirror/state';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ExternalLink, Maximize2, Minimize2 } from 'lucide-react';
+import { Code2, Eye, Table } from 'lucide-react';
 
 import { usePaletteOps } from '@/modules/command-palette';
 import { useTheme } from '@/shared/context/ThemeContext';
@@ -18,7 +18,9 @@ import { getEditorStyles } from '@/modules/code-editor/utils/editorStyles';
 import { createEditorToolbarPanelExtension } from '@/modules/code-editor/utils/editorToolbarPanel';
 import { isCsvFileName } from '@/modules/code-editor/utils/csvDocument';
 import CodeEditorFooter from '@/modules/code-editor/CodeEditorFooter';
-import CodeEditorHeader from '@/modules/code-editor/CodeEditorHeader';
+import CodeEditorFrame from '@/modules/code-editor/CodeEditorFrame';
+import CodeEditorHeaderActions from '@/modules/code-editor/CodeEditorHeaderActions';
+import { headerButtonActiveClassName, headerButtonClassName } from '@/modules/code-editor/utils/headerActionsSlot';
 import CodeEditorLoadingState from '@/modules/code-editor/CodeEditorLoadingState';
 import CodeEditorSurface from '@/modules/code-editor/CodeEditorSurface';
 import CodeEditorBinaryFile from '@/modules/code-editor/CodeEditorBinaryFile';
@@ -26,7 +28,6 @@ import CodeEditorMediaPreview from '@/modules/code-editor/CodeEditorMediaPreview
 
 type CodeEditorProps = {
   file: CodeEditorFile;
-  onClose: () => void;
   // Reports whether the buffer differs from the file on disk, so the owner can
   // guard replacing this editor with another file the same way closing is.
   onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
@@ -52,7 +53,6 @@ type CodeEditorProps = {
 /** Rendered by the code-editor module's own EditorSidebar, and re-exported on the module barrel, as the full CodeMirror editor for one open file. */
 export default function CodeEditor({
   file,
-  onClose,
   onUnsavedChangesChange,
   projectPath,
   isSidebar = false,
@@ -90,31 +90,16 @@ export default function CodeEditor({
     content,
     setContent,
     loading,
-    saving,
-    saveSuccess,
     saveError,
     isBinary,
     previewKind,
     fileProjectId,
     hasUnsavedChanges,
     handleSave,
-    handleDownload,
   } = useCodeEditorDocument({
     file,
     projectPath,
   });
-
-  // Every way of closing (the header X, the binary and media views)
-  // goes through here: a dirty buffer asks first, a clean one closes at once.
-  const requestClose = useCallback(() => {
-    if (
-      hasUnsavedChanges
-      && !window.confirm(t('unsavedChanges.confirmClose', 'You have unsaved changes. Close this file and discard them?'))
-    ) {
-      return;
-    }
-    onClose();
-  }, [hasUnsavedChanges, onClose, t]);
 
   // Cleared on unmount so a closed editor can never block the next open.
   useEffect(() => {
@@ -185,23 +170,17 @@ export default function CodeEditor({
       createEditorToolbarPanelExtension({
         file,
         showDiff,
-        isSidebar,
-        isExpanded,
         onToggleDiff: () => setShowDiff((previous) => !previous),
-        onPopOut,
-        onToggleExpand,
         labels: {
           changes: t('toolbar.changes'),
           previousChange: t('toolbar.previousChange'),
           nextChange: t('toolbar.nextChange'),
           hideDiff: t('toolbar.hideDiff'),
           showDiff: t('toolbar.showDiff'),
-          collapse: t('toolbar.collapse'),
-          expand: t('toolbar.expand'),
         },
       })
     ),
-    [file, isExpanded, isSidebar, onPopOut, onToggleExpand, showDiff, t],
+    [file, showDiff, t],
   );
 
   // The Roslyn-backed layer for C#: semantic colors, F12 and Shift+F12. It needs an absolute path to find the solution.
@@ -268,32 +247,6 @@ export default function CodeEditor({
     wordWrap,
   ]);
 
-  // The table view has no CodeMirror toolbar panel, so it draws the docked editor's pop-out and expand buttons itself.
-  const csvWindowControls = isSidebar && (onPopOut || onToggleExpand) ? (
-    <>
-      {onPopOut && (
-        <button
-          type="button"
-          onClick={onPopOut}
-          className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
-          title={t('toolbar.popOut', 'Open in modal')}
-        >
-          <ExternalLink className="h-4 w-4" />
-        </button>
-      )}
-      {onToggleExpand && (
-        <button
-          type="button"
-          onClick={onToggleExpand}
-          className="flex items-center justify-center rounded-md p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
-          title={isExpanded ? t('toolbar.collapse') : t('toolbar.expand')}
-        >
-          {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-        </button>
-      )}
-    </>
-  ) : null;
-
   useEditorKeyboardShortcuts({
     onSave: handleSave,
     dependency: content,
@@ -317,137 +270,110 @@ export default function CodeEditor({
     ) : loadingState;
   }
 
+  const frameProps = {
+    file,
+    tabStrip,
+    isSidebar,
+    isExpanded,
+    isFullscreen,
+    onToggleExpand,
+    onPopOut,
+    onToggleFullscreen: () => setIsFullscreen((previous) => !previous),
+  };
+
   // Natively previewable media (image/pdf/audio/video) is rendered inline
   // instead of showing the generic "cannot be displayed" placeholder.
   if (previewKind) {
     return (
-      <CodeEditorMediaPreview
-        file={file}
-        kind={previewKind}
-        projectId={fileProjectId}
-        tabStrip={tabStrip}
-        isSidebar={isSidebar}
-        isFullscreen={isFullscreen}
-        onClose={requestClose}
-        onToggleFullscreen={() => setIsFullscreen((previous) => !previous)}
-        labels={{
-          loading: t('filePreview.loading', 'Loading preview...'),
-          error: t('filePreview.error', 'Unable to display this file.'),
-          openInNewTab: t('filePreview.openInNewTab', 'Open in new tab'),
-          fullscreen: t('actions.fullscreen', 'Fullscreen'),
-          exitFullscreen: t('actions.exitFullscreen', 'Exit fullscreen'),
-          close: t('actions.close', 'Close'),
-        }}
-      />
+      <CodeEditorFrame {...frameProps}>
+        <CodeEditorMediaPreview
+          file={file}
+          kind={previewKind}
+          projectId={fileProjectId}
+          labels={{
+            loading: t('filePreview.loading', 'Loading preview...'),
+            error: t('filePreview.error', 'Unable to display this file.'),
+            openInNewTab: t('filePreview.openInNewTab', 'Open in new tab'),
+          }}
+        />
+      </CodeEditorFrame>
     );
   }
 
-  // Binary file display
   if (isBinary) {
     return (
-      <CodeEditorBinaryFile
-        file={file}
-        tabStrip={tabStrip}
-        isSidebar={isSidebar}
-        isFullscreen={isFullscreen}
-        onClose={requestClose}
-        onToggleFullscreen={() => setIsFullscreen((previous) => !previous)}
-        title={t('binaryFile.title', 'Binary File')}
-        message={t('binaryFile.message', 'The file "{{fileName}}" cannot be displayed in the text editor because it is a binary file.', { fileName: file.name })}
-      />
+      <CodeEditorFrame {...frameProps}>
+        <CodeEditorBinaryFile
+          title={t('binaryFile.title', 'Binary File')}
+          message={t('binaryFile.message', 'The file "{{fileName}}" cannot be displayed in the text editor because it is a binary file.', { fileName: file.name })}
+        />
+      </CodeEditorFrame>
     );
   }
-
-  const outerContainerClassName = isSidebar
-    ? 'w-full h-full flex flex-col'
-    : `fixed inset-0 z-[9999] md:bg-black/50 md:flex md:items-center md:justify-center md:p-4 ${isFullscreen ? 'md:p-0' : ''}`;
-
-  const innerContainerClassName = isSidebar
-    ? 'bg-background flex flex-col w-full h-full'
-    : `bg-background shadow-2xl flex flex-col w-full h-full md:rounded-lg md:shadow-2xl${
-      isFullscreen ? ' md:w-full md:h-full md:rounded-none' : ' md:w-full md:max-w-6xl md:h-[80vh] md:max-h-[80vh]'
-    }`;
 
   return (
     <>
       <style>{getEditorStyles(isDarkMode)}</style>
-      <div className={outerContainerClassName}>
-        <div className={innerContainerClassName}>
-          {tabStrip}
-          <CodeEditorHeader
-            file={file}
-            isSidebar={isSidebar}
-            isFullscreen={isFullscreen}
-            isMarkdownFile={isMarkdownFile}
-            isHtmlPreviewFile={isHtmlPreviewFile}
-            markdownPreview={markdownPreview}
-            isCsvFile={isCsvFile}
-            csvTableView={csvTableView}
-            saving={saving}
-            saveSuccess={saveSuccess}
-            hasUnsavedChanges={hasUnsavedChanges}
-            onToggleMarkdownPreview={() => setMarkdownPreview((previous) => !previous)}
-            onToggleCsvTableView={() => setCsvTableView((previous) => !previous)}
-            onOpenHtmlPreview={openHtmlPreview}
-            onOpenSettings={() => paletteOps.openSettings('appearance')}
-            onDownload={handleDownload}
-            onSave={handleSave}
-            onToggleFullscreen={() => setIsFullscreen((previous) => !previous)}
-            onClose={requestClose}
-            labels={{
-              showingChanges: t('header.showingChanges'),
-              copyPath: t('actions.copyPath', 'Copy file path'),
-              pathCopied: t('actions.pathCopied', 'File path copied'),
-              editMarkdown: t('actions.editMarkdown'),
-              previewMarkdown: t('actions.previewMarkdown'),
-              previewHtml: t('actions.previewHtml', 'Open HTML preview in new tab'),
-              showCsvTable: t('actions.showCsvTable', 'Show as table'),
-              showCsvText: t('actions.showCsvText', 'Show as text'),
-              settings: t('toolbar.settings'),
-              download: t('actions.download'),
-              save: t('actions.save'),
-              saving: t('actions.saving'),
-              saved: t('actions.saved'),
-              fullscreen: t('actions.fullscreen'),
-              exitFullscreen: t('actions.exitFullscreen'),
-              close: t('actions.close'),
-              unsavedChanges: t('unsavedChanges.indicator', 'Unsaved changes'),
-            }}
-          />
-
-          {saveError && (
-            <div className="border-b border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300">
-              {saveError}
-            </div>
+      <CodeEditorFrame {...frameProps} hasUnsavedChanges={hasUnsavedChanges}>
+        <CodeEditorHeaderActions>
+          {isMarkdownFile && (
+            <button
+              type="button"
+              onClick={() => setMarkdownPreview((previous) => !previous)}
+              className={markdownPreview ? headerButtonActiveClassName : headerButtonClassName}
+              title={markdownPreview ? t('actions.editMarkdown') : t('actions.previewMarkdown')}
+            >
+              {markdownPreview ? <Code2 className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
           )}
+          {isCsvFile && (
+            <button
+              type="button"
+              onClick={() => setCsvTableView((previous) => !previous)}
+              className={csvTableView ? headerButtonActiveClassName : headerButtonClassName}
+              title={csvTableView ? t('actions.showCsvText', 'Show as text') : t('actions.showCsvTable', 'Show as table')}
+            >
+              {csvTableView ? <Code2 className="h-4 w-4" /> : <Table className="h-4 w-4" />}
+            </button>
+          )}
+          {isHtmlPreviewFile && (
+            <button type="button" onClick={openHtmlPreview} className={headerButtonClassName} title={t('actions.previewHtml', 'Open HTML preview in new tab')}>
+              <Eye className="h-4 w-4" />
+            </button>
+          )}
+        </CodeEditorHeaderActions>
 
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <CodeEditorSurface
-              content={content}
-              onChange={setContent}
-              markdownPreview={markdownPreview}
-              isMarkdownFile={isMarkdownFile}
-              csvTableView={csvTableView && isCsvFile}
-              fileName={file.name}
-              csvWindowControls={csvWindowControls}
-              isDarkMode={isDarkMode}
-              fontSize={fontSize}
-              showLineNumbers={showLineNumbers}
-              extensions={extensions}
-              gotoTarget={gotoTarget}
-            />
+        {saveError && (
+          <div className="border-b border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300">
+            {saveError}
           </div>
+        )}
 
-          {lookupPanel}
-
-          <CodeEditorFooter
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <CodeEditorSurface
             content={content}
-            linesLabel={t('footer.lines')}
-            charactersLabel={t('footer.characters')}
-            shortcutsLabel={t('footer.shortcuts')}
+            onChange={setContent}
+            markdownPreview={markdownPreview}
+            isMarkdownFile={isMarkdownFile}
+            csvTableView={csvTableView && isCsvFile}
+            fileName={file.name}
+            isDarkMode={isDarkMode}
+            fontSize={fontSize}
+            showLineNumbers={showLineNumbers}
+            extensions={extensions}
+            gotoTarget={gotoTarget}
           />
         </div>
-      </div>
+
+        {lookupPanel}
+
+        <CodeEditorFooter
+          content={content}
+          linesLabel={t('footer.lines')}
+          charactersLabel={t('footer.characters')}
+          shortcutsLabel={t('footer.shortcuts')}
+        />
+      </CodeEditorFrame>
     </>
   );
 }
