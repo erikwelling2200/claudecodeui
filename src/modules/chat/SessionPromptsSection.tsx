@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { PinIcon, XIcon } from 'lucide-react';
 
 import type { SessionPrompt, SessionPromptBookends } from '@/shared/types';
 
@@ -7,9 +8,11 @@ type PromptItemProps = {
   label: string;
   prompt: SessionPrompt;
   onJump: (timestamp: string) => void;
+  /** Offered on a pinned message only. */
+  onUnpin?: () => void;
 };
 
-function PromptItem({ label, prompt, onJump }: PromptItemProps) {
+function PromptItem({ label, prompt, onJump, onUnpin }: PromptItemProps) {
   const { t } = useTranslation();
   const textRef = useRef<HTMLSpanElement | null>(null);
   // Whether the full text is shown instead of the first three lines.
@@ -29,7 +32,21 @@ function PromptItem({ label, prompt, onJump }: PromptItemProps) {
 
   return (
     <div>
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+        {onUnpin && <PinIcon className="h-3 w-3 fill-current" />}
+        <span className="flex-1">{label}</span>
+        {onUnpin && (
+          <button
+            type="button"
+            onClick={onUnpin}
+            title={t('sessionPrompts.unpin', { defaultValue: 'Unpin' })}
+            aria-label={t('sessionPrompts.unpin', { defaultValue: 'Unpin' })}
+            className="rounded p-0.5 hover:bg-accent hover:text-foreground"
+          >
+            <XIcon className="h-3 w-3" />
+          </button>
+        )}
+      </div>
       <button
         type="button"
         onClick={() => onJump(prompt.timestamp)}
@@ -56,11 +73,17 @@ function PromptItem({ label, prompt, onJump }: PromptItemProps) {
 
 type SessionPromptsSectionProps = {
   bookends: SessionPromptBookends;
+  /** Messages the user pinned in this chat, in transcript order. */
+  pinned: SessionPrompt[];
   onJump: (timestamp: string) => void;
+  onUnpin: (prompt: SessionPrompt) => void;
 };
 
-/** Used by the project-workspace module to quote the chat's first and last user message in the sidebar beside the chat, each a link back to it. */
-export function SessionPromptsSection({ bookends, onJump }: SessionPromptsSectionProps) {
+/**
+ * Used by the project-workspace module to quote the chat's first message, its pinned messages and its last message in
+ * the sidebar beside the chat, each a link back to it.
+ */
+export function SessionPromptsSection({ bookends, pinned, onJump, onUnpin }: SessionPromptsSectionProps) {
   const { t } = useTranslation();
   const { first, last } = bookends;
   // With a single prompt the two bookends are the same message.
@@ -69,6 +92,15 @@ export function SessionPromptsSection({ bookends, onJump }: SessionPromptsSectio
   return (
     <section className="space-y-2">
       {first && <PromptItem label={t('sessionPrompts.first')} prompt={first} onJump={onJump} />}
+      {pinned.map((prompt) => (
+        <PromptItem
+          key={prompt.timestamp}
+          label={t('sessionPrompts.pinned', { defaultValue: 'Pinned' })}
+          prompt={prompt}
+          onJump={onJump}
+          onUnpin={() => onUnpin(prompt)}
+        />
+      ))}
       {showLast && <PromptItem label={t('sessionPrompts.last')} prompt={last} onJump={onJump} />}
     </section>
   );

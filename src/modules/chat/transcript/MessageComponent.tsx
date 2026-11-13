@@ -12,6 +12,7 @@ import ChatMessageFiles from '@/modules/chat/transcript/ChatMessageFiles';
 import { Markdown } from '@/modules/chat/transcript/Markdown';
 import StreamingMarkdown from '@/modules/chat/transcript/StreamingMarkdown';
 import MessageCopyControl from '@/modules/chat/transcript/MessageCopyControl';
+import MessagePinControl from '@/modules/chat/transcript/MessagePinControl';
 import MessageModelLabel from '@/modules/chat/transcript/MessageModelLabel';
 import MessageSpeakControl from '@/modules/chat/transcript/MessageSpeakControl';
 import { useIsExportingTranscript } from '@/modules/chat/context/TranscriptRenderContext';
@@ -138,7 +139,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
               <ChatMessageFiles files={message.files} />
             )}
             {userCopyContent.trim().length > 0 || (!message.images?.length && !message.files?.length) ? (
-              <div className="group max-w-full rounded-2xl rounded-br-md border border-border/60 bg-muted/60 px-3 py-2 text-foreground shadow-sm dark:bg-gray-800/60 sm:px-4">
+              <div className="group group/message max-w-full rounded-2xl rounded-br-md border border-border/60 bg-muted/60 px-3 py-2 text-foreground shadow-sm dark:bg-gray-800/60 sm:px-4">
                 <div dir="auto" className="break-words font-serif text-sm">
                   <Markdown
                     breaks
@@ -169,6 +170,9 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                     >
                       <GitBranchIcon className="h-3.5 w-3.5" />
                     </button>
+                  )}
+                  {shouldShowUserCopyControl && (
+                    <MessagePinControl text={userCopyContent} timestamp={String(message.timestamp)} />
                   )}
                   {shouldShowUserCopyControl && (
                     <MessageCopyControl content={userCopyContent} messageType="user" />
@@ -229,7 +233,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
         </div>
       ) : (
         /* Claude/Error/Tool messages on the left */
-        <div className="w-full">
+        <div className="group/message w-full">
           {!isGrouped && (
             <div className="mb-2 flex items-center space-x-3">
               {message.type === 'error' ? (
@@ -446,6 +450,9 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                 )}
                 {shouldShowAssistantCopyControl && (
                   <MessageSpeakControl content={assistantCopyContent} />
+                )}
+                {shouldShowAssistantCopyControl && (
+                  <MessagePinControl text={assistantCopyContent} timestamp={String(message.timestamp)} />
                 )}
                 {/* Which model actually answered, as the provider recorded it
                     on this row. Provenance rather than an affordance, so unlike

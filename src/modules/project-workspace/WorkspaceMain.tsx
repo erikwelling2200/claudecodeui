@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, type Dispatch, type SetStateAction, useState } from 'react';
 
-import { ChatInterface, SessionPromptsSection } from '@/modules/chat';
+import { ChatInterface, SessionPromptsSection, togglePinnedMessage, usePinnedMessages } from '@/modules/chat';
 import { FileTree } from '@/modules/file-tree';
 import { StandaloneShell } from '@/modules/standalone-shell';
 import { GitPanel } from '@/modules/git-panel';
@@ -9,7 +9,7 @@ import { BrowserUsePanel, useBrowserUseEnabled } from '@/modules/browser-use';
 import { usePaletteOpsRegister } from '@/modules/command-palette';
 import { TaskMasterPanel, useTaskMasterProjectSync, useTasksSettings } from '@/modules/task-master';
 import { WorktreeClaimsSidebar } from '@/modules/worktree-claims';
-import type { AppTab, DirectoryRevealRequest, Project, ProjectSession, SessionEstablishedContext, SessionNavigationOptions, SessionPromptBookends, SettingsMainTab } from '@/shared/types';
+import type { AppTab, DirectoryRevealRequest, Project, ProjectSession, SessionEstablishedContext, SessionNavigationOptions, SessionPrompt, SessionPromptBookends, SettingsMainTab } from '@/shared/types';
 import { useSetUiPreference, useUiPreferences } from '@/shared/context/UiPreferencesContext';
 import { useFileOpenResolver } from '@/modules/project-workspace/hooks/useFileOpenResolver';
 import { EditorSidebar, useEditorSidebar } from '@/modules/code-editor';
@@ -78,6 +78,9 @@ function WorkspaceMain({
   // The sidebar's latest "scroll to this message" click, handed down to the chat; a new object per click.
   const [promptJumpRequest, setPromptJumpRequest] = useState<{ timestamp: string } | null>(null);
   const jumpToPrompt = useCallback((timestamp: string) => setPromptJumpRequest({ timestamp }), []);
+  const sessionId = selectedSession?.id ?? null;
+  const pinnedMessages = usePinnedMessages(sessionId);
+  const unpinMessage = useCallback((prompt: SessionPrompt) => { if (sessionId) togglePinnedMessage(sessionId, prompt); }, [sessionId]);
 
   const shouldShowTasksTab = Boolean(tasksEnabled && isTaskMasterInstalled);
   const shouldShowBrowserTab = browserUseEnabled;
@@ -202,8 +205,10 @@ function WorkspaceMain({
                 />
               </WorkspaceErrorBoundary>
             </div>
-            <WorktreeClaimsSidebar sessionId={selectedSession?.id ?? null}>
-              {(promptBookends.first || promptBookends.last) && <SessionPromptsSection bookends={promptBookends} onJump={jumpToPrompt} />}
+            <WorktreeClaimsSidebar sessionId={sessionId}>
+              {(promptBookends.first || promptBookends.last || pinnedMessages.length > 0) && (
+                <SessionPromptsSection bookends={promptBookends} pinned={pinnedMessages} onJump={jumpToPrompt} onUnpin={unpinMessage} />
+              )}
             </WorktreeClaimsSidebar>
           </div>
 

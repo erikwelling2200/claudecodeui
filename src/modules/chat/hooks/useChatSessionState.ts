@@ -1216,7 +1216,9 @@ export function useChatSessionState({
   // Scrolls to the user message sent at `timestamp`. One outside the loaded tail goes through the search-target path,
   // which loads the whole transcript first.
   const jumpToPrompt = useCallback((timestamp: string) => {
-    const message = chatMessages.find((candidate) => candidate.type === 'user' && String(candidate.timestamp) === timestamp);
+    // A pinned reply is an assistant message; a user message wins when both share the timestamp.
+    const matches = chatMessages.filter((candidate) => (candidate.type === 'user' || candidate.type === 'assistant') && String(candidate.timestamp) === timestamp);
+    const message = matches.find((candidate) => candidate.type === 'user') ?? matches[0];
     if (message) {
       revealMessage(message, true);
       return;
