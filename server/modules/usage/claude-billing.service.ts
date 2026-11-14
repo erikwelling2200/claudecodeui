@@ -36,6 +36,8 @@ export type ClaudeBillingStatus = {
   keySource: 'settings' | 'environment' | null;
   keyHint: string | null;
   mode: ClaudeBilling['mode'];
+  /** A subscription login was there and has ended, as opposed to never having been set up. */
+  loginExpired: boolean;
   limit: ClaudeBillingLimit | null;
   spend: { today: number; cycle: number };
 };
@@ -77,10 +79,19 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     return key ? { variable: 'ANTHROPIC_API_KEY', key } : hostKey();
   }
 
+  function storedLogin(): { accessToken?: string; refreshToken?: string } | null {
+    return readJson(path.join(dependencies.homeDirectory, '.claude', '.credentials.json'))?.claudeAiOauth ?? null;
+  }
+
   function hasSubscription(): boolean {
     if (hostEnv.CLAUDE_CODE_OAUTH_TOKEN?.trim()) return true;
-    const oauth = readJson(path.join(dependencies.homeDirectory, '.claude', '.credentials.json'))?.claudeAiOauth;
-    return Boolean(oauth?.accessToken || oauth?.refreshToken);
+    const login = storedLogin();
+    return Boolean(login?.accessToken || login?.refreshToken);
+  }
+
+  /** The CLI keeps the login entry and empties its tokens when a login ends, so an entry without tokens is one that ran out. */
+  function loginExpired(): boolean {
+    return !hasSubscription() && storedLogin() !== null;
   }
 
   /** The limit the plan is at right now, from a live rejection or a full bar, whichever resets last. */
@@ -147,6 +158,7 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
       keySource: stored ? 'settings' : key ? 'environment' : null,
       keyHint: key ? key.slice(-4) : null,
       mode: billing.mode,
+      loginExpired: loginExpired(),
       limit: billing.mode === 'api_key' ? billing.limit : currentLimit(),
       spend: { today: dependencies.spend.sumSince(today.getTime()), cycle: dependencies.spend.sumSince(dependencies.creditCycleStart()) },
     };

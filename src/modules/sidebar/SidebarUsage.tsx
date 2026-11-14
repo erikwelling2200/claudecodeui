@@ -127,7 +127,7 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
     >
       {billing?.mode === 'api_key' && (
         <div data-testid="usage-api-key-active" className="mb-1.5 rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300">
-          <div className="font-bold">{t('usage.apiKeyActive')}</div>
+          <div className="font-bold">{t(billing.loginExpired ? 'usage.loginExpired' : 'usage.apiKeyActive')}</div>
           {billing.limit && <div>{t('usage.subscriptionBackIn', { time: formatUntil(billing.limit.resetsAt - now) })}</div>}
         </div>
       )}
