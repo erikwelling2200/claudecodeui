@@ -1494,6 +1494,7 @@ export type ClaudeBillingStatus = {
   keySource: 'settings' | 'environment' | null;
   keyHint: string | null;
   mode: 'subscription' | 'api_key' | 'none';
+  loginExpired: boolean;
   limit: { kind: string; resetsAt: number } | null;
   spend: { today: number; cycle: number };
 };

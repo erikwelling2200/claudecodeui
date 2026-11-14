@@ -38,7 +38,7 @@ function createBilling(options: Options = {}) {
     creditCycleStart: () => options.cycleStart ?? Date.parse('2026-10-20T00:00:00Z'),
     now: () => clock,
   });
-  return { billing, advance: (ms: number) => { clock += ms; } };
+  return { billing, home, advance: (ms: number) => { clock += ms; } };
 }
 
 test('the subscription is used while it has room, even with a key stored', () => {
@@ -88,6 +88,14 @@ test('a key in the server env is the fallback when none is stored, and the store
 test('with no subscription login a key is used outright, and with neither the env is left alone', () => {
   assert.equal(createBilling({ loggedIn: false, storedKey: 'sk-stored' }).billing.resolve().mode, 'api_key');
   assert.deepEqual(createBilling({ loggedIn: false }).billing.resolve(), { mode: 'none' });
+});
+
+test('a login entry left without tokens is reported as expired, a missing one is not', () => {
+  const ended = createBilling({ loggedIn: false, storedKey: 'sk-stored' });
+  fs.writeFileSync(path.join(ended.home, '.claude', '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: '', refreshToken: '', loginEnded: 'time_limit' } }));
+  assert.deepEqual([ended.billing.getStatus().mode, ended.billing.getStatus().loginExpired], ['api_key', true]);
+  assert.equal(createBilling({ loggedIn: false, storedKey: 'sk-stored' }).billing.getStatus().loginExpired, false);
+  assert.equal(createBilling({ storedKey: 'sk-stored' }).billing.getStatus().loginExpired, false);
 });
 
 test('the env for a subscription run carries no key; for a key run only the chosen one', () => {

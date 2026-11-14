@@ -93,6 +93,7 @@
     "refreshing": "refreshing...",
     "resetsIn": "Resets in {{time}}",
     "apiKeyActive": "Billing your API key",
+    "loginExpired": "Login expired, billing your API key",
     "subscriptionBackIn": "Subscription limit hit, back in {{time}}",
     "apiSpendToday": "API key {{amount}} today",
     "orgSpendToday": "Org {{amount}} today",
