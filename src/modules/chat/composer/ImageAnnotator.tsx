@@ -2,16 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowUpRight, Check, Pencil, RectangleHorizontal, Trash2, Type, Undo2, X } from 'lucide-react';
+import { ArrowUpRight, Check, Pencil, RectangleHorizontal, Slash, Trash2, Type, Undo2, X } from 'lucide-react';
 
-type AnnotationTool = 'pen' | 'arrow' | 'rect' | 'text';
+type AnnotationTool = 'pen' | 'line' | 'arrow' | 'rect' | 'text';
 
 type Point = { x: number; y: number };
 
 type Box = { x: number; y: number; width: number; height: number };
 
 type StrokeAnnotation = {
-  tool: 'pen' | 'arrow' | 'rect';
+  tool: 'pen' | 'line' | 'arrow' | 'rect';
   color: string;
   width: number;
   points: Point[];
@@ -58,6 +58,7 @@ const COLORS = ['#ef4444', '#facc15', '#22c55e', '#3b82f6', '#ffffff', '#000000'
 
 const TOOLS: Array<{ id: AnnotationTool; icon: typeof Pencil; labelKey: string }> = [
   { id: 'pen', icon: Pencil, labelKey: 'annotate.pen' },
+  { id: 'line', icon: Slash, labelKey: 'annotate.line' },
   { id: 'arrow', icon: ArrowUpRight, labelKey: 'annotate.arrow' },
   { id: 'rect', icon: RectangleHorizontal, labelKey: 'annotate.rectangle' },
   { id: 'text', icon: Type, labelKey: 'annotate.text' },
@@ -142,14 +143,16 @@ const drawAnnotation = (context: CanvasRenderingContext2D, annotation: Annotatio
   } else if (tool === 'rect') {
     context.rect(start.x, start.y, end.x - start.x, end.y - start.y);
   } else {
-    const angle = Math.atan2(end.y - start.y, end.x - start.x);
-    const headLength = width * 4;
     context.moveTo(start.x, start.y);
     context.lineTo(end.x, end.y);
-    context.moveTo(end.x, end.y);
-    context.lineTo(end.x - headLength * Math.cos(angle - Math.PI / 7), end.y - headLength * Math.sin(angle - Math.PI / 7));
-    context.moveTo(end.x, end.y);
-    context.lineTo(end.x - headLength * Math.cos(angle + Math.PI / 7), end.y - headLength * Math.sin(angle + Math.PI / 7));
+    if (tool === 'arrow') {
+      const angle = Math.atan2(end.y - start.y, end.x - start.x);
+      const headLength = width * 4;
+      context.moveTo(end.x, end.y);
+      context.lineTo(end.x - headLength * Math.cos(angle - Math.PI / 7), end.y - headLength * Math.sin(angle - Math.PI / 7));
+      context.moveTo(end.x, end.y);
+      context.lineTo(end.x - headLength * Math.cos(angle + Math.PI / 7), end.y - headLength * Math.sin(angle + Math.PI / 7));
+    }
   }
 
   context.stroke();
@@ -182,7 +185,7 @@ const dragText = (drag: TextDrag, dx: number, dy: number): TextAnnotation => {
 const toPngName = (name: string) => `${name.replace(/\.[^.]+$/, '') || 'image'}.png`;
 
 /**
- * Fullscreen editor for drawing on a pending image attachment (pen, arrow,
+ * Fullscreen editor for drawing on a pending image attachment (pen, line, arrow,
  * rectangle, text) before it is sent. Mouse wheel zooms, middle-drag pans;
  * with the text tool a placed text can be moved, resized and edited.
  * Saving flattens the drawing into a new PNG.

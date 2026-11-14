@@ -474,6 +474,7 @@
   "annotate": {
     "title": "Draw on {{name}}",
     "pen": "Pen",
+    "line": "Line",
     "arrow": "Arrow",
     "rectangle": "Rectangle",
     "text": "Text",
