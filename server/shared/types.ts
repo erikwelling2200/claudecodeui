@@ -726,6 +726,8 @@ export type ProviderRuntimeContext = {
     setPermissionMode?(mode: string): Promise<void>;
     mcpServerStatus?(): Promise<AnyRecord[]>;
     reconnectMcpServer?(serverName: string): Promise<void>;
+    mcpAuthenticate?(serverName: string, redirectUri?: string): Promise<AnyRecord>;
+    mcpSubmitOAuthCallbackUrl?(serverName: string, callbackUrl: string): Promise<AnyRecord>;
     close?(): void;
   };
   /**

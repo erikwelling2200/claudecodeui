@@ -2742,6 +2742,38 @@ async function reconnectClaudeSDKMcpServer(sessionId: string, serverName: string
 }
 
 /**
+ * Starts an MCP server's OAuth sign-in in a session's live process. The CLI listens for the redirect on a
+ * localhost port of its own and reconnects the server once it lands.
+ * @param {string} sessionId - Session identifier
+ * @param {string} serverName - The server's configured name
+ * @returns {Promise<{authUrl?: string}|null>} Null when no live process holds the session
+ */
+async function authenticateClaudeSDKMcpServer(sessionId: string, serverName: string): Promise<{ authUrl?: string } | null> {
+  const session = getSession(sessionId);
+  if (!session || session.status !== 'active') {
+    return null;
+  }
+  const result = await session.instance.mcpAuthenticate!(serverName);
+  return typeof result?.authUrl === 'string' ? { authUrl: result.authUrl } : {};
+}
+
+/**
+ * Hands the redirect URL of a sign-in started by authenticateClaudeSDKMcpServer to the live process.
+ * @param {string} sessionId - Session identifier
+ * @param {string} serverName - The server's configured name
+ * @param {string} callbackUrl - The full URL the identity provider redirected to
+ * @returns {Promise<boolean>} False when no live process holds the session
+ */
+async function submitClaudeSDKMcpOAuthCallback(sessionId: string, serverName: string, callbackUrl: string): Promise<boolean> {
+  const session = getSession(sessionId);
+  if (!session || session.status !== 'active') {
+    return false;
+  }
+  await session.instance.mcpSubmitOAuthCallbackUrl!(serverName, callbackUrl);
+  return true;
+}
+
+/**
  * Checks if an SDK session is currently active
  * @param {string} sessionId - Session identifier
  * @returns {boolean} True if session is active
@@ -2828,6 +2860,8 @@ export const claudeRuntime = {
   setRemoteControl: setClaudeSDKRemoteControl,
   listMcpServers: listClaudeSDKMcpServers,
   reconnectMcpServer: reconnectClaudeSDKMcpServer,
+  authenticateMcpServer: authenticateClaudeSDKMcpServer,
+  submitMcpOAuthCallback: submitClaudeSDKMcpOAuthCallback,
   steerTurn: steerClaudeSDKTurn,
   interruptForSteer: interruptClaudeSDKTurnForSteer,
   cancelSteer: cancelClaudeSDKSteer,

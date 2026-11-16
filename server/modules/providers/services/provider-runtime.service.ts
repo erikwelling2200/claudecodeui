@@ -139,6 +139,16 @@ export function createProviderRuntimeService(
       return Boolean(await runtime.reconnectMcpServer?.(sessionId, serverName));
     },
 
+    async authenticateMcpServer(providerName: LLMProvider, sessionId: string, serverName: string): Promise<{ authUrl?: string } | null> {
+      const { runtime } = dependencies.resolveProvider(providerName);
+      return (await runtime.authenticateMcpServer?.(sessionId, serverName)) ?? null;
+    },
+
+    async submitMcpOAuthCallback(providerName: LLMProvider, sessionId: string, serverName: string, callbackUrl: string): Promise<boolean> {
+      const { runtime } = dependencies.resolveProvider(providerName);
+      return Boolean(await runtime.submitMcpOAuthCallback?.(sessionId, serverName, callbackUrl));
+    },
+
     async steerTurn(providerName: LLMProvider, sessionId: string, command: string, options: AnyRecord): Promise<boolean> {
       const { runtime } = dependencies.resolveProvider(providerName);
       return Boolean(await runtime.steerTurn?.(sessionId, command, options));

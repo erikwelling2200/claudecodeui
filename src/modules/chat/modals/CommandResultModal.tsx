@@ -8,6 +8,7 @@ import {
   Coins,
   Cpu,
   Gauge,
+  KeyRound,
   Package,
   Plug,
   Plus,
@@ -604,7 +605,22 @@ function McpContent({ data }: { data: McpCommandData }) {
     void load();
   }, [load]);
 
-  const hasPending = Boolean(servers?.some((server) => server.status === 'pending'));
+  // Servers whose sign-in page is open; polled until the process reports them past needs-auth.
+  const [awaitingAuth, setAwaitingAuth] = useState<Set<string>>(() => new Set());
+  // Redirect URLs pasted by hand, for a browser that cannot reach the process's localhost callback.
+  const [callbackDrafts, setCallbackDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!servers || awaitingAuth.size === 0) {
+      return;
+    }
+    const stillWaiting = new Set([...awaitingAuth].filter((name) => servers.some((server) => server.name === name && server.status === 'needs-auth')));
+    if (stillWaiting.size !== awaitingAuth.size) {
+      setAwaitingAuth(stillWaiting);
+    }
+  }, [awaitingAuth, servers]);
+
+  const hasPending = Boolean(servers?.some((server) => server.status === 'pending')) || awaitingAuth.size > 0;
   useEffect(() => {
     if (!hasPending) {
       return undefined;
@@ -634,6 +650,70 @@ function McpContent({ data }: { data: McpCommandData }) {
       });
     }
   }, [applyStatus, load, provider, sessionId]);
+
+  const markBusy = useCallback((serverName: string, busy: boolean) => {
+    setReconnecting((current) => {
+      const next = new Set(current);
+      if (busy) {
+        next.add(serverName);
+      } else {
+        next.delete(serverName);
+      }
+      return next;
+    });
+  }, []);
+
+  const authenticate = useCallback(async (serverName: string) => {
+    if (!sessionId) {
+      return;
+    }
+    // Opened before the request so the popup blocker still sees it as part of the click.
+    const signInTab = window.open('', '_blank');
+    markBusy(serverName, true);
+    setReconnectErrors(({ [serverName]: _cleared, ...rest }) => rest);
+    try {
+      const body = await readApiJson<{ data: { authUrl?: string } }>(
+        await api.providers.authenticateSessionMcpServer(provider, sessionId, serverName),
+      );
+      const authUrl = body.data.authUrl;
+      if (authUrl) {
+        if (signInTab) {
+          signInTab.opener = null;
+          signInTab.location.href = authUrl;
+        } else {
+          window.open(authUrl, '_blank', 'noopener');
+        }
+        setAwaitingAuth((current) => new Set(current).add(serverName));
+      } else {
+        signInTab?.close();
+      }
+      await load();
+    } catch (error) {
+      signInTab?.close();
+      setReconnectErrors((current) => ({ ...current, [serverName]: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      markBusy(serverName, false);
+    }
+  }, [load, markBusy, provider, sessionId]);
+
+  const submitCallback = useCallback(async (serverName: string) => {
+    const callbackUrl = callbackDrafts[serverName]?.trim();
+    if (!sessionId || !callbackUrl) {
+      return;
+    }
+    markBusy(serverName, true);
+    setReconnectErrors(({ [serverName]: _cleared, ...rest }) => rest);
+    try {
+      applyStatus(await readApiJson<SessionMcpStatusResponse>(
+        await api.providers.submitSessionMcpOAuthCallback(provider, sessionId, serverName, callbackUrl),
+      ));
+      setCallbackDrafts(({ [serverName]: _sent, ...rest }) => rest);
+    } catch (error) {
+      setReconnectErrors((current) => ({ ...current, [serverName]: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      markBusy(serverName, false);
+    }
+  }, [applyStatus, callbackDrafts, markBusy, provider, sessionId]);
 
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
@@ -742,8 +822,41 @@ function McpContent({ data }: { data: McpCommandData }) {
                       {[server.scope, server.transport, server.target].filter(Boolean).join(' · ')}
                     </p>
                     {error && <p className="mt-1 break-words text-xs text-red-600 dark:text-red-300">{error}</p>}
+                    {awaitingAuth.has(server.name) && (
+                      <form
+                        className="mt-2 flex gap-2"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void submitCallback(server.name);
+                        }}
+                      >
+                        <Input
+                          value={callbackDrafts[server.name] ?? ''}
+                          onChange={(event) => setCallbackDrafts((current) => ({ ...current, [server.name]: event.target.value }))}
+                          placeholder={t('chat:misc.mcp.callbackPlaceholder')}
+                          className="h-8 rounded-lg text-xs"
+                        />
+                        <Button type="submit" variant="outline" size="sm" className="shrink-0 rounded-lg" disabled={isReconnecting || !callbackDrafts[server.name]?.trim()}>
+                          {t('chat:misc.mcp.submitCallback')}
+                        </Button>
+                      </form>
+                    )}
                   </div>
-                  {server.status !== 'disabled' && (
+                  {server.status === 'needs-auth' ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 rounded-xl"
+                      disabled={isReconnecting}
+                      onClick={() => void authenticate(server.name)}
+                    >
+                      {isReconnecting
+                        ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        : <KeyRound className="mr-1.5 h-3.5 w-3.5" />}
+                      {t('chat:misc.mcp.signIn')}
+                    </Button>
+                  ) : server.status !== 'disabled' && (
                     <Button
                       type="button"
                       variant="outline"

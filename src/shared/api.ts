@@ -536,6 +536,12 @@ export const api = {
       get(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/mcp`),
     reconnectSessionMcpServer: (provider: string, sessionId: string, serverName: string) =>
       post(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/mcp/${encodeURIComponent(serverName)}/reconnect`, {}),
+    authenticateSessionMcpServer: (provider: string, sessionId: string, serverName: string) =>
+      post(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/mcp/${encodeURIComponent(serverName)}/authenticate`, {}),
+    submitSessionMcpOAuthCallback: (provider: string, sessionId: string, serverName: string, callbackUrl: string) =>
+      post(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/mcp/${encodeURIComponent(serverName)}/oauth-callback`, {
+        callbackUrl,
+      }),
 
     mcpServers: (
       provider: string,
