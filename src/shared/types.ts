@@ -1499,6 +1499,14 @@ export type ClaudeBillingStatus = {
   spend: { today: number; cycle: number };
 };
 
+/** The scheduled workday "hi" to Haiku. `time` is "HH:MM" in the server's local time; `lastDate` is the local date it last went; `lastResult.at` is epoch milliseconds and `detail` the reply or the error. */
+export type ClaudeWorkdayPingStatus = {
+  enabled: boolean;
+  time: string;
+  lastDate: string | null;
+  lastResult: { at: number; ok: boolean; detail: string } | null;
+};
+
 /** The whole Console organization's API spend over the current credit cycle, read from Anthropic's cost report with the key saved in settings; amounts in USD, times in epoch milliseconds. `org` is null until a reading succeeds; `error` is the last failed reading's reason. */
 export type ClaudeCreditStatus = {
   keyHint: string | null;

@@ -447,6 +447,14 @@
       "replace": "Replace",
       "remove": "Remove"
     },
+    "workdayPing": {
+      "title": "Workday ping",
+      "description": "Sends \"hi\" to Haiku at this time, Monday to Friday, with no context or tools. The chat is not kept.",
+      "toggle": "Send a workday ping",
+      "time": "Time",
+      "lastSent": "Last sent {{when}}: {{reply}}",
+      "lastFailed": "Failed {{when}}: {{error}}"
+    },
     "apiCredit": {
       "title": "API credit",
       "keyDescription": "A key that can read the organization's cost report: a service account with the Developer role and scope Organization, or an Admin key. Counts every key in the organization, not only chats here.",

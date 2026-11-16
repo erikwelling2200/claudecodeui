@@ -4,6 +4,7 @@ import type { createClaudeBillingService } from './claude-billing.service.js';
 import type { createClaudeCreditService } from './claude-credit.service.js';
 import type { createUsageLoginService } from './usage-login.service.js';
 import type { createUsageService } from './usage.service.js';
+import type { createWorkdayPingService } from './workday-ping.service.js';
 
 /** Creates the plan-usage routes the sidebar polls for its limit bars, the sign-in that renews their token, and the settings routes for the fallback API key and the API credit cycle. */
 export function createUsageRouter(
@@ -11,6 +12,7 @@ export function createUsageRouter(
   usageLogin: ReturnType<typeof createUsageLoginService>,
   billing: ReturnType<typeof createClaudeBillingService>,
   credit: ReturnType<typeof createClaudeCreditService>,
+  workdayPing: ReturnType<typeof createWorkdayPingService>,
 ): express.Router {
   const router = express.Router();
 
@@ -89,6 +91,24 @@ export function createUsageRouter(
       return;
     }
     response.json(await credit.setCycle({ renewalDay, amount }));
+  });
+
+  router.get('/workday-ping', (_request, response) => {
+    response.json(workdayPing.getStatus());
+  });
+
+  router.put('/workday-ping', (request, response) => {
+    const enabled = request.body?.enabled;
+    const time = request.body?.time;
+    if (typeof enabled !== 'boolean' || typeof time !== 'string') {
+      response.status(400).json({ error: 'enabled (boolean) and time (HH:MM) are required' });
+      return;
+    }
+    try {
+      response.json(workdayPing.setConfig({ enabled, time }));
+    } catch (error) {
+      response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   return router;
