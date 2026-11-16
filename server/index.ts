@@ -44,7 +44,7 @@ import {
 } from './modules/plugins/index.js';
 import providerRoutes from './modules/providers/provider.routes.js';
 import { voiceRoutes } from './modules/voice/index.js';
-import { usageRoutes } from './modules/usage/index.js';
+import { usageRoutes, workdayPing } from './modules/usage/index.js';
 import {
     closeScheduledMessageDispatcher,
     initializeScheduledMessageDispatcher,
@@ -405,6 +405,7 @@ async function startServer() {
             // Sends anything that came due while the server was not running,
             // then keeps polling.
             initializeScheduledMessageDispatcher(providerRuntimeService);
+            workdayPing.start();
 
             // Start server-side plugin processes for enabled plugins
             startEnabledPluginServers().catch(err => {
@@ -418,6 +419,7 @@ async function startServer() {
 
         await closeSessionsWatcher();
         closeScheduledMessageDispatcher();
+        workdayPing.stop();
         // Clean up plugin processes on shutdown
         const shutdownRuntimeServices = async () => {
             // Session CLI processes (and their MCP servers) live as long as their
