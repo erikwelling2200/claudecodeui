@@ -15,12 +15,16 @@ type UsageLimit = {
 type UsageSnapshot = {
   limits: UsageLimit[];
   fetchedAt: number;
+  /** The last refresh fetched nothing because the usage token is missing or could not be renewed; only a new sign-in helps. */
+  loginRequired?: boolean;
 };
 
 type UsageServiceDependencies = {
   homeDirectory: string;
   /** Runs the session-usage skill's `usage.js --force`, which writes ~/.claude/usage-cache.json. */
   runUsageScript: (scriptPath: string) => Promise<void>;
+  /** Whether ~/.claude/usage-token.json holds a token usage.js can use, checked after each run of the script. */
+  tokenUsable: () => boolean;
   now?: () => number;
 };
 
@@ -135,11 +139,16 @@ export function createUsageService(dependencies: UsageServiceDependencies) {
   const claudeRoot = path.join(dependencies.homeDirectory, '.claude');
   let refreshing: Promise<UsageSnapshot> | null = null;
   let lastAttemptAt = 0;
+  let loginRequired = false;
 
   function readUsage(): UsageSnapshot {
     const fromScript = parseUsageCache(readJson(path.join(claudeRoot, 'usage-cache.json')));
     const fromConfig = parseConfigUsage(readJson(path.join(dependencies.homeDirectory, '.claude.json')));
-    return fromScript.fetchedAt > fromConfig.fetchedAt ? fromScript : fromConfig;
+    return { ...(fromScript.fetchedAt > fromConfig.fetchedAt ? fromScript : fromConfig), loginRequired };
+  }
+
+  function scriptFetchedAt(): number {
+    return Number(readJson(path.join(claudeRoot, 'usage-cache.json'))?.fetchedAt || 0);
   }
 
   /* The skill as installed personally or by a plugin: the install manifest first, the newest cached version as fallback. */
@@ -172,7 +181,12 @@ export function createUsageService(dependencies: UsageServiceDependencies) {
     lastAttemptAt = now();
     const scriptPath = findUsageScript();
     if (!scriptPath) return Promise.reject(new Error('The session-usage skill (usage.js) is not installed'));
-    refreshing = dependencies.runUsageScript(scriptPath).then(readUsage).finally(() => { refreshing = null; });
+    const startedAt = lastAttemptAt;
+    // usage.js exits cleanly with the old cache when its token is dead, so a run that wrote nothing new is checked against the token.
+    refreshing = dependencies.runUsageScript(scriptPath)
+      .then(() => { loginRequired = scriptFetchedAt() < startedAt && !dependencies.tokenUsable(); })
+      .then(readUsage)
+      .finally(() => { refreshing = null; });
     return refreshing;
   }
 

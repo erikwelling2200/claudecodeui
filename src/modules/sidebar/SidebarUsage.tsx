@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { TFunction } from 'i18next';
 
 import { api } from '@/shared/api';
+import { Button, Input } from '@/shared/ui';
 import type { ClaudeBillingStatus, ClaudeCreditStatus } from '@/shared/types';
 import { formatCreditCycleDay } from '@/shared/utils';
 
@@ -17,6 +18,7 @@ type UsageLimit = {
 type UsageSnapshot = {
   limits: UsageLimit[];
   fetchedAt: number;
+  loginRequired?: boolean;
   billing?: ClaudeBillingStatus;
   credit?: ClaudeCreditStatus;
 };
@@ -74,6 +76,8 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
   const [refreshing, setRefreshing] = useState(false);
   // The clock the ages, reset countdowns and pace zones are measured against; advanced on every poll so they keep counting.
   const [now, setNow] = useState(() => Date.now());
+  // Open while the usage token has to be renewed by signing in; holds the pasted code and the last failure.
+  const [login, setLogin] = useState<{ code: string; error: string | null; busy: boolean } | null>(null);
 
   const load = useCallback(async () => {
     const response = await api.usage.get();
@@ -89,14 +93,50 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
 
   const refresh = async () => {
     if (refreshing) return;
+    if (usage?.loginRequired) {
+      setLogin((current) => current ?? { code: '', error: null, busy: false });
+      return;
+    }
     setRefreshing(true);
     try {
       const response = await api.usage.refresh();
-      if (response.ok) setUsage(await response.json());
+      if (response.ok) {
+        const next: UsageSnapshot = await response.json();
+        setUsage(next);
+        if (next.loginRequired) setLogin({ code: '', error: null, busy: false });
+      }
     } finally {
       setNow(Date.now());
       setRefreshing(false);
     }
+  };
+
+  const openSignIn = async () => {
+    // Opened before the request so the browser treats it as part of the click and does not block it as a popup.
+    const tab = window.open('', '_blank');
+    const response = await api.usage.startLogin();
+    if (!response.ok) {
+      tab?.close();
+      setLogin((current) => current && { ...current, error: `HTTP ${response.status}` });
+      return;
+    }
+    const { url } = await response.json();
+    if (tab) tab.location.href = url;
+    else window.open(url, '_blank');
+  };
+
+  const submitCode = async () => {
+    if (!login?.code.trim() || login.busy) return;
+    setLogin({ ...login, busy: true, error: null });
+    const response = await api.usage.completeLogin(login.code.trim());
+    const body = await response.json();
+    if (!response.ok) {
+      setLogin({ ...login, busy: false, error: body.error ?? `HTTP ${response.status}` });
+      return;
+    }
+    setUsage(body);
+    setNow(Date.now());
+    setLogin(body.loginRequired ? { code: '', busy: false, error: null } : null);
   };
 
   const billing = usage?.billing;
@@ -114,51 +154,82 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
   const stale = !usage.fetchedAt || now - usage.fetchedAt > STALE_USAGE_MS;
   const resetsAt = pickReset(usage.limits);
   let status = usage.fetchedAt ? t('usage.asOf', { age: formatAge(now - usage.fetchedAt) }) : t('usage.noReading');
-  if (stale && usage.fetchedAt) status += `, ${t('usage.clickToRefresh')}`;
+  if (usage.loginRequired) status = t('usage.signInNeeded');
+  else if (stale && usage.fetchedAt) status += `, ${t('usage.clickToRefresh')}`;
   if (refreshing) status = t('usage.refreshing');
   const tooltip = usage.limits.map((limit) => `${limit.label}: ${limit.percent}% used${limit.resetsAt ? `, ${windowElapsed(limit, now)}% elapsed, resets in ${formatUntil(limit.resetsAt - now)}` : ''}`).join('\n');
 
   return (
-    <button
-      type="button"
-      onClick={() => void refresh()}
-      title={tooltip}
-      className={`block w-full px-4 py-2 text-left transition-opacity hover:bg-accent/40 ${stale && !refreshing && billing?.mode !== 'api_key' ? 'opacity-60 hover:opacity-100' : ''}`}
-    >
-      {billing?.mode === 'api_key' && (
-        <div data-testid="usage-api-key-active" className="mb-1.5 rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300">
-          <div className="font-bold">{t(billing.loginExpired ? 'usage.loginExpired' : 'usage.apiKeyActive')}</div>
-          {billing.limit && <div>{t('usage.subscriptionBackIn', { time: formatUntil(billing.limit.resetsAt - now) })}</div>}
+    <div>
+      <button
+        type="button"
+        onClick={() => void refresh()}
+        title={tooltip}
+        className={`block w-full px-4 py-2 text-left transition-opacity hover:bg-accent/40 ${stale && !refreshing && billing?.mode !== 'api_key' ? 'opacity-60 hover:opacity-100' : ''}`}
+      >
+        {billing?.mode === 'api_key' && (
+          <div data-testid="usage-api-key-active" className="mb-1.5 rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300">
+            <div className="font-bold">{t(billing.loginExpired ? 'usage.loginExpired' : 'usage.apiKeyActive')}</div>
+            {billing.limit && <div>{t('usage.subscriptionBackIn', { time: formatUntil(billing.limit.resetsAt - now) })}</div>}
+          </div>
+        )}
+        {usage.limits.map((limit) => (
+          <div key={limit.kind} className="mt-1 flex items-center gap-2 first:mt-0">
+            <span className={`w-12 flex-none truncate text-[11px] ${limit.active ? 'font-bold text-foreground' : 'text-muted-foreground'}`}>
+              {limit.label}
+            </span>
+            <span className="relative block h-[5px] flex-1 overflow-hidden rounded-full bg-muted">
+              <span className="absolute inset-y-0 left-0 rounded-full bg-muted-foreground/20" style={{ width: `${windowElapsed(limit, now)}%` }} />
+              <span className={`absolute inset-y-0 left-0 rounded-full ${FILL_BY_SEVERITY[limit.severity]}`} style={{ width: `${limit.percent}%` }} />
+            </span>
+            <span className={`w-8 flex-none text-right text-[11px] ${limit.active ? 'font-bold text-foreground' : 'text-muted-foreground'}`}>
+              {limit.percent}%
+            </span>
+          </div>
+        ))}
+        <div className="mt-1.5 flex items-baseline justify-between gap-2 text-[10px] text-muted-foreground">
+          <span className="truncate">{status}</span>
+          {resetsAt > 0 && <span className="flex-none whitespace-nowrap font-bold">{t('usage.resetsIn', { time: formatUntil(resetsAt - now) })}</span>}
+        </div>
+        {(org || billing?.keySource) && (
+          <div
+            data-testid="usage-api-spend"
+            title={credit?.error ?? undefined}
+            className={`mt-0.5 flex items-baseline justify-between gap-2 text-[10px] ${billing?.mode === 'api_key' ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}
+          >
+            <span className="truncate">{spendToday}</span>
+            <span className="flex-none whitespace-nowrap">{spendCycle}</span>
+          </div>
+        )}
+      </button>
+      {login && (
+        <div data-testid="usage-login" className="space-y-1.5 px-4 pb-2 text-[11px]">
+          <Button type="button" size="sm" variant="outline" className="w-full" onClick={() => void openSignIn()}>
+            {t('usage.openSignIn')}
+          </Button>
+          <form
+            className="flex gap-1.5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitCode();
+            }}
+          >
+            <Input
+              autoComplete="off"
+              spellCheck={false}
+              value={login.code}
+              onChange={(event) => setLogin({ ...login, code: event.target.value })}
+              placeholder={t('usage.pasteCode')}
+              aria-label={t('usage.pasteCode')}
+              className="h-8 bg-background text-xs"
+            />
+            <Button type="submit" size="sm" disabled={login.busy || !login.code.trim()}>
+              {t('usage.signIn')}
+            </Button>
+          </form>
+          {login.error && <div className="break-words text-red-600 dark:text-red-400">{login.error}</div>}
         </div>
       )}
-      {usage.limits.map((limit) => (
-        <div key={limit.kind} className="mt-1 flex items-center gap-2 first:mt-0">
-          <span className={`w-12 flex-none truncate text-[11px] ${limit.active ? 'font-bold text-foreground' : 'text-muted-foreground'}`}>
-            {limit.label}
-          </span>
-          <span className="relative block h-[5px] flex-1 overflow-hidden rounded-full bg-muted">
-            <span className="absolute inset-y-0 left-0 rounded-full bg-muted-foreground/20" style={{ width: `${windowElapsed(limit, now)}%` }} />
-            <span className={`absolute inset-y-0 left-0 rounded-full ${FILL_BY_SEVERITY[limit.severity]}`} style={{ width: `${limit.percent}%` }} />
-          </span>
-          <span className={`w-8 flex-none text-right text-[11px] ${limit.active ? 'font-bold text-foreground' : 'text-muted-foreground'}`}>
-            {limit.percent}%
-          </span>
-        </div>
-      ))}
-      <div className="mt-1.5 flex items-baseline justify-between gap-2 text-[10px] text-muted-foreground">
-        <span className="truncate">{status}</span>
-        {resetsAt > 0 && <span className="flex-none whitespace-nowrap font-bold">{t('usage.resetsIn', { time: formatUntil(resetsAt - now) })}</span>}
-      </div>
-      {(org || billing?.keySource) && (
-        <div
-          data-testid="usage-api-spend"
-          title={credit?.error ?? undefined}
-          className={`mt-0.5 flex items-baseline justify-between gap-2 text-[10px] ${billing?.mode === 'api_key' ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}
-        >
-          <span className="truncate">{spendToday}</span>
-          <span className="flex-none whitespace-nowrap">{spendCycle}</span>
-        </div>
-      )}
-    </button>
+    </div>
   );
 }

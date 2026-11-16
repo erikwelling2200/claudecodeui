@@ -5,14 +5,18 @@ import { appConfigDb, claudeApiSpendDb } from '@/modules/database/index.js';
 
 import { createClaudeBillingService } from './claude-billing.service.js';
 import { createClaudeCreditService } from './claude-credit.service.js';
+import { createUsageLoginService } from './usage-login.service.js';
 import { createUsageRouter } from './usage.routes.js';
 import { createUsageService } from './usage.service.js';
+
+const usageLogin = createUsageLoginService({ homeDirectory: os.homedir(), fetch: globalThis.fetch });
 
 const usageService = createUsageService({
   homeDirectory: os.homedir(),
   runUsageScript: (scriptPath) => new Promise((resolve, reject) => {
     execFile(process.execPath, [scriptPath, '--force'], { cwd: os.homedir(), timeout: 30_000 }, (error) => (error ? reject(error) : resolve()));
   }),
+  tokenUsable: usageLogin.tokenUsable,
 });
 
 const claudeCredit = createClaudeCreditService({ config: appConfigDb, fetch: globalThis.fetch });
@@ -28,4 +32,4 @@ export const claudeBilling = createClaudeBillingService({
 });
 
 /** Used by the server entrypoint to mount the authenticated plan-usage endpoints. */
-export const usageRoutes = createUsageRouter(usageService, claudeBilling, claudeCredit);
+export const usageRoutes = createUsageRouter(usageService, usageLogin, claudeBilling, claudeCredit);
