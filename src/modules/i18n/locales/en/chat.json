@@ -410,6 +410,8 @@
       "noSession": "Send a message first. MCP servers connect when the chat starts.",
       "notLive": "This chat has no running process. MCP servers connect with the next message.",
       "noServers": "No MCP servers configured.",
+      "filter": "Filter servers...",
+      "noMatch": "No servers match that filter.",
       "loadFailed": "Could not load MCP servers: {{message}}",
       "reconnect": "Reconnect",
       "reconnectAll": "Reconnect failed",

@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Activity,
@@ -127,15 +128,18 @@ function SearchField({
   value,
   onChange,
   placeholder,
+  inputRef,
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
+  inputRef?: Ref<HTMLInputElement>;
 }) {
   return (
     <div className="relative">
       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
       <Input
+        ref={inputRef}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
@@ -631,6 +635,40 @@ function McpContent({ data }: { data: McpCommandData }) {
     }
   }, [applyStatus, load, provider, sessionId]);
 
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // Typing anywhere in the window filters: a printable key pulls focus into the search field before it lands.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const input = searchRef.current;
+      if (!input || event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      const active = document.activeElement;
+      if (active === input || active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (event.key === ' ' && active instanceof HTMLButtonElement) {
+        return;
+      }
+      input.focus();
+    };
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
+  }, []);
+
+  const filteredServers = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!servers || !normalized) {
+      return servers ?? [];
+    }
+    return servers.filter((server) => (
+      [server.name, server.status, t(`chat:misc.mcp.status.${server.status}`, { defaultValue: server.status }), server.scope, server.transport, server.target]
+        .filter(Boolean).join(' ').toLowerCase().includes(normalized)
+    ));
+  }, [query, servers, t]);
+
   const failedNames = (servers ?? []).filter((server) => server.status === 'failed').map((server) => server.name);
   const connectedCount = (servers ?? []).filter((server) => server.status === 'connected').length;
 
@@ -673,12 +711,18 @@ function McpContent({ data }: { data: McpCommandData }) {
         </div>
       </div>
 
+      {servers.length > 0 && (
+        <SearchField value={query} onChange={setQuery} placeholder={t('chat:misc.mcp.filter')} inputRef={searchRef} />
+      )}
+
       {servers.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t('chat:misc.mcp.noServers')}</p>
+      ) : filteredServers.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t('chat:misc.mcp.noMatch')}</p>
       ) : (
         <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pr-1">
           <div className="overflow-hidden rounded-2xl border border-border/70 bg-background/75">
-            {servers.map((server) => {
+            {filteredServers.map((server) => {
               const isReconnecting = reconnecting.has(server.name);
               const error = reconnectErrors[server.name] || (server.status === 'failed' ? server.error : undefined);
               return (
