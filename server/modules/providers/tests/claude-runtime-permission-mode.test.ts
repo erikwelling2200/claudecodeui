@@ -116,6 +116,13 @@ test('leaving plan mode takes back only the tools plan mode added', async () => 
   });
 });
 
+test('plan mode names the chat without a prompt, even when the user allowed it themselves', async () => {
+  const toolsSettings = { allowedTools: ['mcp__cloudcli-chat__set_chat_name'], disallowedTools: [], skipPermissions: false };
+  await withRun({ permissionMode: 'plan', toolsSettings }, async (script) => {
+    assert.equal((await askTool(script.options(), 'mcp__cloudcli-chat__set_chat_name')).behavior, 'allow');
+  });
+});
+
 test('building an approved plan switches the run to the mode sent with the approval', async () => {
   const toolsSettings = { allowedTools: [], disallowedTools: [], skipPermissions: false };
   await withRun({ permissionMode: 'plan', toolsSettings }, async (script) => {
