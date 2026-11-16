@@ -460,8 +460,12 @@ function readCredentialEnv(env: NodeJS.ProcessEnv | undefined): string {
   return JSON.stringify([env?.ANTHROPIC_API_KEY ?? null, env?.ANTHROPIC_AUTH_TOKEN ?? null]);
 }
 
-// Tools plan mode lets through without a prompt, on top of the user's own allow list.
-const PLAN_MODE_TOOLS = ['Read', 'Task', 'exit_plan_mode', 'TodoRead', 'TodoWrite', 'WebFetch', 'WebSearch'];
+// Tools plan mode lets through without a prompt, on top of the user's own allow list. Naming the chat changes nothing in
+// the project, and every first message asks for it, so plan mode must not turn it into a prompt.
+const PLAN_MODE_TOOLS = [
+  'Read', 'Task', 'exit_plan_mode', 'TodoRead', 'TodoWrite', 'WebFetch', 'WebSearch',
+  'mcp__cloudcli-chat__set_chat_name', 'mcp__cloudcli-chat__get_chat_threads',
+];
 
 const CLAUDE_PERMISSION_MODES = new Set(['default', 'auto', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk']);
 
@@ -1803,10 +1807,11 @@ async function queryClaudeSDK(
         // reaches this callback once the CLI has judged it against those same
         // rules and chosen to ask, and the CLI's own per-command checks refuse
         // things a rule's prefix covers (a `cat` of a network share, which
-        // would send the user's credentials to that host). The exception is the
-        // tools plan mode adds when a running process switches into it, which
-        // that process was not launched with.
-        if (planModeGrants.has(toolName)) {
+        // would send the user's credentials to that host). The exception is
+        // plan mode's own tools: the CLI asks about them in plan mode even
+        // when an allow rule names them, and a running process that switches
+        // into plan mode was not launched with them.
+        if (planModeGrants.has(toolName) || (sdkOptions.permissionMode === 'plan' && PLAN_MODE_TOOLS.includes(toolName))) {
           return { behavior: 'allow', updatedInput: input };
         }
       }
