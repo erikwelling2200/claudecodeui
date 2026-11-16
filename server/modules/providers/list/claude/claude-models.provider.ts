@@ -74,25 +74,10 @@ export const CLAUDE_PREDEFINED_MODELS: ProviderModelsDefinition = {
         ],
       },
     },
-    {
-      value: 'sonnet',
-      label: 'Sonnet',
-      description: 'Latest Sonnet model for everyday coding tasks.',
-      effort: {
-        default: 'high',
-        values: [
-          { value: 'low' },
-          { value: 'medium' },
-          { value: 'high' },
-          { value: 'xhigh' },
-          { value: 'max' },
-          ULTRACODE_EFFORT_OPTION,
-        ],
-      },
-    },
+    // Only the 1M-context variants are offered; plain `sonnet` and `opus` are still accepted by the CLI.
     {
       value: 'sonnet[1m]',
-      label: 'Sonnet (1M context)',
+      label: 'Sonnet',
       description: 'Latest Sonnet model with a 1M context window.',
       effort: {
         default: 'high',
@@ -107,24 +92,8 @@ export const CLAUDE_PREDEFINED_MODELS: ProviderModelsDefinition = {
       },
     },
     {
-      value: 'opus',
-      label: 'Opus',
-      description: 'Latest Opus model for complex reasoning and coding tasks.',
-      effort: {
-        default: 'high',
-        values: [
-          { value: 'low' },
-          { value: 'medium' },
-          { value: 'high' },
-          { value: 'xhigh' },
-          { value: 'max' },
-          ULTRACODE_EFFORT_OPTION,
-        ],
-      },
-    },
-    {
       value: 'opus[1m]',
-      label: 'Opus (1M context)',
+      label: 'Opus',
       description: 'Latest Opus model with a 1M context window.',
       effort: {
         default: 'high',

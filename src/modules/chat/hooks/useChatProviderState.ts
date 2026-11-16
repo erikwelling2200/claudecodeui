@@ -289,14 +289,12 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     current: string,
     def: ProviderModelsDefinition,
   ): string => {
-    const stored = localStorage.getItem(storageKey);
-    if (stored && def.OPTIONS.some((o) => o.value === stored)) {
-      return stored;
-    }
-    if (current && def.OPTIONS.some((o) => o.value === current)) {
-      return current;
-    }
-    return def.DEFAULT;
+    // A model the catalog no longer lists, such as plain `opus`, carries over to its listed `[1m]` variant.
+    const listed = (model: string | null) => {
+      if (!model) return null;
+      return [model, `${model}[1m]`].find((candidate) => def.OPTIONS.some((o) => o.value === candidate)) ?? null;
+    };
+    return listed(localStorage.getItem(storageKey)) ?? listed(current) ?? def.DEFAULT;
   };
 
   const getModelOption = useCallback((
