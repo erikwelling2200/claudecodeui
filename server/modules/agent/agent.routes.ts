@@ -653,7 +653,7 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
    *                        which is the first custom model while "Use only my models" is on. Cursor
    *                        without that setting leaves the choice to its CLI.
    *
-   *                        Claude models: 'default', 'sonnet', 'opus', 'haiku', 'sonnet[1m]', 'opus[1m]', 'fable'
+   *                        Claude models: 'default', 'sonnet[1m]', 'opus[1m]', 'haiku', 'fable'
    *                        Cursor models: 'gpt-5' (default), 'gpt-5.2', 'gpt-5.2-high', 'sonnet-4.5', 'opus-4.5',
    *                                       'composer-1', 'auto', 'gpt-5.1', 'gpt-5.1-high',
    *                                       'gpt-5.1-codex', 'gpt-5.1-codex-high', 'gpt-5.1-codex-max',

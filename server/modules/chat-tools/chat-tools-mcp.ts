@@ -36,7 +36,7 @@ const tools = [
       type: 'object',
       properties: {
         message: { type: 'string', description: 'The first message. The new chat has no history, so it must stand alone.' },
-        model: { type: 'string', description: 'Model for the new chat, as the model picker names it (e.g. "opus", "sonnet", "fable").' },
+        model: { type: 'string', description: 'Model for the new chat, as the model picker names it (e.g. "opus[1m]", "sonnet[1m]", "fable").' },
         effort: { type: 'string', description: 'Optional reasoning effort: "low", "medium", "high", "xhigh" or "max".' },
         projectPath: { type: 'string', description: 'Optional project folder. Defaults to the project this chat runs in.' },
         parentSessionId: { type: 'string', description: 'Optional session id of the chat to make this a thread of. Defaults to this chat. Threads are one level deep: a thread of a thread goes to its parent.' },
