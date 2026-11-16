@@ -789,6 +789,53 @@ router.post(
   }),
 );
 
+const NO_LIVE_PROCESS_MESSAGE = 'This chat has no running process. MCP servers connect with the next message.';
+
+/** Starts the server's OAuth sign-in; the client opens `authUrl`, and the process reconnects the server once it completes. */
+router.post(
+  '/:provider/sessions/:sessionId/mcp/:serverName/authenticate',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const sessionId = parseSessionId(req.params.sessionId);
+    const serverName = readPathParam(req.params.serverName, 'serverName');
+    let result: { authUrl?: string } | null;
+    try {
+      result = await providerRuntimeService.authenticateMcpServer(provider, sessionId, serverName);
+    } catch (error) {
+      throw new AppError((error as Error)?.message || String(error), { code: 'MCP_AUTH_FAILED', statusCode: 502 });
+    }
+    if (!result) {
+      throw new AppError(NO_LIVE_PROCESS_MESSAGE, { code: 'NO_LIVE_PROCESS', statusCode: 409 });
+    }
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
+/** Finishes a sign-in whose redirect could not reach the process's localhost callback, e.g. from another device. */
+router.post(
+  '/:provider/sessions/:sessionId/mcp/:serverName/oauth-callback',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const sessionId = parseSessionId(req.params.sessionId);
+    const serverName = readPathParam(req.params.serverName, 'serverName');
+    const callbackUrl = typeof req.body?.callbackUrl === 'string' ? req.body.callbackUrl.trim() : '';
+    if (!callbackUrl) {
+      throw new AppError('callbackUrl is required.', { code: 'INVALID_REQUEST', statusCode: 400 });
+    }
+    let submitted: boolean;
+    try {
+      submitted = await providerRuntimeService.submitMcpOAuthCallback(provider, sessionId, serverName, callbackUrl);
+    } catch (error) {
+      throw new AppError((error as Error)?.message || String(error), { code: 'MCP_AUTH_FAILED', statusCode: 502 });
+    }
+    if (!submitted) {
+      throw new AppError(NO_LIVE_PROCESS_MESSAGE, { code: 'NO_LIVE_PROCESS', statusCode: 409 });
+    }
+    const servers = await providerRuntimeService.listMcpServers(provider, sessionId);
+    res.json(createApiSuccessResponse({ live: servers !== null, servers: servers ?? [] }));
+  }),
+);
+
 // ----------------- Skills routes -----------------
 router.get(
   '/:provider/skills',

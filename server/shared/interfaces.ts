@@ -109,6 +109,18 @@ export interface IProviderRuntime {
    */
   reconnectMcpServer?(sessionId: string, serverName: string): Promise<boolean>;
   /**
+   * Starts the OAuth sign-in of one MCP server in the session's live process.
+   * Resolves null when the session has no live process; `authUrl` is absent
+   * when the server needed no sign-in after all.
+   */
+  authenticateMcpServer?(sessionId: string, serverName: string): Promise<{ authUrl?: string } | null>;
+  /**
+   * Completes a sign-in started by `authenticateMcpServer` with the URL the
+   * provider redirected to, for a browser that could not reach the process's
+   * localhost callback. Resolves false when the session has no live process.
+   */
+  submitMcpOAuthCallback?(sessionId: string, serverName: string, callbackUrl: string): Promise<boolean>;
+  /**
    * Adds a user message to the session's turn in flight, so it reaches the
    * model at its next step instead of after the turn. `options` carries the
    * client's `steerId` for the message and the `images`, `files` and `cwd` a
