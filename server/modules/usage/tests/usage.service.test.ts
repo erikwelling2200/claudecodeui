@@ -34,7 +34,7 @@ function installScript(home: string, version: string): string {
 test('reads the session and weekly bars from the usage cache and skips caps the plan lacks', () => {
   const home = createHome();
   writeUsageCache(home, NOW - 60_000, 14);
-  const service = createUsageService({ homeDirectory: home, runUsageScript: async () => undefined, now: () => NOW });
+  const service = createUsageService({ homeDirectory: home, runUsageScript: async () => undefined, tokenUsable: () => true, now: () => NOW });
 
   const usage = service.getUsage();
 
@@ -47,7 +47,7 @@ test('prefers the ~/.claude.json reading when it is newer', () => {
   writeUsageCache(home, NOW - 600_000, 14);
   const config = { cachedUsageUtilization: { fetchedAtMs: NOW - 1000, utilization: { limits: [{ kind: 'session', percent: 92, is_active: true }] } } };
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify(config));
-  const service = createUsageService({ homeDirectory: home, runUsageScript: async () => undefined, now: () => NOW });
+  const service = createUsageService({ homeDirectory: home, runUsageScript: async () => undefined, tokenUsable: () => true, now: () => NOW });
 
   const [limit] = service.getUsage().limits;
 
@@ -65,6 +65,7 @@ test('a stale reading starts one background refresh with the newest cached scrip
   const service = createUsageService({
     homeDirectory: home,
     runUsageScript: async (scriptPath) => { calls.push(scriptPath); writeUsageCache(home, NOW, 20); },
+    tokenUsable: () => true,
     now: () => NOW,
   });
 
@@ -77,7 +78,35 @@ test('a stale reading starts one background refresh with the newest cached scrip
 });
 
 test('refresh fails clearly when the session-usage skill is not installed', async () => {
-  const service = createUsageService({ homeDirectory: createHome(), runUsageScript: async () => undefined, now: () => NOW });
+  const service = createUsageService({ homeDirectory: createHome(), runUsageScript: async () => undefined, tokenUsable: () => true, now: () => NOW });
 
   await assert.rejects(service.refreshUsage(), /session-usage/);
+});
+
+test('a refresh that fetched nothing with a dead usage token asks for a sign-in', async () => {
+  const home = createHome();
+  writeUsageCache(home, NOW - 15 * 3_600_000, 14);
+  installScript(home, '1.0.0');
+  let usable = false;
+  const service = createUsageService({ homeDirectory: home, runUsageScript: async () => undefined, tokenUsable: () => usable, now: () => NOW });
+
+  assert.equal((await service.refreshUsage()).loginRequired, true);
+  assert.equal(service.getUsage().loginRequired, true);
+
+  usable = true;
+  assert.equal((await service.refreshUsage()).loginRequired, false);
+});
+
+test('a refresh that fetched a new reading never asks for a sign-in, even without a dedicated token', async () => {
+  const home = createHome();
+  writeUsageCache(home, NOW - 15 * 3_600_000, 14);
+  installScript(home, '1.0.0');
+  const service = createUsageService({
+    homeDirectory: home,
+    runUsageScript: async () => writeUsageCache(home, NOW, 20),
+    tokenUsable: () => false,
+    now: () => NOW,
+  });
+
+  assert.equal((await service.refreshUsage()).loginRequired, false);
 });

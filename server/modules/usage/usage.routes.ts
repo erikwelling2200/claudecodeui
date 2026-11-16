@@ -2,11 +2,13 @@ import express from 'express';
 
 import type { createClaudeBillingService } from './claude-billing.service.js';
 import type { createClaudeCreditService } from './claude-credit.service.js';
+import type { createUsageLoginService } from './usage-login.service.js';
 import type { createUsageService } from './usage.service.js';
 
-/** Creates the plan-usage routes the sidebar polls for its limit bars, and the settings routes for the fallback API key and the API credit cycle. */
+/** Creates the plan-usage routes the sidebar polls for its limit bars, the sign-in that renews their token, and the settings routes for the fallback API key and the API credit cycle. */
 export function createUsageRouter(
   usageService: ReturnType<typeof createUsageService>,
+  usageLogin: ReturnType<typeof createUsageLoginService>,
   billing: ReturnType<typeof createClaudeBillingService>,
   credit: ReturnType<typeof createClaudeCreditService>,
 ): express.Router {
@@ -21,6 +23,21 @@ export function createUsageRouter(
       response.json({ ...(await usageService.refreshUsage()), billing: billing.getStatus(), credit: await credit.getStatus() });
     } catch (error) {
       response.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/login', (_request, response) => {
+    response.json(usageLogin.start());
+  });
+
+  // Saves the token from the pasted code, then fetches a reading with it so the bars update in the same round trip.
+  router.post('/login/complete', async (request, response) => {
+    const code = typeof request.body?.code === 'string' ? request.body.code : '';
+    try {
+      await usageLogin.complete(code);
+      response.json({ ...(await usageService.refreshUsage()), billing: billing.getStatus(), credit: await credit.getStatus() });
+    } catch (error) {
+      response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 
