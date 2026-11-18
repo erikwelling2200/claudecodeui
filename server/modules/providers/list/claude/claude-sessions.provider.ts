@@ -501,18 +501,21 @@ async function readTranscriptRows(jsonlPath: string, providerSessionId: string):
 }
 
 /**
- * A message the user sent while Claude was working, as the user row it reads
+ * A message that reached Claude while it was working, as the user row it reads
  * as, or null for any other row. The CLI stores such a message as a
  * `queued_command` attachment of the turn it went into, the same shape it uses
- * for a background task's report, which `commandMode` tells apart.
+ * for a background task's report, which `commandMode` tells apart. Its origin
+ * is the user (`human`) or another agent (`peer`): a subagent's hand-back, whose
+ * prompt is a bare `<agent-message>` that `parseAgentMessage` turns into its report.
  */
 function readSteeredPromptRow(row: AnyRecord): AnyRecord | null {
   const attachment = row.type === 'attachment' ? row.attachment : null;
+  const originKind = attachment?.origin?.kind ?? 'human';
   if (
     attachment?.type !== 'queued_command'
     || attachment.commandMode !== 'prompt'
-    || (attachment.origin && attachment.origin.kind !== 'human')
     || !attachment.prompt
+    || (originKind !== 'human' && !(originKind === 'peer' && typeof attachment.prompt === 'string' && parseAgentMessage(attachment.prompt)))
   ) {
     return null;
   }
@@ -521,8 +524,8 @@ function readSteeredPromptRow(row: AnyRecord): AnyRecord | null {
     uuid: row.uuid,
     timestamp: row.timestamp,
     message: { role: 'user', content: attachment.prompt },
-    // The uuid it was sent into stdin with: the steerId the live run used.
-    steerId: typeof attachment.source_uuid === 'string' ? attachment.source_uuid : undefined,
+    // The uuid it was sent into stdin with: the steerId the live run used. A peer message was never typed.
+    steerId: originKind === 'human' && typeof attachment.source_uuid === 'string' ? attachment.source_uuid : undefined,
   };
 }
 
@@ -1043,8 +1046,10 @@ function unwrapPastedContent(text: string): string {
  * followed by a paragraph of harness guidance. A final report additionally
  * opens BODY with a one-line `[Subagent hand-back]` frame and indents every
  * report line by two spaces, sometimes after a `[harness: ...]` note.
+ * A message delivered while the session was busy is queued instead, and then
+ * arrives as the bare `<agent-message>` element without the lead-in line.
  */
-const AGENT_MESSAGE = /^Another Claude session sent a message:\n<agent-message from="([^"]*)">\n?([\s\S]*?)\n?<\/agent-message>/;
+const AGENT_MESSAGE = /^(?:Another Claude session sent a message:\n)?<agent-message from="([^"]*)">\n?([\s\S]*?)\n?<\/agent-message>/;
 const HANDBACK_FRAME = /^\[Subagent hand-back\][^\n]*\n/;
 
 /**

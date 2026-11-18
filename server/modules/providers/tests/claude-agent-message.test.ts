@@ -47,3 +47,31 @@ test('an ordinary user message is not taken for an agent message', () => {
   const [row] = normalize('Another Claude session sent a message: what does that mean?');
   assert.equal(row.agentMessageFrom, undefined);
 });
+
+test('a hand-back queued while the session was busy shows as the report, live and from history', () => {
+  const prompt = `<agent-message from="c2">\n${FRAME}  Done.\n  \n  - one\n</agent-message>`;
+  const [live] = normalize(prompt);
+  assert.equal(live.agentMessageFrom, 'c2');
+  assert.equal(live.content, 'Done.\n\n- one');
+
+  const [stored, ...rest] = provider.normalizeMessage({
+    type: 'attachment',
+    uuid: 'q-1',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    isMeta: true,
+    attachment: { type: 'queued_command', commandMode: 'prompt', source_uuid: 'stdin-1', origin: { kind: 'peer', from: 'c2' }, prompt },
+  }, SESSION_ID);
+  assert.equal(rest.length, 0);
+  assert.equal(stored.agentMessageFrom, 'c2');
+  assert.equal(stored.content, 'Done.\n\n- one');
+  assert.equal(stored.steerId, undefined);
+});
+
+test('a queued peer message that is not an agent message stays hidden', () => {
+  assert.deepEqual(provider.normalizeMessage({
+    type: 'attachment',
+    uuid: 'q-2',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    attachment: { type: 'queued_command', commandMode: 'prompt', origin: { kind: 'peer' }, prompt: '<cross-session-message>hi</cross-session-message>' },
+  }, SESSION_ID), []);
+});
