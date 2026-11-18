@@ -98,6 +98,14 @@ test('a login entry left without tokens is reported as expired, a missing one is
   assert.equal(createBilling({ storedKey: 'sk-stored' }).billing.getStatus().loginExpired, false);
 });
 
+test('a resumed session starts from the cost the CLI saved for it, any other session from zero', () => {
+  const { billing, home } = createBilling();
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { 'C:/Work/app': { lastSessionId: 's1', lastCost: 22.1 } } }));
+  assert.equal(billing.restoredCostTotal('C:\\Work\\app', 's1'), 22.1);
+  assert.equal(billing.restoredCostTotal('C:\\Work\\app', 's2'), 0);
+  assert.equal(billing.restoredCostTotal('C:\\Work\\other', 's1'), 0);
+});
+
 test('the env for a subscription run carries no key; for a key run only the chosen one', () => {
   const env = { PATH: 'x', ANTHROPIC_API_KEY: 'env-key', ANTHROPIC_AUTH_TOKEN: 'env-token' };
   assert.deepEqual(applyClaudeBillingEnv(env, { mode: 'subscription' }), { PATH: 'x' });
