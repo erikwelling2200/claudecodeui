@@ -13,9 +13,13 @@ import { useDropzone } from 'react-dropzone';
 import { useTranslation } from 'react-i18next';
 
 import { api, ApiRequestError } from '@/shared/api';
-import { PROVIDER_PERMISSION_PREFERENCE_KEYS } from '@/shared/constants';
+import {
+  MAX_CHAT_ATTACHMENT_COUNT,
+  MAX_CHAT_ATTACHMENT_SIZE_BYTES,
+  PROVIDER_PERMISSION_PREFERENCE_KEYS,
+} from '@/shared/constants';
 import { readUserPreference } from '@/shared/userSettings';
-import type { BackgroundSendChoice, BackgroundSendPrompt, CommandModalPayload, CostCommandData, HelpCommandData, MarkSessionProcessing, McpCommandData, ModelCommandData, QueuedDraft, SessionActivityMap, StatusCommandData,QueuedSendOptions,ChatAttachment,ChatMessage,PendingPermissionRequest,PermissionMode,SessionEstablishedContext,Project,ProjectSession,LLMProvider,SlashCommand } from '@/shared/types';
+import type { AttachmentRejection, BackgroundSendChoice, BackgroundSendPrompt, CommandModalPayload, CostCommandData, HelpCommandData, MarkSessionProcessing, McpCommandData, ModelCommandData, QueuedDraft, SessionActivityMap, StatusCommandData,QueuedSendOptions,ChatAttachment,ChatMessage,PendingPermissionRequest,PermissionMode,SessionEstablishedContext,Project,ProjectSession,LLMProvider,SlashCommand } from '@/shared/types';
 import { grantClaudeToolPermission } from '@/modules/chat/utils/chatPermissions';
 import {
   appendQueuedMessage,
@@ -111,8 +115,6 @@ const createFakeSubmitEvent = () => {
   return { preventDefault: () => undefined } as unknown as FormEvent<HTMLFormElement>;
 };
 
-const MAX_ATTACHMENT_COUNT = 10;
-const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 
 const isImageAttachment = (attachment: ChatAttachment) => {
   if (attachment.mimeType?.startsWith('image/')) return true;
@@ -204,6 +206,21 @@ const getNotificationSessionSummary = (
  */
 const SAFARI_IME_RACE_WINDOW_MS = 30;
 
+/**
+ * A phone or tablet types through an on-screen keyboard: its return key is
+ * labelled "new line", and Shift+Enter — the desktop combination for a newline
+ * in Enter-to-send mode — cannot be typed on it at all. `(pointer: coarse)`
+ * marks exactly those primary inputs; a touch laptop keeps its fine primary
+ * pointer and with it the desktop Enter behaviour.
+ */
+function isSoftKeyboardEnvironment(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false;
+  }
+  return window.matchMedia('(pointer: coarse)').matches;
+}
+
+/** The composer's input state machine — text, drafts, sending, queueing and the keyboard handling around them; used by ChatInterface. */
 export function useChatComposerState({
   selectedProject,
   selectedSession,
@@ -262,7 +279,10 @@ export function useChatComposerState({
   });
   const input = inputState.value;
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-  const [fileErrors, setFileErrors] = useState<Map<string, string>>(new Map());
+  // Files the latest attach attempt refused. They never become attachments, so
+  // the composer lists them in their own notice; without it a refused file just
+  // vanishes from a multi-file pick.
+  const [attachmentRejections, setAttachmentRejections] = useState<AttachmentRejection[]>([]);
   const [isTextareaExpanded, setIsTextareaExpanded] = useState(false);
   const [commandModalPayload, setCommandModalPayload] = useState<CommandModalPayload | null>(null);
 
@@ -617,49 +637,56 @@ export function useChatComposerState({
     lastAutosizedInputRef.current = target.value;
   }, []);
 
+  // Picker, drag-and-drop and paste all come through here, so the size and count
+  // limits are checked in one place and every refused file is reported. Each
+  // attempt replaces the notice, so it always describes the latest one.
   const handleAttachmentFiles = useCallback((files: File[]) => {
-    const validFiles = files.filter((file) => {
-      try {
-        if (!file || typeof file !== 'object') {
-          console.warn('Invalid file object:', file);
-          return false;
-        }
+    const accepted: File[] = [];
+    const rejections: AttachmentRejection[] = [];
+    let freeSlots = Math.max(0, MAX_CHAT_ATTACHMENT_COUNT - attachedFiles.length);
 
-        if (file.size > MAX_ATTACHMENT_SIZE) {
-          const fileName = file.name || 'Unknown file';
-          setFileErrors((previous) => {
-            const next = new Map(previous);
-            next.set(fileName, 'File too large (max 10MB)');
-            return next;
-          });
-          return false;
-        }
-
-        return true;
-      } catch (error) {
-        console.error('Error validating file:', error, file);
-        return false;
+    files.forEach((file) => {
+      if (!file || typeof file !== 'object') {
+        console.warn('Invalid file object:', file);
+        return;
       }
+      const fileName = file.name || 'Unknown file';
+      if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
+        rejections.push({ fileName, reason: 'too-large' });
+        return;
+      }
+      if (freeSlots === 0) {
+        rejections.push({ fileName, reason: 'too-many' });
+        return;
+      }
+      freeSlots -= 1;
+      accepted.push(file);
     });
 
-    if (validFiles.length > 0) {
-      setAttachedFiles((previous) => [...previous, ...validFiles].slice(0, MAX_ATTACHMENT_COUNT));
+    setAttachmentRejections(rejections);
+    if (accepted.length > 0) {
+      setAttachedFiles((previous) => [...previous, ...accepted]);
     }
+  }, [attachedFiles]);
+
+  const dismissAttachmentRejections = useCallback(() => {
+    setAttachmentRejections([]);
   }, []);
 
   const handlePaste = useCallback(
     (event: ClipboardEvent<HTMLTextAreaElement>) => {
       const items = Array.from(event.clipboardData.items);
 
-      items.forEach((item) => {
-        if (!item.type.startsWith('image/')) {
-          return;
-        }
-        const file = item.getAsFile();
-        if (file) {
-          handleAttachmentFiles([file]);
-        }
-      });
+      // One call for the whole paste: the free-slot count is read once per call,
+      // so attaching the images one by one would let a paste overfill the composer.
+      const pastedImages = items
+        .filter((item) => item.type.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => file !== null);
+      if (pastedImages.length > 0) {
+        handleAttachmentFiles(pastedImages);
+        return;
+      }
 
       if (items.length === 0 && event.clipboardData.files.length > 0) {
         const files = Array.from(event.clipboardData.files);
@@ -672,10 +699,11 @@ export function useChatComposerState({
     [handleAttachmentFiles],
   );
 
+  // No `maxSize` / `maxFiles` here: react-dropzone would set those files aside
+  // before `onDrop` (and `maxFiles` refuses the whole drop, not just the extra
+  // files), so `handleAttachmentFiles` applies both limits itself and reports them.
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
-    maxSize: MAX_ATTACHMENT_SIZE,
-    maxFiles: MAX_ATTACHMENT_COUNT,
-    onDrop: handleAttachmentFiles,
+    onDrop: (acceptedFiles) => handleAttachmentFiles(acceptedFiles),
     noClick: true,
     noKeyboard: true,
   });
@@ -771,12 +799,17 @@ export function useChatComposerState({
   // mid-turn message the server could not take), so the composer is left as it is.
   const queueMessage = useCallback(
     async (durableDraft: QueuedDraft, queuedSessionKey: string | null, { fromComposer = true } = {}) => {
-      const queuedFromOpenComposer = !queuedSessionKey || sessionKeyRef.current === queuedSessionKey;
-      if (queuedFromOpenComposer && fromComposer) {
+      const queuedFromOpenComposer = fromComposer
+        && (!queuedSessionKey || sessionKeyRef.current === queuedSessionKey);
+      // Attachments are not kept per chat: the queued ones leave even when another chat is
+      // open now, or a send from there would take them along.
+      if (fromComposer) {
+        setAttachedFiles((files) => files.filter((file) => !durableDraft.attachments.includes(file)));
+      }
+      if (queuedFromOpenComposer) {
         setInput('');
         inputValueRef.current = '';
-        setAttachedFiles([]);
-        setFileErrors(new Map());
+        setAttachmentRejections([]);
         resetCommandMenuState();
         setIsTextareaExpanded(false);
         if (textareaRef.current) {
@@ -827,9 +860,9 @@ export function useChatComposerState({
             const restored = withTypedSince(inputValueRef.current);
             setInput(restored);
             inputValueRef.current = restored;
-            if (queuedFromOpenComposer) {
-              setAttachedFiles((current) => [...durableDraft.attachments, ...current]);
-            }
+            // The message's files come back with it, also after a switch away and back
+            // and for a refused steer: all were taken from this composer.
+            setAttachedFiles((current) => [...durableDraft.attachments, ...current]);
             if (draftScopeRef.current) {
               writeDraftText(draftScopeRef.current, restored);
             }
@@ -867,23 +900,37 @@ export function useChatComposerState({
     [addMessage, recordSentMessage, resetCommandMenuState, setInput, t],
   );
 
-  // Empties the composer and its saved draft once a message has gone out.
-  const clearComposer = useCallback(() => {
-    setInput('');
-    inputValueRef.current = '';
-    resetCommandMenuState();
-    setAttachedFiles([]);
-    setFileErrors(new Map());
-    setIsTextareaExpanded(false);
+  // Empties the composer and its saved draft once a message has gone out. The upload and
+  // session allocation before that can outlast a chat switch, so `scope` is the chat the
+  // message was typed in, and the chat open by then keeps its text.
+  const clearComposerAfterSend = useCallback(
+    (scope: string | null, targetSessionId: string | null, text: string, sentAttachments: File[]) => {
+      // Attachments are not kept per chat, so only the ones just sent go.
+      setAttachedFiles((files) => files.filter((file) => !sentAttachments.includes(file)));
+      // A brand-new chat moves from its project scope to its allocated session id meanwhile.
+      const stillOpen = draftScopeRef.current === scope || (!!targetSessionId && draftScopeRef.current === targetSessionId);
+      if (!stillOpen) {
+        // The chat left keeps text the user went back and edited during the upload.
+        if (scope && readDraftText(scope) === text) {
+          writeDraftText(scope, '');
+        }
+        return;
+      }
+      if (scope) {
+        writeDraftText(scope, '');
+      }
+      setInput('');
+      inputValueRef.current = '';
+      resetCommandMenuState();
+      setAttachmentRejections([]);
+      setIsTextareaExpanded(false);
 
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
-
-    if (draftScopeRef.current) {
-      writeDraftText(draftScopeRef.current, '');
-    }
-  }, [resetCommandMenuState, setInput]);
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+    },
+    [resetCommandMenuState, setInput],
+  );
 
   const submitMessage = useCallback(
     async (
@@ -905,6 +952,9 @@ export function useChatComposerState({
       ) {
         return;
       }
+      // The chat this send belongs to: the upload and session allocation below can outlast a
+      // chat switch, and the cleanup at the end must not empty whichever chat is open by then.
+      const submittedScope = draftScopeRef.current;
 
       // A turn is already in flight: stash this message instead of sending it.
       // Upload attached files now so the queued record contains durable image
@@ -959,7 +1009,7 @@ export function useChatComposerState({
             options: { ...queuedOptions, attachments: uploadedAttachments },
           });
           recordSentMessage(currentInput, steerSessionId);
-          clearComposer();
+          clearComposerAfterSend(submittedScope, steerSessionId, currentInput, currentAttachments);
           return;
         }
 
@@ -999,7 +1049,7 @@ export function useChatComposerState({
           setInput('');
           inputValueRef.current = '';
           setAttachedFiles([]);
-          setFileErrors(new Map());
+          setAttachmentRejections([]);
           resetCommandMenuState();
           setIsTextareaExpanded(false);
           if (textareaRef.current) {
@@ -1171,21 +1221,22 @@ export function useChatComposerState({
           attachments: uploadedAttachments,
         },
       });
-      setEditingAnchorId(null);
+      // Only this send's edit: an edit begun in another chat during the upload stays.
+      setEditingAnchorId((current) => (current === editingAnchorId ? null : current));
 
       // Recorded under the (possibly just-allocated) session id, so the first
       // message of a new chat lands in the history of the session the user is
       // navigated to. Queued drafts were recorded when they were queued; the
       // consecutive-duplicate check keeps this second call a no-op.
       recordSentMessage(currentInput, targetSessionId);
-      clearComposer();
+      clearComposerAfterSend(submittedScope, targetSessionId, currentInput, currentAttachments);
     },
     [
       selectedSession,
       askBeforeSendingOverBackgroundWork,
       attachedFiles,
       buildSendOptions,
-      clearComposer,
+      clearComposerAfterSend,
       currentSessionId,
       editingAnchorId,
       steerSessionId,
@@ -1474,7 +1525,16 @@ export function useChatComposerState({
         if ((event.ctrlKey || event.metaKey) && !event.shiftKey) {
           event.preventDefault();
           handleSubmit(event);
-        } else if (!event.shiftKey && !event.ctrlKey && !event.metaKey && !sendByCtrlEnter) {
+        } else if (
+          !event.shiftKey
+          && !event.ctrlKey
+          && !event.metaKey
+          && !sendByCtrlEnter
+          // Submitting on plain Enter strands the newline on a soft keyboard:
+          // the return key is the only Enter, and no Shift exists to combine
+          // with it. The send button still submits.
+          && !isSoftKeyboardEnvironment()
+        ) {
           event.preventDefault();
           handleSubmit(event);
         }
@@ -1617,7 +1677,8 @@ export function useChatComposerState({
     selectFile,
     attachedFiles,
     setAttachedFiles,
-    fileErrors,
+    attachmentRejections,
+    dismissAttachmentRejections,
     getRootProps,
     getInputProps,
     isDragActive,

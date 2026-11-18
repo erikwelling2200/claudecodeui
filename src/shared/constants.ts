@@ -91,6 +91,19 @@ export const MAX_FILE_UPLOAD_SIZE_LABEL = `${MAX_FILE_UPLOAD_SIZE_MB}MB`;
 
 // ---------------------------
 
+//----------------- CHAT ATTACHMENT LIMITS ------------
+
+/** Most files the chat composer holds at once; the composer refuses the rest and names them in its rejection notice. */
+export const MAX_CHAT_ATTACHMENT_COUNT = 10;
+
+/** Largest single chat attachment, in megabytes. Source of truth for the byte limit below and for the size shown in the rejection notice. */
+export const MAX_CHAT_ATTACHMENT_SIZE_MB = 10;
+
+/** `MAX_CHAT_ATTACHMENT_SIZE_MB` in bytes, for comparing against `File.size` when a file is attached. */
+export const MAX_CHAT_ATTACHMENT_SIZE_BYTES = MAX_CHAT_ATTACHMENT_SIZE_MB * 1024 * 1024;
+
+// ---------------------------
+
 //----------------- GIT CHANGE GROUPS ------------
 
 /** Shape of one entry in `FILE_STATUS_GROUPS`; only that constant needs it. */
@@ -140,6 +153,13 @@ export const MCP_SUPPORTED_TRANSPORTS: Record<McpProvider, McpTransport[]> = {
 
 /** Transports offered when configuring a global (provider-agnostic) MCP server. */
 export const MCP_GLOBAL_SUPPORTED_TRANSPORTS: McpTransport[] = ['stdio', 'http'];
+
+/**
+ * Tool name the backend gives an MCP server's request for input ("elicitation") when it
+ * forwards it as a permission request. The permission banner draws it with the elicitation
+ * panel, and the composer steps aside while one is open, as it does for a question.
+ */
+export const MCP_ELICITATION_TOOL_NAME = 'McpElicitation';
 
 /** Whether a provider honours an MCP server's working-directory setting; the form hides the field when it does not. */
 export const MCP_SUPPORTS_WORKING_DIRECTORY: Record<McpProvider, boolean> = {

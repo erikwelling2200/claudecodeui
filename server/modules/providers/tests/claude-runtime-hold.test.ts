@@ -31,6 +31,8 @@ type Scripted = {
   end: () => void;
   released: () => boolean;
   stopped: string[];
+  /** When set, stop_task is recorded but never answered. */
+  stopHangs: boolean;
 };
 
 /** A stand-in for the SDK query: yields what the test emits, and reads the held prompt to notice its release. */
@@ -45,6 +47,7 @@ function createScriptedQuery(): { createQuery: NonNullable<ProviderRuntimeContex
     end: () => { queue.push(null); wake?.(); },
     released: () => released,
     stopped,
+    stopHangs: false,
   };
 
   const createQuery: NonNullable<ProviderRuntimeContext['createQuery']> = ({ prompt }) => {
@@ -70,7 +73,10 @@ function createScriptedQuery(): { createQuery: NonNullable<ProviderRuntimeContex
 
     return Object.assign(iterator, {
       interrupt: async () => {},
-      stopTask: async (taskId: string) => { stopped.push(taskId); },
+      stopTask: async (taskId: string) => {
+        stopped.push(taskId);
+        if (script.stopHangs) await new Promise(() => {});
+      },
     });
   };
 
@@ -133,7 +139,7 @@ test('stopping the last outstanding task leaves the process up for the next turn
     script.emit(taskStarted('wf1', 'toolu_wf', 'local_workflow'));
     script.emit(ack('toolu_wf', 'Workflow launched in background. Task ID: wf1', { status: 'async_launched', taskId: 'wf1', taskType: 'local_workflow' }));
     script.emit(result());
-    await waitFor(() => sent.some((message) => message.kind === 'complete'));
+    await waitFor(() => sent.some((message) => message.kind === 'complete') && listClaudeSDKBackgroundWork().length === 1);
 
     // The turn is over for the client, the process is held for the workflow.
     assert.deepEqual(listClaudeSDKBackgroundWork().map((entry) => [entry.sessionId, entry.tasks.map((task) => task.taskId)]), [[SESSION_ID, ['wf1']]]);
@@ -141,12 +147,64 @@ test('stopping the last outstanding task leaves the process up for the next turn
 
     // The user stops it. The CLI answers with a `stopped` notification and
     // pushes no follow-up turn, so nothing else would ever end the hold.
-    assert.equal(await stopClaudeSDKTask(SESSION_ID, 'wf1'), true);
+    const stopping = stopClaudeSDKTask(SESSION_ID, 'wf1');
+    // A second ✕ joins the stop under way rather than sending another.
+    const again = stopClaudeSDKTask(SESSION_ID, 'wf1');
+    await waitFor(() => script.stopped.length > 0);
     assert.deepEqual(script.stopped, ['wf1']);
     script.emit(taskNotification('wf1', 'toolu_wf', 'stopped'));
+    assert.equal(await stopping, true, 'the stop counts once the task has settled');
+    assert.equal(await again, true);
     await waitFor(() => listClaudeSDKBackgroundWork().length === 0, 'the stopped task is no longer outstanding');
 
     assert.equal(script.released(), false, 'nothing is outstanding, and the process stays for the next turn');
+    void done;
+  });
+});
+
+test('a stop the CLI acknowledges without ending the task fails', async () => {
+  await withRun(async ({ script, done }) => {
+    script.emit(init());
+    script.emit(toolUse('toolu_mon', 'Monitor', { command: 'tail -f log', description: 'watch' }));
+    script.emit(taskStarted('m1', 'toolu_mon', 'local_bash'));
+    script.emit(result());
+    await waitFor(() => listClaudeSDKBackgroundWork().length === 1);
+
+    await assert.rejects(stopClaudeSDKTask(SESSION_ID, 'm1', 50), /still running/);
+    assert.deepEqual(script.stopped, ['m1']);
+    assert.equal(listClaudeSDKBackgroundWork().length, 1, 'the task is still tracked');
+
+    // The failed stop is not reused: another ✕ reaches the CLI again.
+    await assert.rejects(stopClaudeSDKTask(SESSION_ID, 'm1', 50), /still running/);
+    assert.deepEqual(script.stopped, ['m1', 'm1']);
+
+    script.emit(taskNotification('m1', 'toolu_mon', 'stopped'));
+    await settle();
+    void done;
+  });
+});
+
+test('a stop the CLI never answers fails at the deadline', async () => {
+  await withRun(async ({ script, done }) => {
+    script.emit(init());
+    script.emit(toolUse('toolu_mon', 'Monitor', { command: 'tail -f log', description: 'watch' }));
+    script.emit(taskStarted('m1', 'toolu_mon', 'local_bash'));
+    script.emit(result());
+    await waitFor(() => listClaudeSDKBackgroundWork().length === 1);
+
+    script.stopHangs = true;
+    try {
+      await assert.rejects(stopClaudeSDKTask(SESSION_ID, 'm1', 50), /did not answer/);
+
+      // The task ending still counts, answer or not.
+      const stopping = stopClaudeSDKTask(SESSION_ID, 'm1');
+      await waitFor(() => script.stopped.length === 2);
+      script.emit(taskNotification('m1', 'toolu_mon', 'stopped'));
+      assert.equal(await stopping, true);
+    } finally {
+      script.stopHangs = false;
+    }
+    await settle();
     void done;
   });
 });

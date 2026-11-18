@@ -40,6 +40,24 @@ const lineFromRef = (value: string): number | null => {
 // Strip a trailing `:line` / `:line:col` suffix (e.g. `src/foo.ts:130`).
 const stripLineSuffix = (value: string): string => value.replace(/:\d+(?::\d+)?$/, '');
 
+// Markdown hrefs are URLs, while the editor needs a filesystem path. Decode
+// once at this boundary; repeated decoding would rename literal `%20` files.
+const decodeFileHref = (value: string): string => {
+  // Match one UTF-8 character at a time so a literal percent or an invalid
+  // byte sequence cannot prevent valid escapes elsewhere from decoding.
+  return value.replace(
+    /%(?:[0-7][\da-f]|[cd][\da-f]%[89ab][\da-f]|e[\da-f](?:%[89ab][\da-f]){2}|f[0-4](?:%[89ab][\da-f]){3})/gi,
+    (encodedCharacter) => {
+      try {
+        return decodeURIComponent(encodedCharacter);
+      } catch {
+        // Preserve invalid UTF-8 (including overlong or surrogate encodings).
+        return encodedCharacter;
+      }
+    },
+  );
+};
+
 // A usable file path contains a separator or a filename with an extension.
 const looksLikeFilePath = (value?: string): value is string => {
   if (!value) {
@@ -76,13 +94,16 @@ const looksLikeCodeFileReference = (value: string): boolean => {
 
 type FileOps = Pick<ReturnType<typeof usePaletteOps>, 'openFileInEditor' | 'openDirectory'>;
 
-const openFileReference = (rawReference: string, { openFileInEditor, openDirectory }: FileOps) => {
+// `decode` is for markdown hrefs, which are URLs; link text and inline code are already literal.
+const openFileReference = (rawReference: string, { openFileInEditor, openDirectory }: FileOps, decode = false) => {
   const reference = rawReference.trim();
-  if (reference.endsWith('/')) {
-    openDirectory(reference);
+  // Strip line metadata before decoding so an encoded colon in a filename is not taken for a line suffix.
+  const path = decode ? decodeFileHref(stripLineSuffix(reference)) : stripLineSuffix(reference);
+  if (path.endsWith('/')) {
+    openDirectory(path);
     return;
   }
-  openFileInEditor(stripLineSuffix(reference), lineFromRef(reference));
+  openFileInEditor(path, lineFromRef(reference));
 };
 
 // Set inside a rendered link, so inline code there does not nest a second link.
@@ -374,7 +395,10 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
         // Prefer the href when it is a real path; otherwise fall back to the
         // link text, since models often emit `[src/foo.ts]()` with an empty href.
         const linkText = childrenToText(linkChildren);
-        const fileRef = looksLikeFilePath(href) ? href : looksLikeFilePath(linkText) ? linkText : undefined;
+        // Classify a decoded copy, retaining the original for line metadata.
+        const fileRef = looksLikeFilePath(href && decodeFileHref(href))
+          ? href
+          : looksLikeFilePath(linkText) ? linkText : undefined;
 
         if (fileRef && !isExternalHref(href)) {
           return (
@@ -385,7 +409,7 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
                 event.preventDefault();
                 // The link-text fallback keeps a trailing space (``[`src/foo.ts:12` ]()``),
                 // which openFileReference trims before the `$`-anchored suffix strip.
-                openFileReference(fileRef, { openFileInEditor, openDirectory });
+                openFileReference(fileRef, { openFileInEditor, openDirectory }, href === fileRef);
               }}
             >
               <InsideLinkContext.Provider value>{linkChildren}</InsideLinkContext.Provider>
