@@ -38,6 +38,11 @@ test('a message without the hand-back frame keeps its body as written', () => {
   assert.equal(row.content, 'Both changes are in.\n  indented');
 });
 
+test('the empty-turn retry nudge is hidden even when the live stream does not tag it meta', () => {
+  assert.deepEqual(normalize('[Your previous response had no visible output. Please continue and produce a user-visible response.]'), []);
+  assert.deepEqual(normalize([{ type: 'text', text: '[Your previous response reached the output limit with no visible output. Please continue.]' }]), []);
+});
+
 test('an ordinary user message is not taken for an agent message', () => {
   const [row] = normalize('Another Claude session sent a message: what does that mean?');
   assert.equal(row.agentMessageFrom, undefined);
