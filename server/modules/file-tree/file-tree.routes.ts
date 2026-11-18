@@ -95,6 +95,21 @@ function readProjectId(request: Request): string {
   return readRequiredString(request.params.projectId, 'projectId');
 }
 
+/**
+ * The chat whose worktrees the request reads through, from the query or the
+ * body. Spread into the service call so a request without one is unchanged.
+ */
+function readSessionId(request: Request): { sessionId?: string } {
+  const raw = (request.body as Record<string, unknown> | undefined)?.sessionId ?? request.query.sessionId;
+  return typeof raw === 'string' && raw.trim() ? { sessionId: raw.trim() } : {};
+}
+
+/** The same, as a trailing positional argument that is absent rather than undefined. */
+function sessionIdArgument(request: Request): [] | [string] {
+  const { sessionId } = readSessionId(request);
+  return sessionId ? [sessionId] : [];
+}
+
 function readEntryType(value: unknown): 'file' | 'directory' {
   if (value !== 'file' && value !== 'directory') {
     throw new AppError('Type must be "file" or "directory"', {
@@ -181,12 +196,12 @@ export function createFileTreeRouter(
 
   router.get('/projects/:projectId/file', createRouteHandler(async (request, response) => {
     const filePath = readRequiredString(request.query.filePath, 'filePath', 'Invalid file path');
-    response.json(await services.readTextFile(readProjectId(request), filePath));
+    response.json(await services.readTextFile(readProjectId(request), filePath, ...sessionIdArgument(request)));
   }, logger));
 
   router.get('/projects/:projectId/files/content', createRouteHandler(async (request, response) => {
     const filePath = readRequiredString(request.query.path, 'path', 'Invalid file path');
-    const file = await services.openFile(readProjectId(request), filePath);
+    const file = await services.openFile(readProjectId(request), filePath, ...sessionIdArgument(request));
     response.setHeader('Content-Type', file.contentType);
     file.stream.pipe(response);
     file.stream.on('error', (error) => {
@@ -212,13 +227,14 @@ export function createFileTreeRouter(
         statusCode: 400,
       });
     }
-    response.json(await services.saveTextFile(readProjectId(request), filePath, body.content));
+    response.json(await services.saveTextFile(readProjectId(request), filePath, body.content, ...sessionIdArgument(request)));
   }, logger));
 
   router.get('/projects/:projectId/files', createRouteHandler(async (request, response) => {
     response.json(await services.listProjectFiles(readProjectId(request), {
       respectGitignore: request.query.respectGitignore === 'true',
       depth: readOptionalInteger(request.query.depth),
+      ...readSessionId(request),
     }));
   }, logger));
 
@@ -233,6 +249,7 @@ export function createFileTreeRouter(
     response.json(await services.listDirectoryChildren(readProjectId(request), body.paths as string[], {
       respectGitignore: body.respectGitignore === true,
       depth: readOptionalInteger(body.depth) ?? 1,
+      ...readSessionId(request),
     }));
   }, logger));
 
@@ -242,6 +259,7 @@ export function createFileTreeRouter(
     response.json(await services.searchProjectFiles(readProjectId(request), query, {
       limit,
       type: request.query.type === 'file' ? 'file' : 'any',
+      ...readSessionId(request),
     }));
   }, logger));
 
@@ -257,6 +275,7 @@ export function createFileTreeRouter(
         MAXIMUM_CONTENT_SEARCH_MATCHES,
         Math.max(1, readOptionalInteger(request.query.limit) ?? DEFAULT_CONTENT_SEARCH_MATCHES),
       ),
+      ...readSessionId(request),
     };
 
     response.writeHead(200, {
@@ -312,6 +331,7 @@ export function createFileTreeRouter(
       parentPath,
       type,
       name,
+      ...readSessionId(request),
     }));
   }, logger));
 
@@ -327,6 +347,7 @@ export function createFileTreeRouter(
       projectId: readProjectId(request),
       oldPath: readRequiredString(body.oldPath, 'oldPath'),
       newName: readRequiredString(body.newName, 'newName'),
+      ...readSessionId(request),
     }));
   }, logger));
 
@@ -336,6 +357,7 @@ export function createFileTreeRouter(
     response.json(await services.deleteEntry({
       projectId: readProjectId(request),
       targetPath,
+      ...readSessionId(request),
     }));
   }, logger));
 
@@ -349,6 +371,7 @@ export function createFileTreeRouter(
       relativePaths: readRelativePaths(body.relativePaths),
       requestedFileCount: readRequestedFileCount(body.requestedFileCount, files.length),
       files,
+      ...readSessionId(request),
     }));
   }, logger);
 

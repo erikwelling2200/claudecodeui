@@ -53,7 +53,10 @@ function clampListingDepth(depth: number | undefined): number {
 type FileTreeEntryFilter = (entryPath: string, isDirectory: boolean) => boolean;
 
 function includeEntryByHardExclusions(entryPath: string, isDirectory: boolean): boolean {
-  return !isDirectory || !HARD_EXCLUDED_DIRECTORY_NAMES.has(path.basename(entryPath));
+  const name = path.basename(entryPath);
+  // A linked worktree's `.git` is a file pointing at the git directory; as much noise as the directory.
+  if (name === '.git') return false;
+  return !isDirectory || !HARD_EXCLUDED_DIRECTORY_NAMES.has(name);
 }
 
 function includeEntryByFallbackDirectoryNames(entryPath: string, isDirectory: boolean): boolean {
@@ -104,6 +107,19 @@ type ProjectFolders = {
   primary: string;
   /** The primary folder first, then the extra folders in order. */
   all: string[];
+  /** One entry per folder in `all`, carrying the worktree it stands in for when a chat is parked in one. */
+  roots: ProjectRoot[];
+};
+
+type ProjectRoot = {
+  path: string;
+  /** The project folder as the project records it: the main checkout. */
+  mainPath: string;
+  /** '' when `path` is the main checkout. */
+  suffix: string;
+  branch: string | null;
+  /** The chat's worktree folder does not exist, so `path` is the main checkout instead. */
+  missing: boolean;
 };
 
 function isProjectFolder(folders: ProjectFolders, candidatePath: string): boolean {
@@ -231,12 +247,54 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     : 1;
   const { acquire, release } = createConcurrencyLimiter(concurrencyLimit);
 
-  async function resolveProjectFolders(projectId: string): Promise<ProjectFolders> {
+  /**
+   * The branch a checkout has out, read from `.git/HEAD` without spawning git.
+   * A linked worktree's `.git` is a file pointing at its git directory.
+   */
+  async function readCheckoutBranch(folderPath: string): Promise<string | null> {
+    try {
+      const gitPath = path.join(folderPath, '.git');
+      const stats = await fileSystem.stat(gitPath);
+      let gitDirectory = gitPath;
+      if (!stats.isDirectory()) {
+        const pointer = /^gitdir:\s*(.+)$/m.exec(await fileSystem.readTextFile(gitPath));
+        if (!pointer) return null;
+        gitDirectory = path.resolve(folderPath, pointer[1].trim());
+      }
+      const head = await fileSystem.readTextFile(path.join(gitDirectory, 'HEAD'));
+      const ref = /^ref:\s*refs\/heads\/(.+)$/m.exec(head);
+      return ref ? ref[1].trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The project's folders, each replaced by the worktree the chat works in when
+   * `sessionId` names a chat parked in one. A worktree folder that does not
+   * exist falls back to the main checkout, marked `missing`, so the tree still
+   * shows something rather than failing.
+   */
+  async function resolveProjectFolders(projectId: string, sessionId?: string): Promise<ProjectFolders> {
     const folderPaths = await dependencies.projects.getProjectFolderPathsById(projectId);
     if (!folderPaths || folderPaths.length === 0) {
       throw createFileTreeError('Project not found', 404, 'PROJECT_NOT_FOUND');
     }
-    return { primary: folderPaths[0], all: folderPaths };
+
+    const mapped = sessionId && dependencies.sessionFolders
+      ? dependencies.sessionFolders.mapFolders(folderPaths, sessionId)
+      : folderPaths.map((folder) => ({ path: folder, mainPath: folder, suffix: '', unitKey: null }));
+    const roots = await Promise.all(mapped.map(async (folder): Promise<ProjectRoot> => {
+      if (!folder.suffix) return { path: folder.path, mainPath: folder.mainPath, suffix: '', branch: null, missing: false };
+      try {
+        await fileSystem.access(folder.path);
+      } catch {
+        return { path: folder.mainPath, mainPath: folder.mainPath, suffix: folder.suffix, branch: null, missing: true };
+      }
+      return { path: folder.path, mainPath: folder.mainPath, suffix: folder.suffix, branch: await readCheckoutBranch(folder.path), missing: false };
+    }));
+    const all = roots.map((root) => root.path);
+    return { primary: all[0], all, roots };
   }
 
   /** Fills size, mtime and permission bits; a metadata failure leaves the defaults. */
@@ -311,9 +369,11 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     respectGitignore: boolean,
     depth: number,
   ): Promise<FileTreeNode[]> {
-    const rootNames = createProjectRootNames(folders.all);
+    // Named after the main checkouts, so a folder keeps its name across worktrees and the badge carries the suffix.
+    const rootNames = createProjectRootNames(folders.roots.map((root) => root.mainPath));
 
     return Promise.all(folders.all.map(async (folderPath, index) => {
+      const root = folders.roots[index];
       const rootNode: FileTreeNode = {
         name: rootNames[index],
         path: folderPath,
@@ -323,6 +383,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
         permissions: '000',
         permissionsRwx: '---------',
         isProjectRoot: true,
+        ...(root.suffix ? { worktree: { suffix: root.suffix, branch: root.branch, mainPath: root.mainPath, ...(root.missing ? { missing: true as const } : {}) } } : {}),
         children: [],
       };
 
@@ -476,6 +537,29 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       }
     }
 
+    return resolveExistingPathInsideProjectFolders(folders, targetPath);
+  }
+
+  /**
+   * Like `resolvePathInsideProjectFolders`, but a relative path is looked up
+   * in every project folder, primary first, and lands in the first one that
+   * has it: an agent quotes a path relative to whichever folder it worked in.
+   * A path no folder has resolves against the primary folder as before, so
+   * the caller reports it the way it always did (not found, or a new file).
+   */
+  async function resolveExistingPathInsideProjectFolders(folders: ProjectFolders, targetPath: string): Promise<string> {
+    if (!path.isAbsolute(targetPath)) {
+      for (const folder of folders.all) {
+        const candidatePath = path.resolve(folder, targetPath);
+        if (!isPathInsideFolder(folder, candidatePath)) continue;
+        try {
+          await fileSystem.access(candidatePath);
+          return candidatePath;
+        } catch {
+          // Not in this folder; try the next.
+        }
+      }
+    }
     return resolvePathInsideProjectFolders(folders, targetPath);
   }
 
@@ -570,8 +654,8 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       return { success: true, path: targetPath };
     },
 
-    async readTextFile(projectId, filePath) {
-      const folders = await resolveProjectFolders(projectId);
+    async readTextFile(projectId, filePath, sessionId) {
+      const folders = await resolveProjectFolders(projectId, sessionId);
       const resolvedPath = await resolveReadablePath(folders, filePath);
       try {
         const content = await fileSystem.readTextFile(resolvedPath);
@@ -585,8 +669,8 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       }
     },
 
-    async openFile(projectId, filePath) {
-      const folders = await resolveProjectFolders(projectId);
+    async openFile(projectId, filePath, sessionId) {
+      const folders = await resolveProjectFolders(projectId, sessionId);
       const resolvedPath = await resolveReadablePath(folders, filePath);
       try {
         await fileSystem.access(resolvedPath);
@@ -600,9 +684,10 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       };
     },
 
-    async saveTextFile(projectId, filePath, content) {
-      const folders = await resolveProjectFolders(projectId);
-      const resolvedPath = resolvePathInsideProjectFolders(folders, filePath);
+    async saveTextFile(projectId, filePath, content, sessionId) {
+      const folders = await resolveProjectFolders(projectId, sessionId);
+      // A relative path saves over the file it was read from; a new one lands in the primary folder.
+      const resolvedPath = await resolveExistingPathInsideProjectFolders(folders, filePath);
       try {
         await fileSystem.writeTextFile(resolvedPath, content);
       } catch (error) {
@@ -616,12 +701,13 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     },
 
     async listProjectFiles(projectId, options) {
-      const folders = await resolveProjectFolders(projectId);
+      const folders = await resolveProjectFolders(projectId, options?.sessionId);
       const respectGitignore = options?.respectGitignore === true;
       const depth = clampListingDepth(options?.depth);
       // Opening the tree is the usual prelude to a search, so the index starts building now.
       dependencies.fileIndex.warm(folders.all);
-      if (folders.all.length > 1) {
+      // A single folder shown as a worktree still gets a root node, which is where the badge goes.
+      if (folders.all.length > 1 || folders.roots.some((root) => root.suffix)) {
         return listMultiFolderProjectFiles(folders, respectGitignore, depth);
       }
 
@@ -637,7 +723,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     },
 
     async listDirectoryChildren(projectId, paths, options) {
-      const folders = await resolveProjectFolders(projectId);
+      const folders = await resolveProjectFolders(projectId, options.sessionId);
       const depth = clampListingDepth(options.depth);
       // One filter per project folder, shared by every requested directory inside it.
       const filters = new Map<string, Promise<FileTreeEntryFilter>>();
@@ -655,18 +741,18 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     },
 
     async searchProjectFiles(projectId, query, options) {
-      const folders = await resolveProjectFolders(projectId);
+      const folders = await resolveProjectFolders(projectId, options.sessionId);
       return dependencies.fileIndex.search(folders.all, query, options);
     },
 
     async searchProjectFileContents(projectId, query, options, run) {
-      const folders = await resolveProjectFolders(projectId);
+      const folders = await resolveProjectFolders(projectId, options.sessionId);
       return dependencies.contentSearch.search(folders.all, query, options, run);
     },
 
     async createEntry(input) {
       validateFilename(input.name);
-      const folders = await resolveProjectFolders(input.projectId);
+      const folders = await resolveProjectFolders(input.projectId, input.sessionId);
       const targetPath = input.parentPath
         ? path.join(input.parentPath, input.name)
         : input.name;
@@ -713,7 +799,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
 
     async renameEntry(input) {
       validateFilename(input.newName);
-      const folders = await resolveProjectFolders(input.projectId);
+      const folders = await resolveProjectFolders(input.projectId, input.sessionId);
       const resolvedOldPath = resolvePathInsideProjectFolders(folders, input.oldPath, { allowFolderRoot: true });
       if (isProjectFolder(folders, resolvedOldPath)) {
         throw createFileTreeError('Cannot rename a project folder', 403, 'PROJECT_ROOT_RENAME_FORBIDDEN');
@@ -758,7 +844,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     },
 
     async deleteEntry(input) {
-      const folders = await resolveProjectFolders(input.projectId);
+      const folders = await resolveProjectFolders(input.projectId, input.sessionId);
       const resolvedPath = resolvePathInsideProjectFolders(folders, input.targetPath, { allowFolderRoot: true });
       if (isProjectFolder(folders, resolvedPath)) {
         throw createFileTreeError('Cannot delete project root directory', 403, 'PROJECT_ROOT_DELETE_FORBIDDEN');
@@ -800,7 +886,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       }
 
       try {
-        const folders = await resolveProjectFolders(input.projectId);
+        const folders = await resolveProjectFolders(input.projectId, input.sessionId);
         const resolvedTargetDirectory = !input.targetPath
           || input.targetPath === '.'
           || input.targetPath === './'

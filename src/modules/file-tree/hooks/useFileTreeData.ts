@@ -38,11 +38,12 @@ function readResponseErrorMessage(responseBody: string): string | null {
 
 async function fetchChildren(
   projectId: string,
+  sessionId: string | null,
   paths: string[],
   depth: number,
   signal: AbortSignal,
 ): Promise<Record<string, FileTreeNode[]>> {
-  const response = await api.getFileChildren(projectId, paths, depth, { signal });
+  const response = await api.getFileChildren(projectId, paths, depth, { signal, sessionId });
   if (!response.ok) {
     throw new Error(`Loading ${paths.length} directories failed with ${response.status}`);
   }
@@ -71,7 +72,16 @@ function collectLoadedDirectories(nodes: FileTreeNode[]): string[] {
   return paths;
 }
 
-export function useFileTreeData(selectedProject: Project | null): UseFileTreeDataResult {
+/**
+ * The tree of the project's folders as the chat `sessionId` sees them: each
+ * folder is the worktree that chat works in. `worktreeRevision` counts the
+ * times the chat's worktrees were read; a change reloads the tree.
+ */
+export function useFileTreeData(
+  selectedProject: Project | null,
+  sessionId: string | null = null,
+  worktreeRevision = 0,
+): UseFileTreeDataResult {
   const [files, setFiles] = useState<FileTreeNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +91,7 @@ export function useFileTreeData(selectedProject: Project | null): UseFileTreeDat
   useEffect(() => {
     filesRef.current = files;
   }, [files]);
-  // Aborted on a project switch, so a late listing never lands in another project's tree.
+  // Aborted on a project or chat switch, so a late listing never lands in another tree.
   const projectAbortRef = useRef<AbortController | null>(null);
   const projectId = selectedProject?.projectId;
 
@@ -101,7 +111,7 @@ export function useFileTreeData(selectedProject: Project | null): UseFileTreeDat
     projectAbortRef.current = abortController;
     setLoading(true);
     return () => abortController.abort();
-  }, [projectId]);
+  }, [projectId, sessionId]);
 
   useEffect(() => {
     const signal = projectAbortRef.current?.signal;
@@ -109,13 +119,14 @@ export function useFileTreeData(selectedProject: Project | null): UseFileTreeDat
       return;
     }
     // On a refresh, every loaded directory is listed again alongside the top level.
-    const loadedDirectories = refreshKey > 0 ? collectLoadedDirectories(filesRef.current) : [];
+    // A worktree change is a refresh too: the same directories are listed from the new folders.
+    const loadedDirectories = refreshKey > 0 || worktreeRevision > 1 ? collectLoadedDirectories(filesRef.current) : [];
 
     const fetchFiles = async () => {
       try {
         const [response, listings] = await Promise.all([
-          api.getFiles(projectId, INITIAL_DEPTH, { signal }),
-          loadedDirectories.length > 0 ? fetchChildren(projectId, loadedDirectories, 1, signal) : Promise.resolve({}),
+          api.getFiles(projectId, INITIAL_DEPTH, { signal, sessionId }),
+          loadedDirectories.length > 0 ? fetchChildren(projectId, sessionId, loadedDirectories, 1, signal) : Promise.resolve({}),
         ]);
 
         if (!response.ok) {
@@ -148,18 +159,18 @@ export function useFileTreeData(selectedProject: Project | null): UseFileTreeDat
     };
 
     void fetchFiles();
-  }, [projectId, refreshKey]);
+  }, [projectId, sessionId, refreshKey, worktreeRevision]);
 
   const loadDirectories = useCallback(async (paths: string[], depth: number) => {
     const signal = projectAbortRef.current?.signal;
     if (!projectId || !signal || paths.length === 0) {
       return;
     }
-    const listings = await fetchChildren(projectId, paths, depth, signal);
+    const listings = await fetchChildren(projectId, sessionId, paths, depth, signal);
     if (!signal.aborted) {
       setFiles((previous) => applyListings(previous, listings));
     }
-  }, [projectId]);
+  }, [projectId, sessionId]);
 
   return {
     files,

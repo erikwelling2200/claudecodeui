@@ -21,9 +21,27 @@ function createFakeServices(overrides: Partial<WorktreeClaimsServices> = {}): Wo
     readJob: unused,
     listClaims: unused,
     release: unused,
+    getSessionWorktrees: unused,
     ...overrides,
   };
 }
+
+test('GET /session-worktrees forwards the session id and answers with its worktrees', async () => {
+  let received: string | null = null;
+  const services = createFakeServices({
+    getSessionWorktrees: async (sessionId) => {
+      received = sessionId;
+      return [];
+    },
+  });
+  await withServer(services, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/session-worktrees?session=chat-1`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { success: true, data: [] });
+    assert.equal((await fetch(`${baseUrl}/session-worktrees`)).status, 400);
+  });
+  assert.equal(received, 'chat-1');
+});
 
 async function withServer(services: WorktreeClaimsServices, run: (baseUrl: string) => Promise<void>): Promise<void> {
   const app = express();

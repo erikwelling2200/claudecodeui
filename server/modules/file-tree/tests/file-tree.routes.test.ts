@@ -330,3 +330,45 @@ test('content search route aborts the search when the client disconnects', async
 
   assert.equal((searchSignal as AbortSignal | null)?.aborted, true);
 });
+
+test('a session id in the query or body reaches the service, and its absence changes nothing', async () => {
+  const reads: Parameters<FileTreeServices['readTextFile']>[] = [];
+  const saves: Parameters<FileTreeServices['saveTextFile']>[] = [];
+  const listings: Parameters<FileTreeServices['listProjectFiles']>[] = [];
+  const searches: Parameters<FileTreeServices['searchProjectFiles']>[] = [];
+  const services = createFakeServices({
+    readTextFile: async (...input) => {
+      reads.push(input);
+      return { content: '', path: '/p/a.txt' };
+    },
+    saveTextFile: async (...input) => {
+      saves.push(input);
+      return { success: true, path: '/p/a.txt', message: 'ok' };
+    },
+    listProjectFiles: async (...input) => {
+      listings.push(input);
+      return [];
+    },
+    searchProjectFiles: async (...input) => {
+      searches.push(input);
+      return { results: [], truncated: false };
+    },
+  });
+
+  await withFileTreeServer(services, async (baseUrl) => {
+    await fetch(`${baseUrl}/api/file-tree/projects/project-1/file?filePath=a.txt&sessionId=chat-1`);
+    await fetch(`${baseUrl}/api/file-tree/projects/project-1/file?filePath=a.txt`);
+    await fetch(`${baseUrl}/api/file-tree/projects/project-1/file`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filePath: 'a.txt', content: 'x', sessionId: 'chat-1' }),
+    });
+    await fetch(`${baseUrl}/api/file-tree/projects/project-1/files?sessionId=chat-1`);
+    await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/search?q=a&sessionId=chat-1`);
+  });
+
+  assert.deepEqual(reads, [['project-1', 'a.txt', 'chat-1'], ['project-1', 'a.txt']]);
+  assert.deepEqual(saves, [['project-1', 'a.txt', 'x', 'chat-1']]);
+  assert.deepEqual(listings, [['project-1', { respectGitignore: false, depth: undefined, sessionId: 'chat-1' }]]);
+  assert.deepEqual(searches, [['project-1', 'a', { limit: 100, type: 'any', sessionId: 'chat-1' }]]);
+});

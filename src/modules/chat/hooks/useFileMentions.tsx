@@ -13,6 +13,8 @@ export type MentionableFile = {
 
 type UseFileMentionsOptions = {
   selectedProject: Project | null;
+  // The chat being typed in; mentions complete against the worktrees it works in.
+  sessionId?: string | null;
   input: string;
   setInput: Dispatch<SetStateAction<string>>;
   textareaRef: RefObject<HTMLTextAreaElement>;
@@ -29,7 +31,7 @@ const toMentionableFile = (result: FileSearchResult): MentionableFile => ({
   relativePath: result.path,
 });
 
-export function useFileMentions({ selectedProject, input, setInput, textareaRef }: UseFileMentionsOptions) {
+export function useFileMentions({ selectedProject, sessionId = null, input, setInput, textareaRef }: UseFileMentionsOptions) {
   const projectId = selectedProject?.projectId;
   const [fileMentions, setFileMentions] = useState<string[]>([]);
   const [filteredFiles, setFilteredFiles] = useState<MentionableFile[]>([]);
@@ -54,7 +56,7 @@ export function useFileMentions({ selectedProject, input, setInput, textareaRef 
         const response = await api.searchFiles(
           projectId,
           mentionQuery,
-          { limit: MENTION_RESULT_LIMIT, type: 'file' },
+          { limit: MENTION_RESULT_LIMIT, type: 'file', sessionId },
           { signal: abortController.signal },
         );
         if (!response.ok) {
@@ -75,7 +77,7 @@ export function useFileMentions({ selectedProject, input, setInput, textareaRef 
       clearTimeout(timer);
       abortController.abort();
     };
-  }, [projectId, mentionQuery]);
+  }, [projectId, sessionId, mentionQuery]);
 
   useEffect(() => {
     const textBeforeCursor = input.slice(0, cursorPosition);

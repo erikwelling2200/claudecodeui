@@ -11,7 +11,7 @@ import { providerMcpService, providerRuntimeService, sessionsService } from '@/m
 import { broadcastRemoteControl, broadcastSessionUpserted, chatRunRegistry, runDetachedChatTurn } from '@/modules/websocket/index.js';
 import type { ProviderRuntimeGateway } from '@/modules/websocket/index.js';
 import type { ChatToolsAppendMode, ChatToolsSettings, LiveMcpServerStatus, LLMProvider, ProviderMcpServer } from '@/shared/types.js';
-import { AGENT_SESSION_ID_ENV, AppError, appendPromptText, findServerRoot, getModuleDirectory, mayRegisterUserMcp } from '@/shared/utils.js';
+import { AGENT_SESSION_ID_ENV, AppError, appendPromptText, findServerRoot, getModuleDirectory, mayRegisterUserMcp, setAgentSessionEnvExtras } from '@/shared/utils.js';
 
 const require = createRequire(import.meta.url);
 const moduleDirectory = getModuleDirectory(import.meta.url);
@@ -81,20 +81,24 @@ function getMcpCommand(): { command: string; args: string[]; env: Record<string,
   };
 }
 
+/** Where and how an agent-side process (the MCP server, the CLI's hooks) reaches this instance's chat-tools API. */
+function buildAgentApiEnv(): Record<string, string> {
+  const port = process.env.SERVER_PORT || process.env.PORT || '3001';
+  return {
+    CLOUDCLI_CHAT_TOOLS_MCP_TOKEN: getOrCreateMcpToken(),
+    CLOUDCLI_CHAT_TOOLS_API_URL: `http://127.0.0.1:${port}/api/chat-tools-mcp`,
+  };
+}
+
 function buildMcpServerInput() {
   const { command, args, env } = getMcpCommand();
-  const port = process.env.SERVER_PORT || process.env.PORT || '3001';
   return {
     name: MCP_SERVER_NAME,
     scope: 'user' as const,
     transport: 'stdio' as const,
     command,
     args,
-    env: {
-      ...env,
-      CLOUDCLI_CHAT_TOOLS_MCP_TOKEN: getOrCreateMcpToken(),
-      CLOUDCLI_CHAT_TOOLS_API_URL: `http://127.0.0.1:${port}/api/chat-tools-mcp`,
-    },
+    env: { ...env, ...buildAgentApiEnv() },
     // Codex starts MCP servers with a minimal environment; this passes the chat's id through.
     envVars: [AGENT_SESSION_ID_ENV],
   };
@@ -243,6 +247,8 @@ export const chatToolsService = {
    * between source and compiled builds, or another CloudCLI instance's server).
    */
   async ensureMcpRegistered(): Promise<void> {
+    // The worktree-lock hook posts claims to this API from inside the CLI, with or without the MCP server registered.
+    setAgentSessionEnvExtras(buildAgentApiEnv());
     if (!readSettings().renameToolEnabled) return;
     if (!mayRegisterUserMcp()) {
       console.log(`[ChatTools] CLOUDCLI_REGISTER_USER_MCP=false: leaving the ${MCP_SERVER_NAME} MCP entry to the main instance.`);

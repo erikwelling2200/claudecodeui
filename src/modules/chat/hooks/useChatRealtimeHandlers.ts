@@ -233,6 +233,8 @@ export function useChatRealtimeHandlers({
         // Owned by useScheduledMessages, which reads the composer banner's
         // list again. Not a transcript row.
         case 'scheduled_messages_changed':
+        // Owned by useSessionWorktrees, which reads the chat's worktrees again.
+        case 'session_worktrees_changed':
           return;
 
         // A message sent mid-turn, waiting for the CLI to take it. Shown by

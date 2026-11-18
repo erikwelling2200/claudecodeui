@@ -7,6 +7,8 @@ import { buildSearchResultTree, collectDirectoryPaths } from '@/modules/file-tre
 
 type UseFileTreeSearchArgs = {
   projectId: string | undefined;
+  // The chat whose worktrees are searched.
+  sessionId?: string | null;
   files: FileTreeNode[];
   expandedDirs: Set<string>;
   toggleDirectory: (path: string) => void;
@@ -30,6 +32,7 @@ type UseFileTreeSearchResult = {
  */
 export function useFileTreeSearch({
   projectId,
+  sessionId = null,
   files,
   expandedDirs,
   toggleDirectory,
@@ -53,7 +56,7 @@ export function useFileTreeSearch({
         const response = await api.searchFiles(
           projectId,
           query,
-          { limit: FILE_TREE_SEARCH_LIMIT, type: 'any' },
+          { limit: FILE_TREE_SEARCH_LIMIT, type: 'any', sessionId },
           { signal: abortController.signal },
         );
         if (!response.ok) {
@@ -76,7 +79,7 @@ export function useFileTreeSearch({
       clearTimeout(timer);
       abortController.abort();
     };
-  }, [projectId, query]);
+  }, [projectId, sessionId, query]);
 
   const resultTree = useMemo(
     () => (query && results ? buildSearchResultTree(results, files) : null),

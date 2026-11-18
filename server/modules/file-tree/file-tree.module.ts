@@ -5,13 +5,14 @@ import os from 'node:os';
 import mime from 'mime-types';
 import multer from 'multer';
 
-import { projectsDb } from '@/modules/database/index.js';
+import { projectsDb, sessionWorktreesDb } from '@/modules/database/index.js';
 import { createFileContentSearch } from '@/modules/file-tree/file-content-search.js';
 import { runRipgrepJson } from '@/modules/file-tree/file-content-search.adapters.js';
 import { createFileSearchIndex } from '@/modules/file-tree/file-search-index.js';
 import { listFilesWithRipgrep, watchFolderRecursively } from '@/modules/file-tree/file-search-index.adapters.js';
 import { createFileTreeRouter } from '@/modules/file-tree/file-tree.routes.js';
 import { createFileTreeService } from '@/modules/file-tree/file-tree.service.js';
+import { mapFoldersToSessionWorktrees } from '@/modules/worktree-claims/index.js';
 import type {
   FileTreeFileSystem,
   FileTreeLogger,
@@ -99,6 +100,9 @@ const fileTreeServices = createFileTreeService({
   fileIndex: fileSearchIndex,
   contentSearch: createFileContentSearch({ runRipgrep: runRipgrepJson }),
   logger: fileTreeLogger,
+  sessionFolders: {
+    mapFolders: (folders, sessionId) => mapFoldersToSessionWorktrees(folders, sessionWorktreesDb.listBySession(sessionId)),
+  },
 });
 
 const fileUploadMiddleware = multer({

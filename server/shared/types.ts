@@ -253,6 +253,8 @@ export type GatewayEventKind =
   | 'loading_progress'
   | 'protocol_error'
   | 'scheduled_messages_changed'
+  // A chat moved to another worktree; clients showing it read its folders again.
+  | 'session_worktrees_changed'
   // A `chat.steer` no turn could take; the sender sends it another way.
   | 'steer_declined';
 
@@ -1465,6 +1467,46 @@ export type WorktreeClaimsServices = {
   readJob(jobId: string): Promise<GroupWorktreeJob | null>;
   listClaims(sessionId: string): Promise<unknown>;
   release(unitKey: string, suffix: string): Promise<unknown>;
+  getSessionWorktrees(sessionId: string): Promise<SessionWorktree[]>;
+};
+
+/** One repository of a lock unit: its main checkout and the checkout a chat was granted. */
+export type SessionWorktreeCheckout = {
+  repo: string;
+  path: string;
+};
+
+/**
+ * The worktree a chat works in for one lock unit, recorded when the
+ * worktree-lock hook grants it a claim and kept after the lock expires. A
+ * chat with no record for a unit works in its main checkout.
+ */
+export type SessionWorktree = {
+  sessionId: string;
+  unitKey: string;
+  unitName: string;
+  /** '' names the main checkout. */
+  suffix: string;
+  checkouts: SessionWorktreeCheckout[];
+  claimedAt: string;
+  updatedAt: string;
+};
+
+/** A claim as the worktree-lock hook reports it to the app. */
+export type SessionWorktreeClaim = {
+  unitKey: string;
+  unitName: string;
+  suffix: string;
+  checkouts: SessionWorktreeCheckout[];
+};
+
+/** A project folder mapped onto the checkout a chat works in. */
+export type SessionFolder = {
+  /** The folder the chat reads and writes: the worktree variant, or `mainPath` when the chat is on main. */
+  path: string;
+  mainPath: string;
+  suffix: string;
+  unitKey: string | null;
 };
 
 export type SessionTaskStatus = 'pending' | 'in_progress' | 'completed';
@@ -1510,8 +1552,21 @@ export type FileTreeNode = {
   isProjectRoot?: true;
   /** A project folder that is missing on disk; its `children` are empty. */
   isUnavailable?: true;
+  /**
+   * Set on a project-root node when the chat shown works in a worktree of
+   * that folder. `missing` means the worktree folder does not exist and the
+   * node lists the main checkout instead.
+   */
+  worktree?: FileTreeWorktreeInfo;
   /** Absent on a directory whose contents were not listed (below the requested depth). */
   children?: FileTreeNode[];
+};
+
+export type FileTreeWorktreeInfo = {
+  suffix: string;
+  branch: string | null;
+  mainPath: string;
+  missing?: true;
 };
 
 /**
@@ -1694,6 +1749,7 @@ export type FileContentSearchOptions = {
   /** The search stops once this many matching lines were reported. */
   limit: number;
   rootIndexes?: number[];
+  sessionId?: string;
 };
 
 /**
@@ -1746,6 +1802,10 @@ export type FileTreeServiceDependencies = {
   fileIndex: FileTreeFileIndex;
   contentSearch: FileTreeContentSearch;
   logger: FileTreeLogger;
+  /** Maps project folders onto the worktrees a chat works in; absent in deployments without worktree tracking. */
+  sessionFolders?: {
+    mapFolders(folders: string[], sessionId: string): SessionFolder[];
+  };
 };
 
 /**
@@ -1761,9 +1821,14 @@ export type FileTreeServices = {
     suggestions: Array<{ path: string; name: string; type: 'directory' }>;
   }>;
   createWorkspaceFolder(folderPath: string): Promise<{ success: true; path: string }>;
-  readTextFile(projectId: string, filePath: string): Promise<{ content: string; path: string }>;
-  openFile(projectId: string, filePath: string): Promise<{ contentType: string; stream: Readable }>;
-  saveTextFile(projectId: string, filePath: string, content: string): Promise<{
+  /**
+   * Every method takes an optional `sessionId`: the chat whose worktrees the
+   * project's folders are read through (see `SessionFolder`). Without it the
+   * folders are the main checkouts.
+   */
+  readTextFile(projectId: string, filePath: string, sessionId?: string): Promise<{ content: string; path: string }>;
+  openFile(projectId: string, filePath: string, sessionId?: string): Promise<{ contentType: string; stream: Readable }>;
+  saveTextFile(projectId: string, filePath: string, content: string, sessionId?: string): Promise<{
     success: true;
     path: string;
     message: string;
@@ -1774,18 +1839,18 @@ export type FileTreeServices = {
    */
   listProjectFiles(
     projectId: string,
-    options?: { respectGitignore: boolean; depth?: number },
+    options?: { respectGitignore: boolean; depth?: number; sessionId?: string },
   ): Promise<FileTreeNode[]>;
   /** The contents of each directory in `paths`, `depth` levels deep, keyed by the path as requested. */
   listDirectoryChildren(
     projectId: string,
     paths: string[],
-    options: { respectGitignore: boolean; depth: number },
+    options: { respectGitignore: boolean; depth: number; sessionId?: string },
   ): Promise<Record<string, FileTreeNode[]>>;
   searchProjectFiles(
     projectId: string,
     query: string,
-    options: { limit: number; type: 'file' | 'any' },
+    options: { limit: number; type: 'file' | 'any'; sessionId?: string },
   ): Promise<{ results: FileSearchResult[]; truncated: boolean }>;
   /** Searches inside the project's files; matches are reported through `run` while it runs. */
   searchProjectFileContents(
@@ -1799,15 +1864,16 @@ export type FileTreeServices = {
     parentPath: string;
     type: 'file' | 'directory';
     name: string;
+    sessionId?: string;
   }): Promise<{ success: true; path: string; name: string; type: 'file' | 'directory'; message: string }>;
-  renameEntry(input: { projectId: string; oldPath: string; newName: string }): Promise<{
+  renameEntry(input: { projectId: string; oldPath: string; newName: string; sessionId?: string }): Promise<{
     success: true;
     oldPath: string;
     newPath: string;
     newName: string;
     message: string;
   }>;
-  deleteEntry(input: { projectId: string; targetPath: string }): Promise<{
+  deleteEntry(input: { projectId: string; targetPath: string; sessionId?: string }): Promise<{
     success: true;
     path: string;
     type: 'file' | 'directory';
@@ -1819,6 +1885,7 @@ export type FileTreeServices = {
     relativePaths: string[];
     requestedFileCount: number;
     files: FileTreeUploadedFile[];
+    sessionId?: string;
   }): Promise<{
     success: true;
     files: Array<{ name: string; path: string; size: number; mimeType: string }>;

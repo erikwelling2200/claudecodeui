@@ -9,6 +9,8 @@ import { MAX_FILE_UPLOAD_SIZE_BYTES, MAX_FILE_UPLOAD_SIZE_LABEL } from '@/shared
 
 type UseFileTreeUploadOptions = {
   selectedProject: Project | null;
+  // The chat whose worktrees the tree shows; uploads land in those folders.
+  sessionId?: string | null;
   onRefresh: () => void;
   showToast: (message: string, type: 'success' | 'error') => void;
 };
@@ -97,13 +99,14 @@ const buildUploadFormData = (files: File[], targetPath: string) => {
 
 const uploadFormDataWithProgress = (
   projectId: string,
+  sessionId: string | null,
   formData: FormData,
   onProgress: (progress: number) => void,
 ) =>
   new Promise<UploadResponse>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
 
-    xhr.open('POST', api.uploadFilesUrl(projectId));
+    xhr.open('POST', api.uploadFilesUrl(projectId, sessionId));
 
     const token = getStoredAuthToken();
     if (!IS_PLATFORM && token) {
@@ -237,6 +240,7 @@ const collectDroppedFiles = async (dataTransfer: DataTransfer) => {
 
 export const useFileTreeUpload = ({
   selectedProject,
+  sessionId = null,
   onRefresh,
   showToast,
 }: UseFileTreeUploadOptions) => {
@@ -320,6 +324,7 @@ export const useFileTreeUpload = ({
       try {
         const response = await uploadFormDataWithProgress(
           selectedProject.projectId,
+          sessionId,
           buildUploadFormData(files, targetPath),
           (progress) => {
             latestProgress = progress;
@@ -362,6 +367,7 @@ export const useFileTreeUpload = ({
       clearProgressTimer,
       onRefresh,
       scheduleProgressClear,
+      sessionId,
       selectedProject,
       setUploadError,
       showToast,

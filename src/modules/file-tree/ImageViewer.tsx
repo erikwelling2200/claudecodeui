@@ -28,6 +28,7 @@ export default function ImageViewer({ file, onClose }: ImageViewerProps) {
 
         const response = await api.readFileBlob(file.projectId, file.path, {
           signal: controller.signal,
+          sessionId: file.sessionId,
         });
 
         if (!response.ok) {
@@ -56,7 +57,7 @@ export default function ImageViewer({ file, onClose }: ImageViewerProps) {
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [file.projectId, file.path]);
+  }, [file.projectId, file.path, file.sessionId]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">

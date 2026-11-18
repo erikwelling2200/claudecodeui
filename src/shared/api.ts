@@ -190,8 +190,12 @@ export const sessionMessagesUrl = (
     : `${base}${query({ limit, offset: offset ?? 0 })}`;
 };
 
-const fileContentPath = (projectId: string, filePath: string) =>
-  `/api/file-tree/projects/${projectId}/files/content${query({ path: filePath })}`;
+// File-tree requests may name the chat whose worktrees the project's folders
+// are read through; without it the folders are the main checkouts.
+type FileTreeSessionOptions = { sessionId?: string | null };
+
+const fileContentPath = (projectId: string, filePath: string, sessionId?: string | null) =>
+  `/api/file-tree/projects/${projectId}/files/content${query({ path: filePath, sessionId })}`;
 
 // The body fields that address a git request. `folder` is left out for the
 // primary folder so single-folder requests keep their exact former shape.
@@ -319,37 +323,38 @@ export const api = {
   },
 
   // Workspace file tree
-  readFile: (projectId: string, filePath: string) =>
-    get(`/api/file-tree/projects/${projectId}/file${query({ filePath })}`),
+  readFile: (projectId: string, filePath: string, sessionId?: string | null) =>
+    get(`/api/file-tree/projects/${projectId}/file${query({ filePath, sessionId })}`),
   // Raw bytes for a workspace file. The endpoint requires the auth header, so
   // media call sites fetch a blob through here instead of using a bare `src`.
-  readFileBlob: (projectId: string, filePath: string, options: ApiRequestOptions = {}) =>
-    get(fileContentPath(projectId, filePath), options),
-  saveFile: (projectId: string, filePath: string, content: string) =>
-    put(`/api/file-tree/projects/${projectId}/file`, { filePath, content }),
+  readFileBlob: (projectId: string, filePath: string, { sessionId, ...options }: ApiRequestOptions & FileTreeSessionOptions = {}) =>
+    get(fileContentPath(projectId, filePath, sessionId), options),
+  saveFile: (projectId: string, filePath: string, content: string, sessionId?: string | null) =>
+    put(`/api/file-tree/projects/${projectId}/file`, { filePath, content, ...(sessionId ? { sessionId } : {}) }),
   // The project's top level, `depth` directory levels deep; deeper levels come from getFileChildren.
-  getFiles: (projectId: string, depth: number, options: ApiRequestOptions = {}) =>
-    get(`/api/file-tree/projects/${projectId}/files${query({ respectGitignore: true, depth })}`, options),
-  getFileChildren: (projectId: string, paths: string[], depth: number, options: ApiRequestOptions = {}) =>
-    post(`/api/file-tree/projects/${projectId}/files/children`, { paths, depth, respectGitignore: true }, options),
+  getFiles: (projectId: string, depth: number, { sessionId, ...options }: ApiRequestOptions & FileTreeSessionOptions = {}) =>
+    get(`/api/file-tree/projects/${projectId}/files${query({ respectGitignore: true, depth, sessionId })}`, options),
+  getFileChildren: (projectId: string, paths: string[], depth: number, { sessionId, ...options }: ApiRequestOptions & FileTreeSessionOptions = {}) =>
+    post(`/api/file-tree/projects/${projectId}/files/children`, { paths, depth, respectGitignore: true, ...(sessionId ? { sessionId } : {}) }, options),
   searchFiles: (
     projectId: string,
     searchQuery: string,
-    { limit, type }: { limit: number; type: 'file' | 'any' },
+    { limit, type, sessionId }: { limit: number; type: 'file' | 'any' } & FileTreeSessionOptions,
     options: ApiRequestOptions = {},
-  ) => get(`/api/file-tree/projects/${projectId}/files/search${query({ q: searchQuery, limit, type })}`, options),
+  ) => get(`/api/file-tree/projects/${projectId}/files/search${query({ q: searchQuery, limit, type, sessionId })}`, options),
   // An EventSource URL: matches stream in while the search runs. A glob can hold
   // commas (`*.{cs,ts}`), so each one is its own `glob` parameter. `rootIndexes`
   // absent searches every project folder.
   searchFileContentsUrl: (
     projectId: string,
     searchQuery: string,
-    { regex, globs, rootIndexes }: { regex: boolean; globs: string[]; rootIndexes?: number[] },
+    { regex, globs, rootIndexes, sessionId }: { regex: boolean; globs: string[]; rootIndexes?: number[] } & FileTreeSessionOptions,
   ) =>
     `/api/file-tree/projects/${projectId}/files/search-content${query({
       q: searchQuery,
       regex,
       roots: rootIndexes?.join(','),
+      sessionId,
       token: getStoredAuthToken(),
     })}${globs.map((glob) => `&glob=${encodeURIComponent(glob)}`).join('')}`,
 
@@ -368,18 +373,18 @@ export const api = {
   // File operations
   createFile: (
     projectId: string,
-    { path, type, name }: { path: string; type: string; name: string },
-  ) => post(`/api/file-tree/projects/${projectId}/files/create`, { path, type, name }),
+    { path, type, name, sessionId }: { path: string; type: string; name: string } & FileTreeSessionOptions,
+  ) => post(`/api/file-tree/projects/${projectId}/files/create`, { path, type, name, ...(sessionId ? { sessionId } : {}) }),
 
-  renameFile: (projectId: string, { oldPath, newName }: { oldPath: string; newName: string }) =>
-    put(`/api/file-tree/projects/${projectId}/files/rename`, { oldPath, newName }),
+  renameFile: (projectId: string, { oldPath, newName, sessionId }: { oldPath: string; newName: string } & FileTreeSessionOptions) =>
+    put(`/api/file-tree/projects/${projectId}/files/rename`, { oldPath, newName, ...(sessionId ? { sessionId } : {}) }),
 
-  deleteFile: (projectId: string, { path, type }: { path: string; type: string }) =>
-    del(`/api/file-tree/projects/${projectId}/files`, { path, type }),
+  deleteFile: (projectId: string, { path, type, sessionId }: { path: string; type: string } & FileTreeSessionOptions) =>
+    del(`/api/file-tree/projects/${projectId}/files`, { path, type, ...(sessionId ? { sessionId } : {}) }),
 
   // Uploads with a progress bar go through XMLHttpRequest, which needs the URL.
-  uploadFilesUrl: (projectId: string) =>
-    `/api/file-tree/projects/${encodeURIComponent(projectId)}/files/upload`,
+  uploadFilesUrl: (projectId: string, sessionId?: string | null) =>
+    `/api/file-tree/projects/${encodeURIComponent(projectId)}/files/upload${query({ sessionId })}`,
 
   // Browse filesystem for project suggestions
   browseFilesystem: (dirPath: string | null = null) =>
@@ -478,6 +483,8 @@ export const api = {
     job: (jobId: string) => get(`/api/worktree-claims/jobs/${encodeURIComponent(jobId)}`),
     claims: (sessionId: string) => get(`/api/worktree-claims/claims${query({ session: sessionId })}`),
     release: (unitKey: string, suffix: string) => post('/api/worktree-claims/release', { unit: unitKey, suffix }),
+    // The worktrees a chat works in, kept after its locks expire.
+    sessionWorktrees: (sessionId: string) => get(`/api/worktree-claims/session-worktrees${query({ session: sessionId })}`),
   },
 
   sessionTasks: {

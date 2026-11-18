@@ -40,6 +40,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
   // the fallback to `projectPath` preserves older callers that didn't yet
   // propagate the identifier.
   const fileProjectId = file.projectId ?? projectPath;
+  const fileSessionId = file.sessionId ?? null;
   const filePath = file.path;
   const fileName = file.name;
   const fileDiffNewString = file.diffInfo?.new_string;
@@ -97,7 +98,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
           throw new Error('Missing project identifier');
         }
 
-        const response = await api.readFile(fileProjectId, filePath);
+        const response = await api.readFile(fileProjectId, filePath, fileSessionId);
         // Read through readApiJson so the API's own explanation reaches the
         // pane — a directory, a path outside the project root, a missing file.
         // The bare status showed all of those as an opaque "403 Forbidden".
@@ -121,7 +122,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
     };
 
     loadFileContent();
-  }, [file.diffInfo, file.name, fileDiffNewString, fileDiffOldString, fileName, filePath, fileProjectId]);
+  }, [file.diffInfo, file.name, fileDiffNewString, fileDiffOldString, fileName, filePath, fileProjectId, fileSessionId]);
 
   const handleSave = useCallback(async () => {
     // Preview-only and binary files have no editable text buffer; never write
@@ -141,7 +142,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
         throw new Error('Missing project identifier');
       }
 
-      const response = await api.saveFile(fileProjectId, filePath, content);
+      const response = await api.saveFile(fileProjectId, filePath, content, fileSessionId);
 
       if (!response.ok) {
         const contentType = response.headers.get('content-type');

@@ -381,8 +381,10 @@ function createRealFileSystemService(
   projectRoot: string,
   workspaceRoot = projectRoot,
   additionalFolders: string[] = [],
+  sessionFolders?: FileTreeServiceDependencies['sessionFolders'],
 ): FileTreeServices {
   return createFileTreeService({
+    ...(sessionFolders ? { sessionFolders } : {}),
     fileSystem: {
       access: (candidatePath) => fsPromises.access(candidatePath),
       stat: (candidatePath) => fsPromises.stat(candidatePath),
@@ -740,5 +742,107 @@ test('files can be uploaded onto an extra project folder', async () => {
     assert.equal(result.uploadedCount, 1);
     assert.equal(result.targetPath, shared);
     assert.equal(await fsPromises.readFile(path.join(shared, 'upload.txt'), 'utf8'), 'uploaded');
+  });
+});
+
+test('a relative path is found in whichever project folder has it', async () => {
+  await withMultiFolderProject(async ({ primary, shared, service }) => {
+    // Quoted by an agent relative to the folder it worked in, not the primary.
+    const read = await service.readTextFile('project-1', 'shared.txt');
+    assert.equal(read.path, path.join(shared, 'shared.txt'));
+    assert.equal(read.content, 'shared');
+
+    // Saving over it lands on the file that was read, not on a copy in the primary.
+    const saved = await service.saveTextFile('project-1', 'shared.txt', 'changed');
+    assert.equal(saved.path, path.join(shared, 'shared.txt'));
+    assert.equal(await fsPromises.readFile(path.join(shared, 'shared.txt'), 'utf8'), 'changed');
+
+    // A primary file still wins over a same-named one elsewhere, and a file nowhere is still not found.
+    assert.equal((await service.readTextFile('project-1', 'src/index.ts')).path, path.join(primary, 'src', 'index.ts'));
+    await assert.rejects(service.readTextFile('project-1', 'nowhere.txt'), assertFileTreeError('ENOENT', 404));
+  });
+});
+
+/**
+ * A chat parked in the `alt` worktree of the primary folder: the folders it
+ * reads through are `primary-alt` (a linked worktree on branch `feature`), while
+ * `shared` stays on main. The chat `chat-gone` names a worktree that does not exist.
+ */
+async function withWorktreeProject(
+  runTest: (layout: { primary: string; primaryAlt: string; shared: string; service: FileTreeServices }) => Promise<void>,
+): Promise<void> {
+  const base = await fsPromises.realpath(await fsPromises.mkdtemp(path.join(os.tmpdir(), 'file-tree-worktrees-')));
+  const primary = path.join(base, 'primary');
+  const primaryAlt = path.join(base, 'primary-alt');
+  const shared = path.join(base, 'shared');
+  const gitDirectory = path.join(primary, '.git', 'worktrees', 'primary-alt');
+  await fsPromises.mkdir(gitDirectory, { recursive: true });
+  await fsPromises.mkdir(primaryAlt, { recursive: true });
+  await fsPromises.mkdir(shared, { recursive: true });
+  await fsPromises.writeFile(path.join(primary, 'main.txt'), 'main');
+  await fsPromises.writeFile(path.join(primaryAlt, 'alt.txt'), 'alt');
+  await fsPromises.writeFile(path.join(primaryAlt, '.git'), `gitdir: ${gitDirectory}\n`);
+  await fsPromises.writeFile(path.join(gitDirectory, 'HEAD'), 'ref: refs/heads/feature\n');
+  await fsPromises.writeFile(path.join(shared, 'shared.txt'), 'shared');
+
+  const sessionFolders: FileTreeServiceDependencies['sessionFolders'] = {
+    mapFolders: (folders, sessionId) => folders.map((folder) => {
+      if (folder !== primary) return { path: folder, mainPath: folder, suffix: '', unitKey: null };
+      const suffix = sessionId === 'chat-gone' ? 'gone' : 'alt';
+      return { path: path.join(base, `primary-${suffix}`), mainPath: folder, suffix, unitKey: `repo:${primary}` };
+    }),
+  };
+  try {
+    await runTest({ primary, primaryAlt, shared, service: createRealFileSystemService(primary, primary, [shared], sessionFolders) });
+  } finally {
+    await fsPromises.rm(base, { recursive: true, force: true });
+  }
+}
+
+test('with a chat parked in a worktree, the tree lists that worktree under the main folder name', async () => {
+  await withWorktreeProject(async ({ primary, primaryAlt, shared, service }) => {
+    const tree = await service.listProjectFiles('project-1', { respectGitignore: false, depth: 2, sessionId: 'chat-alt' });
+
+    assert.deepEqual(
+      tree.map((node) => ({ name: node.name, path: node.path, worktree: node.worktree })),
+      [
+        { name: 'primary', path: primaryAlt, worktree: { suffix: 'alt', branch: 'feature', mainPath: primary } },
+        { name: 'shared', path: shared, worktree: undefined },
+      ],
+    );
+    assert.deepEqual(tree[0].children?.map((node) => node.name), ['alt.txt']);
+
+    // Without a chat, the same project reads the main checkouts as before.
+    const plain = await service.listProjectFiles('project-1', { respectGitignore: false, depth: 2 });
+    assert.equal(plain[0].path, primary);
+    assert.equal(plain[0].worktree, undefined);
+  });
+});
+
+test('with a chat parked in a worktree, reads and writes go to that worktree', async () => {
+  await withWorktreeProject(async ({ primary, primaryAlt, service }) => {
+    assert.equal((await service.readTextFile('project-1', 'alt.txt', 'chat-alt')).path, path.join(primaryAlt, 'alt.txt'));
+    const saved = await service.saveTextFile('project-1', 'new.txt', 'new', 'chat-alt');
+    assert.equal(saved.path, path.join(primaryAlt, 'new.txt'));
+    // The worktree folder is a project folder for this chat, and the main checkout is not.
+    assert.equal((await service.readTextFile('project-1', path.join(primaryAlt, 'alt.txt'), 'chat-alt')).content, 'alt');
+    await assert.rejects(
+      service.saveTextFile('project-1', path.join(primary, 'main.txt'), 'x', 'chat-alt'),
+      assertFileTreeError('PATH_OUTSIDE_PROJECT'),
+    );
+    // Without the chat, the worktree is outside the project.
+    await assert.rejects(
+      service.saveTextFile('project-1', path.join(primaryAlt, 'alt.txt'), 'x'),
+      assertFileTreeError('PATH_OUTSIDE_PROJECT'),
+    );
+  });
+});
+
+test('a worktree that does not exist falls back to the main checkout, marked missing', async () => {
+  await withWorktreeProject(async ({ primary, service }) => {
+    const tree = await service.listProjectFiles('project-1', { respectGitignore: false, depth: 1, sessionId: 'chat-gone' });
+    assert.equal(tree[0].path, primary);
+    assert.deepEqual(tree[0].worktree, { suffix: 'gone', branch: null, mainPath: primary, missing: true });
+    assert.deepEqual(tree[0].children?.map((node) => node.name), ['main.txt']);
   });
 });

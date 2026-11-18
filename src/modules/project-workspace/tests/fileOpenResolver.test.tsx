@@ -75,6 +75,16 @@ test('partial references still match against the tree', async () => {
   assert.equal(second.onFileOpen.mock.calls[0][0], `${ROOT}/src/foo.ts`);
 });
 
+test('the search runs in the worktrees of the chat the reference came from', async () => {
+  searchFiles.mockReset();
+  searchFiles.mockImplementation(answerSearch);
+  const onFileOpen = vi.fn();
+  const { result } = renderHook(() => useFileOpenResolver(project, onFileOpen, 'chat-1'));
+  result.current('src/foo.ts');
+  await waitFor(() => assert.equal(onFileOpen.mock.calls.length, 1));
+  assert.equal(searchFiles.mock.calls[0][2].sessionId, 'chat-1');
+});
+
 test('diffInfo and line survive the absolute-path shortcut', async () => {
   const { resolve, onFileOpen } = setup();
   const diffInfo = { old_string: 'a', new_string: 'b' };
