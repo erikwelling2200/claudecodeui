@@ -144,7 +144,7 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
   // The organization's total includes this app's own key spend, so it replaces the local count once read.
   const org = credit?.org;
   if (!usage || (usage.limits.length === 0 && !billing?.keySource && !org)) return null;
-  const spendToday = org ? t('usage.orgSpendToday', { amount: formatUsd(org.today) }) : t('usage.apiSpendToday', { amount: formatUsd(billing?.spend.today ?? 0) });
+  const spendToday = org ? t('usage.orgSpendToday', { amount: `${formatUsd(org.today)}${org.todayUnpriced ? '+' : ''}` }) : t('usage.apiSpendToday', { amount: formatUsd(billing?.spend.today ?? 0) });
   const cycleSpend = formatUsd(org ? org.cycle : billing?.spend.cycle ?? 0);
   const since = credit ? formatCreditCycleDay(credit.cycleStart) : '';
   const spendCycle = credit?.amount

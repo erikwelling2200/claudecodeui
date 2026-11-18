@@ -1513,7 +1513,7 @@ export type ClaudeCreditStatus = {
   renewalDay: number;
   amount: number | null;
   cycleStart: number;
-  org: { today: number; cycle: number; fetchedAt: number } | null;
+  org: { today: number; cycle: number; todayUnpriced: boolean; fetchedAt: number } | null;
   error: string | null;
 };
 
