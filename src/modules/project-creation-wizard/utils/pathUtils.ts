@@ -12,16 +12,6 @@ export const shouldShowGithubAuthentication = (githubUrl: string): boolean =>
 export const isCloneWorkflow = (githubUrl: string): boolean =>
   githubUrl.trim().length > 0;
 
-export const getSuggestionRootPath = (inputPath: string): string => {
-  const trimmedPath = inputPath.trim();
-  const lastSeparatorIndex = Math.max(trimmedPath.lastIndexOf('/'), trimmedPath.lastIndexOf('\\'));
-  if (lastSeparatorIndex === 2 && /^[A-Za-z]:/.test(trimmedPath)) {
-    return `${trimmedPath.slice(0, 2)}\\`;
-  }
-
-  return lastSeparatorIndex > 0 ? trimmedPath.slice(0, lastSeparatorIndex) : '~';
-};
-
 // Handles root edge cases for Unix-like and Windows paths.
 export const getParentPath = (currentPath: string): string | null => {
   if (currentPath === '~' || currentPath === '/' || WINDOWS_DRIVE_PATTERN.test(currentPath)) {

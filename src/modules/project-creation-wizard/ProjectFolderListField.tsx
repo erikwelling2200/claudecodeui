@@ -34,8 +34,7 @@ export default function ProjectFolderListField({
 
       <div className="space-y-2">
         {folders.map((folder, index) => (
-          // Rows have no identity besides their position; a removal re-keys the
-          // later rows, which only resets their autocomplete dropdowns.
+          // Rows have no identity besides their position.
           <div key={index} className="flex items-start gap-2">
             <div className="flex-1">
               <WorkspacePathField
