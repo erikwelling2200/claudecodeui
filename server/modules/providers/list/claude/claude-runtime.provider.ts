@@ -481,6 +481,8 @@ function resolveToolApproval(requestId: string, decision: ToolApprovalDecision) 
  * Claude Code turns the Artifact tools off for SDK-driven sessions unless
  * CLAUDE_CODE_ARTIFACT is set, so a session continued from this UI would lose them.
  * Default it on; a host value (e.g. CLAUDE_CODE_ARTIFACT=0) still wins.
+ * The same holds for the other defaults: the todo/task tools, which newer models only get
+ * with CLAUDE_CODE_ENABLE_TODO_TOOLS, no self-updating CLI, and the 1-hour prompt cache.
  *
  * @param {NodeJS.ProcessEnv} [hostEnv] - Environment to forward, `process.env` by default
  * @returns {NodeJS.ProcessEnv} Environment for the spawned CLI
@@ -488,6 +490,9 @@ function resolveToolApproval(requestId: string, decision: ToolApprovalDecision) 
 export function buildClaudeSdkEnv(hostEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return {
     CLAUDE_CODE_ARTIFACT: '1',
+    CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
+    DISABLE_AUTOUPDATER: '1',
+    ENABLE_PROMPT_CACHING_1H: '1',
     ...hostEnv,
     CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(BG_WAIT_CEILING_MS),
   };
