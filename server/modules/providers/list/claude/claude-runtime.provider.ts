@@ -18,7 +18,7 @@ import os from 'os';
 import path from 'path';
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { ElicitationRequest, ElicitationResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 import { permissionExplainerService } from '@/modules/providers/services/permission-explainer.service.js';
 
@@ -314,6 +314,44 @@ function approvedRetryInstruction(toolName: string, input: unknown): string {
   return `The user approved the ${toolName} call the auto mode classifier just refused. Run that call again now with exactly the`
     + ` same input${quoted ? ', this command' : ''}, and do not work around it. Only the identical call is approved: a changed one`
     + ` goes back to the classifier.${quoted}`;
+}
+
+// An MCP server's request for input travels as a permission request under this
+// name. It is not a tool the model can call: the name routes the request to the
+// client's McpElicitation panel and keys it in the pending-approval list, so a
+// page refresh replays it like any other prompt.
+const MCP_ELICITATION_TOOL_NAME = 'McpElicitation';
+
+/**
+ * Turns the client's answer to an McpElicitation request into the MCP result.
+ * The panel accepts with `updatedInput.content` and declines with a denial. No
+ * answer at all (an abort, a closed run) is `cancel`, never an invented accept.
+ */
+function toElicitationResult(decision: ToolApprovalDecision, mode: ElicitationRequest['mode']): ElicitationResult {
+  if (!decision || decision.cancelled) {
+    return { action: 'cancel' };
+  }
+  if (!decision.allow) {
+    return { action: 'decline' };
+  }
+  // A URL request is accepted without content: accepting is consent to open
+  // the page, and the server learns the outcome from the page itself.
+  if (mode === 'url') {
+    return { action: 'accept' };
+  }
+  const content = (decision.updatedInput as AnyRecord | undefined)?.content;
+  const fields: Record<string, string | number | boolean | string[]> = {};
+  if (content && typeof content === 'object' && !Array.isArray(content)) {
+    for (const [key, value] of Object.entries(content as AnyRecord)) {
+      // Form fields are flat primitives, or string lists for multi-select.
+      const isPrimitive = typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+      const isStringList = Array.isArray(value) && value.every((item) => typeof item === 'string');
+      if (isPrimitive || isStringList) {
+        fields[key] = value as string | number | boolean | string[];
+      }
+    }
+  }
+  return { action: 'accept', content: fields };
 }
 
 // Ultracode is a session-scoped setting rather than an SDK effort level: it pairs xhigh
@@ -1784,6 +1822,66 @@ async function queryClaudeSDK(
         }]
       }]
     };
+
+    // An MCP server asking the person for input mid-call ("elicitation"). The
+    // CLI declares form and URL elicitation support to every server, and without
+    // this callback the SDK answers each request with `decline` itself — the
+    // server is told a person refused when nobody was shown anything. The
+    // request takes the permission round trip so it reaches every attached tab,
+    // survives a refresh and raises a notification. There is no timeout here:
+    // the server keeps its own, and an abort arrives through the signal.
+    // An unattended run (the agent API, commit-message generation) has nobody to
+    // show the form to, so it leaves the callback unset: the SDK then declines
+    // at once, rather than the run waiting on an answer that cannot come.
+    if (!options.unattended) {
+      sdkOptions.onElicitation = async (request: ElicitationRequest, elicitationOptions: { signal: AbortSignal }) => {
+        // The form and its answer stay with the turn that asked.
+        const writer = turnWriter;
+        const requestId = createRequestId();
+        const input = {
+          serverName: request.serverName,
+          message: request.message,
+          mode: request.mode ?? 'form',
+          requestedSchema: request.requestedSchema,
+          url: request.url,
+          elicitationId: request.elicitationId,
+          title: request.title,
+          displayName: request.displayName,
+          description: request.description,
+        };
+        const serverLabel = request.displayName || request.serverName;
+        writer.send(createNormalizedMessage({ kind: 'permission_request', requestId, toolName: MCP_ELICITATION_TOOL_NAME, input, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
+        emitNotification(notificationEvent({
+          provider: 'claude',
+          sessionId: sessionId || capturedSessionId || null,
+          kind: 'action_required',
+          code: 'agent.notification',
+          meta: { message: `${serverLabel} asks: ${request.message}`, sessionName: turnSessionSummary },
+          severity: 'warning',
+          requiresUserAction: true,
+          dedupeKey: `claude:elicitation:${sessionId || capturedSessionId || 'none'}:${requestId}`
+        }));
+
+        const decision = await waitForToolApproval(requestId, {
+          timeoutMs: 0,
+          signal: elicitationOptions?.signal,
+          metadata: {
+            _sessionId: sessionId || capturedSessionId || null,
+            _toolName: MCP_ELICITATION_TOOL_NAME,
+            _input: input,
+            _receivedAt: new Date(),
+          },
+          onCancel: (reason: string) => {
+            writer.send(createNormalizedMessage({ kind: 'permission_cancelled', requestId, reason, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
+          }
+        });
+        if (decision && !decision.cancelled) {
+          // Same as canUseTool: retract the answered prompt on every attached tab.
+          writer.send(createNormalizedMessage({ kind: 'permission_resolved', requestId, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
+        }
+        return toElicitationResult(decision, request.mode);
+      };
+    }
 
     // `bypassPermissions` settles approval without ever reaching this
     // callback, and in auto mode the classifier answers most calls before it.
