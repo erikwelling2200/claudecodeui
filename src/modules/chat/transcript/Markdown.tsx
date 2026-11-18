@@ -8,6 +8,7 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
 import { useTranslation } from 'react-i18next';
 
 import { MermaidDiagram } from '@/modules/code-editor';
+import { ChatReference } from '@/modules/chat/transcript/ChatReference';
 import { MarkdownImage } from '@/modules/chat/transcript/MarkdownImage';
 import { normalizeInlineCodeFences } from '@/modules/chat/utils/chatFormatting';
 import { normalizeLatexDelimiters } from '@/modules/chat/utils/latexDelimiters';
@@ -124,6 +125,41 @@ const childrenToText = (children: React.ReactNode): string => {
   return '';
 };
 
+// A Claude session id. Bare in prose it must stand alone, so the id segment of a path is not taken for a chat.
+const CHAT_ID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const CHAT_ID_PATTERN = new RegExp(`^${CHAT_ID_SOURCE}$`, 'i');
+const CHAT_ID_IN_TEXT_PATTERN = new RegExp(`(?<![\\w\\\\/.:-])${CHAT_ID_SOURCE}(?![\\w\\\\/-]|\\.\\w)`, 'gi');
+const CHAT_ID_PROBE = new RegExp(CHAT_ID_SOURCE, 'i');
+
+type MdastNode = { type: string; value?: string; children?: MdastNode[]; data?: Record<string, unknown> };
+
+// Wraps each bare chat id in a `chat-reference` element, which the components map renders as ChatReference.
+const remarkChatReferences = () => (tree: MdastNode) => {
+  const visit = (node: MdastNode) => {
+    if (!node.children || node.type === 'link' || node.type === 'linkReference') {
+      return;
+    }
+    node.children = node.children.flatMap((child) => {
+      if (child.type !== 'text' || !child.value) {
+        visit(child);
+        return [child];
+      }
+      const parts: MdastNode[] = [];
+      let last = 0;
+      for (const match of child.value.matchAll(CHAT_ID_IN_TEXT_PATTERN)) {
+        const start = match.index ?? 0;
+        if (start > last) parts.push({ type: 'text', value: child.value.slice(last, start) });
+        parts.push({ type: 'chatReference', data: { hName: 'chat-reference' }, children: [{ type: 'text', value: match[0] }] });
+        last = start + match[0].length;
+      }
+      if (last === 0) return [child];
+      if (last < child.value.length) parts.push({ type: 'text', value: child.value.slice(last) });
+      return parts;
+    });
+  };
+  visit(tree);
+};
+
 // The only delimiter `remark-math` recognizes with `singleDollarTextMath` off.
 // `\(…\)` and `\[…\]` are already rewritten to `$$` by normalizeLatexDelimiters,
 // so this one probe covers both notations.
@@ -174,7 +210,7 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
   }
 
   if (shouldInline) {
-    return (
+    const code = (
       <code
         className={`whitespace-pre-wrap break-words rounded-md border border-border/70 bg-muted px-1.5 py-0.5 font-mono text-[0.875em] text-foreground ${className || ''
           }`}
@@ -183,6 +219,7 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
         {children}
       </code>
     );
+    return !insideLink && CHAT_ID_PATTERN.test(raw.trim()) ? <ChatReference chatId={raw.trim()} fallback={code} /> : code;
   }
 
   const match = /language-(\w+)/.exec(className || '');
@@ -313,6 +350,9 @@ const markdownComponents = {
   // Workspace image paths are fetched through the authenticated files route;
   // a bare <img src> would resolve against the web origin and 404.
   img: MarkdownImage,
+  'chat-reference': ({ children }: { children?: React.ReactNode }) => (
+    <ChatReference chatId={childrenToText(children)} fallback={children} />
+  ),
   // Fenced/indented code arrives as <pre><code>. Re-render the child CodeBlock
   // with `forceBlock` so it always gets the block treatment (react-markdown v9+
   // no longer passes an `inline` flag), and skip the outer <pre> so Tailwind
@@ -372,6 +412,7 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
   // render, and almost no assistant message contains math. Only wire the two
   // plugins up when the text has a delimiter they could act on.
   const hasMath = useMemo(() => MATH_DELIMITER.test(content), [content]);
+  const hasChatId = useMemo(() => CHAT_ID_PROBE.test(content), [content]);
   const remarkPlugins = useMemo(
     () => {
       const plugins: unknown[] = [remarkGfm];
@@ -381,9 +422,12 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
       if (breaks) {
         plugins.push(remarkBreaks);
       }
+      if (hasChatId) {
+        plugins.push(remarkChatReferences);
+      }
       return plugins as any;
     },
-    [breaks, hasMath],
+    [breaks, hasMath, hasChatId],
   );
   const rehypePlugins = useMemo(() => (hasMath ? [rehypeKatex] : EMPTY_PLUGINS), [hasMath]);
   const { openFileInEditor, openDirectory } = usePaletteOps();
