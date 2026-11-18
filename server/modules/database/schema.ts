@@ -263,6 +263,30 @@ CREATE TABLE IF NOT EXISTS session_drafts (
 `;
 
 /**
+ * The worktree a chat works in, per lock unit (a lockstep group or a single
+ * repository), as the worktree-lock hook reports each claim. A chat without a
+ * row for a unit works in that unit's main checkout. The row outlives the lock:
+ * the chat keeps reading and writing in that worktree after its lock expires.
+ *
+ * \`checkouts_json\` lists the main checkout path of every repository of the
+ * unit together with the checkout the chat was granted, as the hook computed it
+ * — so the app never has to repeat the hook's worktree-naming rules.
+ */
+export const SESSION_WORKTREES_TABLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS session_worktrees (
+    session_id TEXT NOT NULL,
+    unit_key TEXT NOT NULL,
+    unit_name TEXT NOT NULL,
+    suffix TEXT NOT NULL,
+    checkouts_json TEXT NOT NULL,
+    claimed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (session_id, unit_key),
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+);
+`;
+
+/**
  * Provider sessions an app session has moved off, and must never move back to.
  *
  * Editing a message on a provider that cannot resume a transcript partway
@@ -356,6 +380,8 @@ ON provider_models(provider, sort_order, id);
 ${USER_PREFERENCES_TABLE_SCHEMA_SQL}
 
 ${SESSION_DRAFTS_TABLE_SCHEMA_SQL}
+
+${SESSION_WORKTREES_TABLE_SCHEMA_SQL}
 
 ${SUPERSEDED_PROVIDER_SESSIONS_TABLE_SCHEMA_SQL}
 

@@ -12,6 +12,11 @@ import {
   readProjectLockstepGroups,
   saveProjectLockstepGroups,
 } from '@/modules/worktree-claims/services/lockstep-groups.service.js';
+import {
+  getSessionWorktrees,
+  recordSessionWorktreeClaims,
+} from '@/modules/worktree-claims/services/session-worktrees.service.js';
+import { readUnitKey } from '@/modules/worktree-claims/services/unit-keys.js';
 import { createWorktreeClaimsRouter } from '@/modules/worktree-claims/worktree-claims.routes.js';
 
 function projectFolders(projectId: string): string[] {
@@ -20,14 +25,6 @@ function projectFolders(projectId: string): string[] {
     throw new AppError(`Unable to resolve project "${projectId}"`, { code: 'PROJECT_NOT_FOUND', statusCode: 404 });
   }
   return folders;
-}
-
-/** `group:<name>` / `repo:<path>`, as lock files and claims key a unit; it survives renaming the group. */
-function readUnitKey(unitKey: string): string {
-  if (!/^(group|repo):.+$/.test(unitKey)) {
-    throw new AppError(`"${unitKey}" is not a worktree unit key`, { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
-  }
-  return unitKey;
 }
 
 // Locks are keyed by the provider's session id, which a chat started in the app only gets once its CLI reports it.
@@ -57,8 +54,14 @@ const worktreeClaimsServices: WorktreeClaimsServices = {
     }
     return readFindWorktreeJob(jobId);
   },
-  listClaims: (sessionId) => runFindWorktree(['claims', '--session', lockSessionId(sessionId)]),
+  // The sidebar polls this while a chat is open, which catches a claim the hook could not report.
+  async listClaims(sessionId) {
+    const payload = await runFindWorktree(['claims', '--session', lockSessionId(sessionId)]) as { claims?: unknown };
+    recordSessionWorktreeClaims(sessionId, payload?.claims);
+    return payload;
+  },
   release: (unitKey, suffix) => runFindWorktree(['release', '--force', '--key', readUnitKey(unitKey), '--suffix', suffix]),
+  getSessionWorktrees: async (sessionId) => getSessionWorktrees(sessionId),
 };
 
 /**

@@ -6,6 +6,8 @@ import type { CodeEditorDiffInfo, CodeEditorFile, CodeEditorTab, Project } from 
 
 type UseEditorSidebarOptions = {
   selectedProject: Project | null;
+  // The chat a file is opened from; its worktrees are where a relative path is read and saved.
+  sessionId?: string | null;
   isMobile: boolean;
   initialWidth?: number;
 };
@@ -21,6 +23,7 @@ const getTabKey = (filePath: string, projectId: string | undefined, projectPath:
 
 export const useEditorSidebar = ({
   selectedProject,
+  sessionId = null,
   isMobile,
   initialWidth = 600,
 }: UseEditorSidebarOptions) => {
@@ -92,6 +95,7 @@ export const useEditorSidebar = ({
         // DB projectId is forwarded to the editor so it can read/save files
         // via `/api/file-tree/projects/:projectId/file` endpoints.
         projectId,
+        sessionId,
         diffInfo,
       };
 
@@ -116,7 +120,7 @@ export const useEditorSidebar = ({
       setEditorHidden(false);
       return true;
     },
-    [selectedProject?.projectId, selectedProject?.path, t],
+    [selectedProject?.projectId, selectedProject?.path, sessionId, t],
   );
 
   const handleActivateTab = useCallback((tabKey: string) => {

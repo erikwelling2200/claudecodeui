@@ -51,6 +51,8 @@ const SEARCH_LIMIT = 1000;
 export function useFileOpenResolver(
   selectedProject: Project | null | undefined,
   onFileOpen: OnFileOpen,
+  // The chat the reference came from: the search runs in the worktrees that chat works in.
+  sessionId: string | null = null,
 ): OnFileOpen {
   const projectId = selectedProject?.projectId;
   // The search matches the reference as a path when it holds a slash, otherwise by name,
@@ -61,7 +63,7 @@ export function useFileOpenResolver(
     }
     try {
       const searchQuery = ref.replace(/^\.\//, '').replace(/^\/+/, '');
-      const response = await api.searchFiles(projectId, searchQuery, { limit: SEARCH_LIMIT, type: 'file' });
+      const response = await api.searchFiles(projectId, searchQuery, { limit: SEARCH_LIMIT, type: 'file', sessionId });
       if (!response.ok) {
         return [];
       }
@@ -70,7 +72,7 @@ export function useFileOpenResolver(
     } catch {
       return [];
     }
-  }, [projectId]);
+  }, [projectId, sessionId]);
 
   return useCallback(
     (filePath: string, diffInfo?: any, line?: number | null) => {

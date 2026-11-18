@@ -756,7 +756,9 @@ type MessageKind =
   // A message sent mid-turn that was dropped before the CLI took it.
   | 'steer_cancelled'
   // Remote Control started or stopped in the session's process, or failed to start.
-  | 'remote_control';
+  | 'remote_control'
+  // A chat moved to another worktree; the file tree and editor read its folders again.
+  | 'session_worktrees_changed';
 
 // ---------------------------
 
@@ -975,6 +977,8 @@ export type CodeEditorFile = {
   // DB projectId; used by the editor to build `/api/file-tree/projects/:projectId/file`
   // URLs for reading and saving content.
   projectId?: string;
+  // The chat the file was opened from, so a relative path resolves in the worktree that chat works in.
+  sessionId?: string | null;
   diffInfo?: CodeEditorDiffInfo | null;
   [key: string]: unknown;
 };
@@ -1053,7 +1057,28 @@ export type FileTreeNode = {
   isProjectRoot?: boolean;
   // Set on a top-level folder node whose folder no longer exists on disk.
   isUnavailable?: boolean;
+  // Set on a top-level folder node when the chat shown works in a worktree of that folder.
+  worktree?: FileTreeWorktreeInfo;
   [key: string]: unknown;
+};
+
+/** The worktree a project-root node stands in for; `missing` means it does not exist and the main checkout is listed. */
+export type FileTreeWorktreeInfo = {
+  suffix: string;
+  branch: string | null;
+  mainPath: string;
+  missing?: boolean;
+};
+
+/** The worktree a chat works in for one lock unit (a lockstep group or a single repository), as the server records it. */
+export type SessionWorktree = {
+  sessionId: string;
+  unitKey: string;
+  unitName: string;
+  suffix: string;
+  checkouts: Array<{ repo: string; path: string }>;
+  claimedAt: string;
+  updatedAt: string;
 };
 
 /** One match of the server's project file search; `relativePath` is relative to `rootPath` and uses `/`. */
@@ -1120,6 +1145,7 @@ export type FileTreeImageSelection = {
   projectPath?: string;
   // DB projectId; used by ImageViewer to build the raw content URL.
   projectId: string;
+  sessionId?: string | null;
 };
 
 

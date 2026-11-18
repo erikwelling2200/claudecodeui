@@ -21,6 +21,8 @@ export type DeleteConfirmation = {
 
 export type UseFileTreeOperationsOptions = {
   selectedProject: Project | null;
+  // The chat whose worktrees the tree shows; every operation acts in those folders.
+  sessionId?: string | null;
   onRefresh: () => void;
   showToast: (message: string, type: 'success' | 'error') => void;
 };
@@ -62,6 +64,7 @@ export type UseFileTreeOperationsResult = {
 
 export function useFileTreeOperations({
   selectedProject,
+  sessionId = null,
   onRefresh,
   showToast,
 }: UseFileTreeOperationsOptions): UseFileTreeOperationsResult {
@@ -128,6 +131,7 @@ export function useFileTreeOperations({
       const response = await api.renameFile(selectedProject.projectId, {
         oldPath: renamingItem.path,
         newName: renameValue,
+        sessionId,
       });
 
       if (!response.ok) {
@@ -143,7 +147,7 @@ export function useFileTreeOperations({
     } finally {
       setOperationLoading(false);
     }
-  }, [renamingItem, renameValue, selectedProject, validateFilename, showToast, t, onRefresh, handleCancelRename]);
+  }, [renamingItem, renameValue, selectedProject, sessionId, validateFilename, showToast, t, onRefresh, handleCancelRename]);
 
   // Delete operations
   const handleStartDelete = useCallback((item: FileTreeNode) => {
@@ -163,6 +167,7 @@ export function useFileTreeOperations({
       const response = await api.deleteFile(selectedProject.projectId, {
         path: item.path,
         type: item.type,
+        sessionId,
       });
 
       if (!response.ok) {
@@ -183,7 +188,7 @@ export function useFileTreeOperations({
     } finally {
       setOperationLoading(false);
     }
-  }, [deleteConfirmation, selectedProject, showToast, t, onRefresh, handleCancelDelete]);
+  }, [deleteConfirmation, selectedProject, sessionId, showToast, t, onRefresh, handleCancelDelete]);
 
   // Create operations
   const handleStartCreate = useCallback((parentPath: string, type: 'file' | 'directory') => {
@@ -215,6 +220,7 @@ export function useFileTreeOperations({
         path: newItemParent,
         type: newItemType,
         name: newItemName,
+        sessionId,
       });
 
       if (!response.ok) {
@@ -235,7 +241,7 @@ export function useFileTreeOperations({
     } finally {
       setOperationLoading(false);
     }
-  }, [selectedProject, newItemParent, newItemType, newItemName, validateFilename, showToast, t, onRefresh, handleCancelCreate]);
+  }, [selectedProject, sessionId, newItemParent, newItemType, newItemName, validateFilename, showToast, t, onRefresh, handleCancelCreate]);
 
   // Copy path to clipboard
   const handleCopyPath = useCallback((item: FileTreeNode) => {
@@ -266,7 +272,7 @@ export function useFileTreeOperations({
     if (!selectedProject) return;
 
     // Use the binary streaming endpoint so downloads preserve raw bytes.
-    const response = await api.readFileBlob(selectedProject.projectId, item.path);
+    const response = await api.readFileBlob(selectedProject.projectId, item.path, { sessionId });
 
     if (!response.ok) {
       throw new Error('Failed to download file');
@@ -274,7 +280,7 @@ export function useFileTreeOperations({
 
     const blob = await response.blob();
     triggerBrowserDownload(blob, item.name);
-  }, [selectedProject, triggerBrowserDownload]);
+  }, [selectedProject, sessionId, triggerBrowserDownload]);
 
   // Download folder as ZIP
   const downloadFolderAsZip = useCallback(async (folder: FileTreeNode) => {
@@ -287,7 +293,7 @@ export function useFileTreeOperations({
       const fullPath = currentPath ? `${currentPath}/${node.name}` : node.name;
 
       if (node.type === 'file') {
-        const response = await api.readFileBlob(selectedProject.projectId, node.path);
+        const response = await api.readFileBlob(selectedProject.projectId, node.path, { sessionId });
         if (!response.ok) {
           throw new Error(`Failed to download "${node.name}" for ZIP export`);
         }
@@ -315,7 +321,7 @@ export function useFileTreeOperations({
     triggerBrowserDownload(zipBlob, `${folder.name}.zip`);
 
     showToast(t('fileTree.toast.folderDownloaded', 'Folder downloaded as ZIP'), 'success');
-  }, [selectedProject, showToast, t, triggerBrowserDownload]);
+  }, [selectedProject, sessionId, showToast, t, triggerBrowserDownload]);
 
   // Download file or folder. Declared after the two helpers it dispatches to so
   // it does not read them before initialization; both are memoized on

@@ -1,5 +1,6 @@
 import express from 'express';
 
+import { readSuffix } from '@/modules/worktree-claims/services/unit-keys.js';
 import type { LockstepGroup, WorktreeClaimsServices } from '@/shared/types.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
 
@@ -9,15 +10,6 @@ function readRequiredString(value: unknown, name: string): string {
     throw new AppError(`${name} is required`, { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
   }
   return parsed;
-}
-
-/** A worktree suffix, the `<x>` of `<repo>-<x>`; '' names the main checkout. */
-function readSuffix(value: unknown, name: string): string {
-  const suffix = typeof value === 'string' ? value.trim() : null;
-  if (suffix === null || (suffix !== '' && !/^[\w.-]+$/.test(suffix))) {
-    throw new AppError(`${name} must be a worktree suffix of letters, digits, ".", "_" or "-"`, { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
-  }
-  return suffix;
 }
 
 function readGroups(value: unknown): LockstepGroup[] {
@@ -72,6 +64,10 @@ export function createWorktreeClaimsRouter(services: WorktreeClaimsServices): ex
 
   router.get('/claims', asyncHandler(async (req, res) => {
     res.json(createApiSuccessResponse(await services.listClaims(readRequiredString(req.query.session, 'session'))));
+  }));
+
+  router.get('/session-worktrees', asyncHandler(async (req, res) => {
+    res.json(createApiSuccessResponse(await services.getSessionWorktrees(readRequiredString(req.query.session, 'session'))));
   }));
 
   router.post('/release', asyncHandler(async (req, res) => {

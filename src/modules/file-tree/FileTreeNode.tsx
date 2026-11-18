@@ -161,6 +161,31 @@ export default function FileTreeNode({
     );
   }
 
+  // A project folder listed as the worktree the chat works in; the badge names it, or says it is missing.
+  const worktreeBadge = item.worktree && (
+    <span
+      className={cn(
+        'ml-1.5 shrink-0 rounded px-1 py-px font-mono text-[10px] leading-tight',
+        item.worktree.missing
+          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+          : 'bg-primary/10 text-primary',
+      )}
+      title={item.worktree.missing
+        ? t('fileTree.worktree.missing', 'The "{{suffix}}" worktree of this folder does not exist, so the main checkout is shown', { suffix: item.worktree.suffix })
+        : item.path}
+    >
+      {item.worktree.missing ? t('fileTree.worktree.main', 'main') : item.worktree.suffix}
+      {!item.worktree.missing && item.worktree.branch && <span className="opacity-70"> · {item.worktree.branch}</span>}
+    </span>
+  );
+
+  const nameWithBadge = (
+    <>
+      <span className={nameClassName}>{item.name}</span>
+      {worktreeBadge}
+    </>
+  );
+
   const uploadHoverButton = isDirectory && !item.isUnavailable && onUpload && (
     <button
       type="button"
@@ -191,7 +216,7 @@ export default function FileTreeNode({
         <>
           <div className="col-span-5 flex min-w-0 items-center gap-1.5">
             <TreeItemIcon item={item} isOpen={isOpen} renderFileIcon={renderFileIcon} />
-            <span className={nameClassName}>{item.name}</span>
+            {nameWithBadge}
           </div>
           <div className="col-span-2 text-sm tabular-nums text-muted-foreground">
             {item.type === 'file' ? formatFileSize(item.size) : ''}
@@ -203,7 +228,7 @@ export default function FileTreeNode({
         <>
           <div className="flex min-w-0 items-center gap-1.5">
             <TreeItemIcon item={item} isOpen={isOpen} renderFileIcon={renderFileIcon} />
-            <span className={nameClassName}>{item.name}</span>
+            {nameWithBadge}
           </div>
           <div className="ml-2 flex flex-shrink-0 items-center gap-3 text-sm text-muted-foreground">
             {item.type === 'file' && (
@@ -217,7 +242,7 @@ export default function FileTreeNode({
       ) : (
         <>
           <TreeItemIcon item={item} isOpen={isOpen} renderFileIcon={renderFileIcon} />
-          <span className={nameClassName}>{item.name}</span>
+          {nameWithBadge}
         </>
       )}
       {uploadHoverButton}

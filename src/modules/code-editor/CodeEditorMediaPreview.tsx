@@ -69,7 +69,7 @@ export default function CodeEditorMediaPreview({
         // The content endpoint requires the auth header, so we fetch the bytes
         // ourselves and hand the media element a blob URL instead of a bare src.
         // Fetching a blob (rather than streaming) also lets <video>/<audio> seek.
-        const response = await api.readFileBlob(projectId, file.path, { signal: controller.signal });
+        const response = await api.readFileBlob(projectId, file.path, { signal: controller.signal, sessionId: file.sessionId });
 
         if (!response.ok) {
           throw new Error(`Request failed with status ${response.status}`);
@@ -130,7 +130,7 @@ export default function CodeEditorMediaPreview({
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [file.path, file.name, projectId, kind, sourceKey, labels.error]);
+  }, [file.path, file.name, file.sessionId, projectId, kind, sourceKey, labels.error]);
 
   // Only expose the blob once it matches the file currently being shown, so a
   // stale URL from the previous file is never rendered during a switch.

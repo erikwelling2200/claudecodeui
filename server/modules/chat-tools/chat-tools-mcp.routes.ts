@@ -1,7 +1,8 @@
 import express from 'express';
 
 import { chatToolsService } from '@/modules/chat-tools/chat-tools.service.js';
-import { chatWorktreeLocks } from '@/modules/worktree-claims/index.js';
+import { chatWorktreeLocks, readSuffix, readUnitKey, recordSessionWorktreeClaim } from '@/modules/worktree-claims/index.js';
+import type { SessionWorktreeCheckout } from '@/shared/types.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
 
 function readRequiredString(value: unknown, name: string): string {
@@ -81,6 +82,27 @@ chatToolsMcpRoutes.post('/tools/release_worktree_locks', asyncHandler(async (req
     throw new AppError('Pass unit and suffix to release one worktree, or all: true to release every lock', { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
   }
   res.json(createApiSuccessResponse(await chatWorktreeLocks.release(sessionId, { unitKey: readRequiredString(body.unit, 'unit'), suffix: body.suffix.trim() })));
+}));
+
+function readCheckouts(value: unknown): SessionWorktreeCheckout[] {
+  const entries = Array.isArray(value) ? value as Array<{ repo?: unknown; path?: unknown }> : [];
+  if (entries.length === 0 || entries.some((entry) => typeof entry?.repo !== 'string' || typeof entry?.path !== 'string')) {
+    throw new AppError('checkouts must list at least one { repo, path } pair', { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
+  }
+  return entries.map((entry) => ({ repo: entry.repo as string, path: entry.path as string }));
+}
+
+// Posted by the worktree-lock hook (~/.claude/hooks/worktree-lock.js) each time it grants a chat a worktree.
+chatToolsMcpRoutes.post('/tools/worktree_claimed', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const unitKey = readUnitKey(body.unit);
+  recordSessionWorktreeClaim(readRequiredString(body.sessionId, 'sessionId'), {
+    unitKey,
+    unitName: readOptionalString(body.unitName) ?? unitKey,
+    suffix: readSuffix(body.suffix, 'suffix'),
+    checkouts: readCheckouts(body.checkouts),
+  });
+  res.json(createApiSuccessResponse({ recorded: true }));
 }));
 
 chatToolsMcpRoutes.post('/tools/list_mcp_servers', asyncHandler(async (req, res) => {

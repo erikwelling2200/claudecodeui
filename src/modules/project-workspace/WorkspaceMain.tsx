@@ -8,9 +8,10 @@ import { PluginTabContent } from '@/modules/plugins';
 import { BrowserUsePanel, useBrowserUseEnabled } from '@/modules/browser-use';
 import { usePaletteOpsRegister } from '@/modules/command-palette';
 import { TaskMasterPanel, useTaskMasterProjectSync, useTasksSettings } from '@/modules/task-master';
-import { WorktreeClaimsSidebar } from '@/modules/worktree-claims';
+import { WorktreeClaimsSidebar, useSessionWorktrees } from '@/modules/worktree-claims';
 import type { AppTab, DirectoryRevealRequest, Project, ProjectSession, SessionEstablishedContext, SessionNavigationOptions, SessionPrompt, SessionPromptBookends, SettingsMainTab } from '@/shared/types';
 import { useSetUiPreference, useUiPreferences } from '@/shared/context/UiPreferencesContext';
+import { useWebSocket } from '@/shared/context/WebSocketContext';
 import { useFileOpenResolver } from '@/modules/project-workspace/hooks/useFileOpenResolver';
 import { EditorSidebar, useEditorSidebar } from '@/modules/code-editor';
 import WorkspaceHeader from '@/modules/project-workspace/WorkspaceHeader';
@@ -80,6 +81,9 @@ function WorkspaceMain({
   const jumpToPrompt = useCallback((timestamp: string) => setPromptJumpRequest({ timestamp }), []);
   const sessionId = selectedSession?.id ?? null;
   const pinnedMessages = usePinnedMessages(sessionId);
+  // The files tab, the editor and file links follow the worktrees this chat works in.
+  const { subscribe } = useWebSocket();
+  const { revision: worktreeRevision } = useSessionWorktrees(sessionId, subscribe);
   const unpinMessage = useCallback((prompt: SessionPrompt) => { if (sessionId) togglePinnedMessage(sessionId, prompt); }, [sessionId]);
 
   const shouldShowTasksTab = Boolean(tasksEnabled && isTaskMasterInstalled);
@@ -102,12 +106,13 @@ function WorkspaceMain({
     handleUnsavedChangesChange,
   } = useEditorSidebar({
     selectedProject,
+    sessionId,
     isMobile,
   });
 
   // Resolves bare/partial file references (e.g. links inside chat messages) to
   // real project files before opening them in the in-app editor.
-  const resolvedFileOpen = useFileOpenResolver(selectedProject, handleFileOpen);
+  const resolvedFileOpen = useFileOpenResolver(selectedProject, handleFileOpen, sessionId);
 
   useEffect(() => {
     if (!shouldShowTasksTab && activeTab === 'tasks') {
@@ -216,6 +221,8 @@ function WorkspaceMain({
             <div className="h-full overflow-hidden">
               <FileTree
                 selectedProject={selectedProject}
+                sessionId={sessionId}
+                worktreeRevision={worktreeRevision}
                 onFileOpen={handleFileOpen}
                 revealDirectory={revealDirectory}
               />

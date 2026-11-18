@@ -36,6 +36,10 @@ import ImageViewer from '@/modules/file-tree/ImageViewer';
 
 type FileTreeProps = {
   selectedProject: Project | null;
+  // The chat shown beside the tree: each project folder is listed as the worktree that chat works in.
+  sessionId?: string | null;
+  // Counts the times the chat's worktrees were read; a change reloads the tree.
+  worktreeRevision?: number;
   // `line` (1-based) and `character` (0-based) open the file at a content search match.
   onFileOpen?: (filePath: string, diffInfo?: CodeEditorDiffInfo | null, line?: number, character?: number) => void;
   // Directory to reveal (from an in-chat `path/` reference): its ancestors are
@@ -44,7 +48,7 @@ type FileTreeProps = {
 };
 
 /** Exported through the file-tree barrel; the project-workspace module renders it as the Files sidebar tab. */
-export default function FileTree({ selectedProject, onFileOpen, revealDirectory }: FileTreeProps) {
+export default function FileTree({ selectedProject, sessionId = null, worktreeRevision = 0, onFileOpen, revealDirectory }: FileTreeProps) {
   const { t } = useTranslation();
   const [selectedImage, setSelectedImage] = useState<FileTreeImageSelection | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -64,7 +68,7 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
     }
   }, [toast]);
 
-  const { files, loading, error, refreshFiles, loadDirectories } = useFileTreeData(selectedProject);
+  const { files, loading, error, refreshFiles, loadDirectories } = useFileTreeData(selectedProject, sessionId, worktreeRevision);
   const { viewMode, changeViewMode } = useFileTreeViewMode();
   // Top-level folder nodes of a multi-folder project; they start expanded.
   const projectRootPaths = useMemo(
@@ -80,6 +84,7 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
   const [contentSearchGlobText, setContentSearchGlobText] = useState('');
   const { searchQuery, setSearchQuery, filteredFiles, visibleExpandedDirs, toggleVisibleDirectory } = useFileTreeSearch({
     projectId: selectedProject?.projectId,
+    sessionId,
     files,
     expandedDirs,
     toggleDirectory,
@@ -88,6 +93,7 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
   const contentSearchFolders = useContentSearchFolders(selectedProject?.projectId, files);
   const contentSearch = useFileContentSearch({
     projectId: selectedProject?.projectId,
+    sessionId,
     query: searchQuery,
     regex: contentSearchRegex,
     globText: contentSearchGlobText,
@@ -116,8 +122,9 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
   // Expand every ancestor between the project root and the requested folder.
   // The tree is loaded level by level, so this runs again as each opened
   // folder's contents arrive, and is done once the deepest folder found is loaded.
+  // The folder shown first is the primary folder as this chat sees it (its worktree when parked in one).
   useEffect(() => {
-    const projectRoot = selectedProject?.path || selectedProject?.fullPath;
+    const projectRoot = projectRootPaths[0] || selectedProject?.path || selectedProject?.fullPath;
     if (!revealRequest || !projectRoot || revealedRef.current === revealRequest) {
       return;
     }
@@ -129,11 +136,12 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
     if (findTreeNode(files, paths[paths.length - 1])?.children !== undefined) {
       revealedRef.current = revealRequest;
     }
-  }, [revealRequest, selectedProject?.path, selectedProject?.fullPath, expandDirectories, files]);
+  }, [revealRequest, projectRootPaths, selectedProject?.path, selectedProject?.fullPath, expandDirectories, files]);
 
   // File operations
   const operations = useFileTreeOperations({
     selectedProject,
+    sessionId,
     onRefresh: refreshFiles,
     showToast,
   });
@@ -142,6 +150,7 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
   // so the remaining plain values are not treated as render-time ref reads.
   const { treeRef, ...upload } = useFileTreeUpload({
     selectedProject,
+    sessionId,
     onRefresh: refreshFiles,
     showToast,
   });
@@ -212,13 +221,14 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
           // Image URL uses the DB projectId so ImageViewer can hit the
           // /api/file-tree/projects/:projectId/files/content endpoint directly.
           projectId: selectedProject.projectId,
+          sessionId,
         });
         return;
       }
 
       onFileOpen?.(item.path);
     },
-    [onFileOpen, searchMode, searchQuery, selectedProject, setSearchQuery, toggleVisibleDirectory],
+    [onFileOpen, searchMode, searchQuery, selectedProject, sessionId, setSearchQuery, toggleVisibleDirectory],
   );
 
   const handleOpenContentMatch = useCallback(

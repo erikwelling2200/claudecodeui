@@ -104,6 +104,10 @@
   "fileTree": {
     "loading": "Loading files...",
     "files": "Files",
+    "worktree": {
+      "main": "main",
+      "missing": "The \"{{suffix}}\" worktree of this folder does not exist, so the main checkout is shown"
+    },
     "simpleView": "Simple view",
     "compactView": "Compact view",
     "detailedView": "Detailed view",

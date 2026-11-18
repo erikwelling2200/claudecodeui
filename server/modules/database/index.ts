@@ -20,6 +20,8 @@ export type {
   QueuedSessionMessageRecord,
   SessionDraftRecord,
 } from '@/modules/database/repositories/session-drafts.db.js';
+// sessionWorktreesDb: used by Worktree Claims to remember the worktree each chat works in.
+export { sessionWorktreesDb } from '@/modules/database/repositories/session-worktrees.db.js';
 export { sessionsDb } from '@/modules/database/repositories/sessions.db.js';
 export { userDb } from '@/modules/database/repositories/users.js';
 // userPreferencesDb: used by the User module to persist the settings that used to live in browser localStorage.

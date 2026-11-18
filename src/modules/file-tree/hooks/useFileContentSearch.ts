@@ -13,6 +13,8 @@ const NO_FOLDERS_STATE: FileContentSearchState = { ...IDLE_STATE, status: 'done'
 
 type UseFileContentSearchArgs = {
   projectId: string | undefined;
+  // The chat whose worktrees are searched.
+  sessionId?: string | null;
   query: string;
   regex: boolean;
   // The filter box as typed: comma-separated globs.
@@ -73,6 +75,7 @@ export function appendContentMatches(files: FileContentFileMatches[], matches: F
  */
 export function useFileContentSearch({
   projectId,
+  sessionId = null,
   query,
   regex,
   globText,
@@ -121,6 +124,7 @@ export function useFileContentSearch({
         regex,
         globs: parseContentSearchGlobs(globText),
         rootIndexes: rootsKey === null ? undefined : rootsKey.split(',').map(Number),
+        ...(sessionId ? { sessionId } : {}),
       }));
 
       source.addEventListener('matches', (event) => {
@@ -161,7 +165,7 @@ export function useFileContentSearch({
       // Closing the connection is what makes the server kill its ripgrep processes.
       source?.close();
     };
-  }, [globText, hasFolders, hasQuery, projectId, query, regex, rootsKey]);
+  }, [globText, hasFolders, hasQuery, projectId, sessionId, query, regex, rootsKey]);
 
   if (!hasQuery) return IDLE_STATE;
   // Nowhere to look is a finished search without matches.

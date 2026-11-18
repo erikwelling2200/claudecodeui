@@ -1596,13 +1596,20 @@ export function findApplicationRoot(startDirectory: string): string {
  */
 export const AGENT_SESSION_ID_ENV = 'CLOUDCLI_SESSION_ID';
 
+// Entries the CLI's hooks need to call the app back (its API URL and token), set once at startup by Chat Tools.
+let agentSessionEnvExtras: Record<string, string> = {};
+
+export function setAgentSessionEnvExtras(entries: Record<string, string>): void {
+  agentSessionEnvExtras = { ...entries };
+}
+
 /**
  * Builds the environment entries every provider runtime adds to the CLI it
  * spawns for one chat turn. Returns an empty record when there is no app
  * session id (legacy/direct API callers), so callers can always spread it.
  */
 export function buildAgentSessionEnv(sessionId: unknown): Record<string, string> {
-  return typeof sessionId === 'string' && sessionId ? { [AGENT_SESSION_ID_ENV]: sessionId } : {};
+  return typeof sessionId === 'string' && sessionId ? { [AGENT_SESSION_ID_ENV]: sessionId, ...agentSessionEnvExtras } : {};
 }
 
 /**
