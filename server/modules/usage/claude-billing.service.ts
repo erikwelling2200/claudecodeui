@@ -164,7 +164,20 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     };
   }
 
-  return { resolve, noteRateLimit, recordSpend, setKey, clearKey, getStatus };
+  /**
+   * The cost total a CLI resuming `sessionId` in `cwd` starts from. The CLI saves the last session's total per folder
+   * in `~/.claude.json` and carries it on when that same session is resumed, so its first `total_cost_usd` already
+   * holds what earlier processes spent.
+   */
+  function restoredCostTotal(cwd: string, sessionId: string): number {
+    const projects = readJson(path.join(dependencies.homeDirectory, '.claude.json'))?.projects ?? {};
+    const folder = cwd.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    const entry = Object.entries(projects).find(([key]) => key.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() === folder)?.[1] as
+      { lastSessionId?: string; lastCost?: number } | undefined;
+    return entry?.lastSessionId === sessionId && Number.isFinite(entry.lastCost) ? entry.lastCost! : 0;
+  }
+
+  return { resolve, noteRateLimit, recordSpend, restoredCostTotal, setKey, clearKey, getStatus };
 }
 
 /**

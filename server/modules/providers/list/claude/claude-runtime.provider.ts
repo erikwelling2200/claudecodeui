@@ -1985,7 +1985,7 @@ async function queryClaudeSDK(
     // reads itself and the env cannot override. The CLI states its source on `init`.
     let billedToKey = billing.mode === 'api_key';
     // The CLI's running cost total for this process, so each `result` records only what its turn added.
-    let lastCostTotal = 0;
+    let lastCostTotal = providerSessionId && launchCwd ? claudeBilling.restoredCostTotal(launchCwd, providerSessionId) : 0;
 
     // True while the process is between turns, or winding down an interrupted
     // one that a delivered turn may wait out.
