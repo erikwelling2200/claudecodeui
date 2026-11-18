@@ -75,11 +75,12 @@ const sessionActions: SessionRowActions = {
   activeSessions: new Set<string>(),
   backgroundSessionIds: new Set<string>(),
   attentionSessionIds: new Set<string>(),
+  unreadSessionIds: new Set<string>(),
   onRenameDraftChange: noop,
   onStartEditingSession: noop,
   onCancelEditingSession: noop,
   onSaveEditingSession: noop,
-  onArchiveSession: noop,
+  onArchiveSessionNow: noop,
   onDeleteSession: noop,
 };
 

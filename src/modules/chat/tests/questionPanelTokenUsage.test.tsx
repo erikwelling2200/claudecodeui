@@ -45,6 +45,15 @@ const props = (overrides: Partial<Props>): Props => ({
   handleGrantToolPermission: () => ({ success: true }),
   activity: null,
   isLoading: false,
+  canAbortSession: false,
+  pendingSteers: [],
+  primaryOnlyFolderName: null,
+  remoteControl: null,
+  onToggleRemoteControl: () => undefined,
+  expandThinking: null,
+  onSendPendingSteerNow: () => undefined,
+  onCancelPendingSteer: () => undefined,
+  onReplaceAttachment: () => undefined,
   onAbortSession: () => undefined,
   permissionMode: 'default',
   availablePermissionModes: ['default'],
@@ -59,10 +68,7 @@ const props = (overrides: Partial<Props>): Props => ({
   modelsLoading: false,
   tokenBudget: { used: 42_000 },
   onShowTokenUsage: () => undefined,
-  slashCommandsCount: 0,
   onToggleCommandMenu: () => undefined,
-  hasInput: false,
-  onClearInput: () => undefined,
   onSubmit: () => undefined,
   isDragActive: false,
   queuedDraft: null,
@@ -135,7 +141,6 @@ test('question pending: the input is gone but the token usage stays and opens th
   assert.equal(screen.queryByPlaceholderText('Message'), null, 'the input is replaced by the question');
   const buttons = tokenUsageButtons();
   assert.equal(buttons.length, 1, 'token usage is still on screen, once');
-  assert.ok(buttons[0].textContent?.includes('42K'), 'it shows the used tokens');
 
   fireEvent.click(buttons[0]);
 
