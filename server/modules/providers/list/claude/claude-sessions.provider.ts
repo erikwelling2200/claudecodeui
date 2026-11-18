@@ -1000,12 +1000,17 @@ async function getSessionMessages(
  * content-level check the same payload renders as a huge user bubble during the
  * run and then vanishes on reload. The skill is already represented by the
  * `Skill` tool call, so it is never user-visible content.
+ *
+ * The retry nudges Claude Code sends after a turn with no visible text are the
+ * same case: meta in the transcript, untagged in the live stream.
  */
 const INTERNAL_CONTENT_PREFIXES = [
   '<system-reminder>',
   'Caveat:',
   '[Request interrupted',
   'Base directory for this skill:',
+  '[Your previous response had no visible output',
+  '[Your previous response reached the output limit with no visible output',
 ] as const;
 
 /**
