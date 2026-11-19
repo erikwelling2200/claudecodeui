@@ -50,6 +50,20 @@ function getParentDirectoryPath(itemPath: string) {
   return segments.join('/');
 }
 
+// Search matches set `ranges`; their letters are bold.
+function renderHighlightedName(name: string, ranges: Array<[number, number]> | undefined): ReactNode {
+  if (!ranges || ranges.length === 0) return name;
+  const parts: ReactNode[] = [];
+  let position = 0;
+  for (const [start, end] of ranges) {
+    if (start > position) parts.push(name.slice(position, start));
+    parts.push(<strong key={start} className="font-bold text-foreground">{name.slice(start, end)}</strong>);
+    position = end;
+  }
+  if (position < name.length) parts.push(name.slice(position));
+  return parts;
+}
+
 function TreeItemIcon({ item, isOpen, renderFileIcon }: TreeItemIconProps) {
   if (item.type === 'directory') {
     return (
@@ -181,7 +195,7 @@ export default function FileTreeNode({
 
   const nameWithBadge = (
     <>
-      <span className={nameClassName}>{item.name}</span>
+      <span className={nameClassName}>{renderHighlightedName(item.name, item.matchRanges)}</span>
       {worktreeBadge}
     </>
   );

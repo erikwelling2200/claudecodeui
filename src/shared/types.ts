@@ -1075,6 +1075,8 @@ export type FileTreeNode = {
   isUnavailable?: boolean;
   // Set on a top-level folder node when the chat shown works in a worktree of that folder.
   worktree?: FileTreeWorktreeInfo;
+  // In search results: the characters of `name` the query matched, as [start, end) ranges.
+  matchRanges?: Array<[number, number]>;
   [key: string]: unknown;
 };
 
@@ -1106,6 +1108,8 @@ export type FileSearchResult = {
   rootPath: string;
   // Position of the project folder that holds the entry; 0 is the primary folder.
   rootIndex: number;
+  // The characters of `relativePath` the query matched, as [start, end) ranges.
+  matchRanges?: Array<[number, number]>;
 };
 
 /** Which search the file tree's search box runs: file and folder names, or the text inside files. */

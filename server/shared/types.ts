@@ -1685,6 +1685,8 @@ export type FileSearchResult = {
   rootPath: string;
   /** Position of `rootPath` among the project's folders; 0 is the primary folder. */
   rootIndex: number;
+  /** The characters of `relativePath` the query matched, as `[start, end)` ranges. */
+  matchRanges: Array<[number, number]>;
 };
 
 /** In-memory file index the File Tree service searches instead of walking the disk. */

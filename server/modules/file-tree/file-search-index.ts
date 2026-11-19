@@ -73,20 +73,104 @@ function isSubsequence(query: string, text: string): boolean {
   return queryIndex === query.length;
 }
 
+function isLetterOrDigit(character: string): boolean {
+  return /[\p{L}\p{N}]/u.test(character);
+}
+
+function isUpper(character: string): boolean {
+  return character !== character.toLowerCase() && character === character.toUpperCase();
+}
+
+function isDigit(character: string): boolean {
+  return character >= '0' && character <= '9';
+}
+
+/** Whether a word begins at `index`: after a separator, at a camelCase hump, or where digits start. */
+function isWordStart(text: string, index: number): boolean {
+  const current = text[index];
+  if (!isLetterOrDigit(current)) return false;
+  if (index === 0) return true;
+  const previous = text[index - 1];
+  if (!isLetterOrDigit(previous)) return true;
+  if (isDigit(current) !== isDigit(previous)) return true;
+  if (isUpper(current) && !isUpper(previous)) return true;
+  // The `P` of `XMLParser`.
+  return isUpper(current) && isUpper(previous) && index + 1 < text.length && !isUpper(text[index + 1]) && !isDigit(text[index + 1]);
+}
+
 /**
- * Higher is better, 0 is no match. A query holding a slash is matched against
- * the whole relative path, any other query against the name first.
+ * Matches `query` as runs of characters that each begin at a word start of
+ * `text` and continue within it: `acout` matches **Ac**tion**Out**line. Returns
+ * the matched indices of `text`, or null. `query` and `textLower` are lowercase.
  */
-function scoreEntry(entry: IndexEntry, query: string, matchesPath: boolean): number {
-  if (!matchesPath) {
-    if (entry.nameLower === query) return 1000;
-    if (entry.nameLower.startsWith(query)) return 800;
-    if (entry.nameLower.includes(query)) return 600;
+function matchWordStarts(query: string, text: string, textLower: string): number[] | null {
+  if (!isSubsequence(query, textLower)) return null;
+  const failed = new Set<number>();
+
+  // `continuesRun`: the previous query character matched at `textIndex - 1`.
+  const match = (queryIndex: number, textIndex: number, continuesRun: boolean): number[] | null => {
+    if (queryIndex === query.length) return [];
+    const key = (queryIndex * (text.length + 1) + textIndex) * 2 + (continuesRun ? 1 : 0);
+    if (failed.has(key)) return null;
+    const wanted = query[queryIndex];
+    if (continuesRun && textIndex < text.length && textLower[textIndex] === wanted) {
+      const rest = match(queryIndex + 1, textIndex + 1, true);
+      if (rest) return [textIndex, ...rest];
+    }
+    for (let candidate = textIndex; candidate < text.length; candidate += 1) {
+      if (textLower[candidate] !== wanted) continue;
+      // A separator in the query, such as the `/` of `scr/pl`, matches wherever it occurs.
+      if (isLetterOrDigit(wanted) && !isWordStart(text, candidate)) continue;
+      const rest = match(queryIndex + 1, candidate + 1, true);
+      if (rest) return [candidate, ...rest];
+    }
+    failed.add(key);
+    return null;
+  };
+
+  return match(0, 0, false);
+}
+
+/** Matched indices as `[start, end)` ranges. */
+function toRanges(indices: number[]): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (const index of indices) {
+    const last = ranges[ranges.length - 1];
+    if (last && last[1] === index) last[1] = index + 1;
+    else ranges.push([index, index + 1]);
   }
-  if (entry.relativePathLower.includes(query)) return 400;
-  if (!matchesPath && isSubsequence(query, entry.nameLower)) return 300;
-  if (isSubsequence(query, entry.relativePathLower)) return 200;
-  return 0;
+  return ranges;
+}
+
+type EntryMatch = {
+  // Higher is better.
+  score: number;
+  // The matched characters of `relativePath`, as `[start, end)` ranges.
+  ranges: Array<[number, number]>;
+};
+
+/**
+ * A query holding a slash is matched against the whole relative path, any
+ * other query against the name first. Null when the entry does not match.
+ */
+function matchEntry(entry: IndexEntry, query: string, matchesPath: boolean): EntryMatch | null {
+  const nameStart = entry.relativePath.length - entry.name.length;
+  const inName = (start: number): Array<[number, number]> => [[nameStart + start, nameStart + start + query.length]];
+  if (!matchesPath) {
+    if (entry.nameLower === query) return { score: 1000, ranges: inName(0) };
+    if (entry.nameLower.startsWith(query)) return { score: 800, ranges: inName(0) };
+    const nameIndex = entry.nameLower.indexOf(query);
+    if (nameIndex >= 0) return { score: 600, ranges: inName(nameIndex) };
+  }
+  const pathIndex = entry.relativePathLower.indexOf(query);
+  if (pathIndex >= 0) return { score: 400, ranges: [[pathIndex, pathIndex + query.length]] };
+  if (!matchesPath) {
+    const nameIndices = matchWordStarts(query, entry.name, entry.nameLower);
+    if (nameIndices) return { score: 300, ranges: toRanges(nameIndices.map((index) => nameStart + index)) };
+  }
+  const pathIndices = matchWordStarts(query, entry.relativePath, entry.relativePathLower);
+  if (pathIndices) return { score: 200, ranges: toRanges(pathIndices) };
+  return null;
 }
 
 function createIgnoreMatcher(gitignoreContent: string | null): (relativePath: string) => boolean {
@@ -210,7 +294,7 @@ export function createFileSearchIndex(dependencies: FileTreeFileIndexDependencie
       const normalizedQuery = query.trim().toLowerCase().replace(/\\/g, '/');
       const matchesPath = normalizedQuery.includes('/');
       // Kept light: a one-letter query matches nearly every entry, and only `limit` of them become results.
-      const matches: Array<{ entry: IndexEntry; rootIndex: number; score: number }> = [];
+      const matches: Array<{ entry: IndexEntry; rootIndex: number; score: number; ranges: Array<[number, number]> }> = [];
 
       indexes.forEach((folder, rootIndex) => {
         // Entries of a project folder nested in this one belong to that folder's own node.
@@ -220,10 +304,10 @@ export function createFileSearchIndex(dependencies: FileTreeFileIndexDependencie
 
         for (const entry of folder.entries) {
           if (options.type === 'file' && entry.type !== 'file') continue;
-          const score = normalizedQuery ? scoreEntry(entry, normalizedQuery, matchesPath) : 1;
-          if (score === 0) continue;
+          const match = normalizedQuery ? matchEntry(entry, normalizedQuery, matchesPath) : { score: 1, ranges: [] };
+          if (!match) continue;
           if (nestedPrefixes.length > 0 && nestedPrefixes.some((prefix) => `${entry.relativePathLower}/`.startsWith(prefix))) continue;
-          matches.push({ entry, rootIndex, score });
+          matches.push({ entry, rootIndex, ...match });
         }
       });
 
@@ -233,7 +317,7 @@ export function createFileSearchIndex(dependencies: FileTreeFileIndexDependencie
         || (left.entry.relativePath < right.entry.relativePath ? -1 : left.entry.relativePath > right.entry.relativePath ? 1 : 0)
       ));
       return {
-        results: matches.slice(0, options.limit).map(({ entry, rootIndex }): FileSearchResult => {
+        results: matches.slice(0, options.limit).map(({ entry, rootIndex, ranges }): FileSearchResult => {
           const folderPath = indexes[rootIndex].folderPath;
           return {
             name: entry.name,
@@ -242,6 +326,7 @@ export function createFileSearchIndex(dependencies: FileTreeFileIndexDependencie
             type: entry.type,
             rootPath: folderPath,
             rootIndex,
+            matchRanges: ranges,
           };
         }),
         truncated: matches.length > options.limit,

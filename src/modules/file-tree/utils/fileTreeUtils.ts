@@ -97,26 +97,37 @@ function createSearchNode(name: string, nodePath: string, type: FileTreeNode['ty
   return { name, path: nodePath, type, ...(type === 'directory' ? { children: [] } : {}) };
 }
 
+/** The parts of `ranges` (over a whole path) that fall in the segment at `offset`, relative to that segment. */
+function rangesInSegment(ranges: Array<[number, number]>, offset: number, length: number): Array<[number, number]> {
+  return ranges
+    .map(([start, end]): [number, number] => [Math.max(start, offset) - offset, Math.min(end, offset + length) - offset])
+    .filter(([start, end]) => start < end);
+}
+
 /**
  * Lays search results out as a tree under the loaded top level: under each
  * folder node of a multi-folder project, or at the top for a single folder.
  * A result's ancestors are added as directories so every match sits where it
- * lives.
+ * lives. `results` come best first, and each level keeps that order: a folder
+ * ranks as the best result inside it.
  */
 export function buildSearchResultTree(results: FileSearchResult[], loadedRoots: FileTreeNode[]): FileTreeNode[] {
   const projectRoots = loadedRoots.filter((node) => node.isProjectRoot);
   const topLevel: FileTreeNode[] = projectRoots.map((root) => ({ ...root, children: [] }));
   const nodesByPath = new Map<string, FileTreeNode>(topLevel.map((root) => [root.path, root]));
+  // Lower is more relevant: the position of the best result at or below the node.
+  const rankByNode = new Map<FileTreeNode, number>();
 
-  for (const result of results) {
+  results.forEach((result, rank) => {
     const root = projectRoots.length > 0 ? nodesByPath.get(result.rootPath) : null;
-    if (projectRoots.length > 0 && !root) continue;
+    if (projectRoots.length > 0 && !root) return;
 
     // The server's separator, read off the result's own absolute path.
     const separator = result.path.charAt(result.path.length - result.name.length - 1) || '/';
     const segments = result.relativePath.split('/');
     let siblings = root ? root.children! : topLevel;
     let currentPath = result.rootPath;
+    let offset = 0;
     segments.forEach((segment, index) => {
       currentPath = `${currentPath}${separator}${segment}`;
       const isLeaf = index === segments.length - 1;
@@ -124,16 +135,21 @@ export function buildSearchResultTree(results: FileSearchResult[], loadedRoots: 
       if (!node) {
         node = createSearchNode(segment, currentPath, isLeaf ? result.type : 'directory');
         nodesByPath.set(currentPath, node);
+        rankByNode.set(node, rank);
         siblings.push(node);
       }
+      // A folder on the way to several results shows the letters of the best one.
+      if (!node.matchRanges) {
+        const ranges = rangesInSegment(result.matchRanges ?? [], offset, segment.length);
+        if (ranges.length > 0) node.matchRanges = ranges;
+      }
       siblings = node.children ?? [];
+      offset += segment.length + 1;
     });
-  }
+  });
 
   const sortLevel = (nodes: FileTreeNode[]) => {
-    nodes.sort((left, right) => (
-      left.type !== right.type ? (left.type === 'directory' ? -1 : 1) : left.name.localeCompare(right.name)
-    ));
+    nodes.sort((left, right) => (rankByNode.get(left) ?? 0) - (rankByNode.get(right) ?? 0) || left.name.localeCompare(right.name));
     nodes.forEach((node) => node.children && sortLevel(node.children));
   };
   topLevel.forEach((root) => root.children && sortLevel(root.children));

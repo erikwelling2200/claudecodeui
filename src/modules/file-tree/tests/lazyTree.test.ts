@@ -101,3 +101,30 @@ test('in a multi-folder project each result goes under its own folder node', () 
 
   assert.deepEqual(tree.map((node) => node.children?.map((child) => child.name)), [[], ['util.ts']]);
 });
+
+test('search results keep their ranking at every level, and names carry their matched letters', () => {
+  const result = (relativePath: string, matchRanges: Array<[number, number]>): FileSearchResult => ({
+    name: relativePath.split('/').pop()!,
+    path: `${ROOT}/${relativePath}`,
+    relativePath,
+    type: 'file',
+    rootPath: ROOT,
+    rootIndex: 0,
+    matchRanges,
+  });
+  // Best first, as the server sends them.
+  const results = [
+    result('Assets/Scripts/ActionOutline.cs', [[15, 28]]),
+    result('Assets/Models/Ab.cs', [[14, 15]]),
+    result('Assets/Culling/Ac.cs', [[7, 8], [15, 16]]),
+  ];
+
+  const tree = buildSearchResultTree(results, []);
+
+  const assets = tree[0];
+  assert.deepEqual(assets.children?.map((node) => node.name), ['Scripts', 'Models', 'Culling']);
+  assert.deepEqual(assets.children?.[0].children?.[0].matchRanges, [[0, 13]]);
+  assert.equal(assets.children?.[0].matchRanges, undefined);
+  assert.deepEqual(assets.children?.[2].matchRanges, [[0, 1]]);
+  assert.deepEqual(assets.children?.[2].children?.[0].matchRanges, [[0, 1]]);
+});

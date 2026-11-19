@@ -115,3 +115,32 @@ test('a change the root .gitignore excludes does not relist the folder, any othe
   const { results } = await index.search([projectRoot], 'b.txt', { limit: 10, type: 'file' });
   assert.deepEqual(results.map((result) => result.relativePath), ['b.txt']);
 });
+
+test('scattered letters match only where they start words, and results say which letters matched', async () => {
+  const { dependencies } = createFakeDependencies({
+    [projectRoot]: {
+      files: [
+        'Assets/Scripts/Actions/Outlines/ActionOutline.cs',
+        'Assets/AdvancedCullingSystem/Core/Editor/StaticCulling/StaticCullingSourceEditor.cs',
+        'Assets/Models/XMLParser.cs',
+      ],
+    },
+  });
+  const index = createFileSearchIndex(dependencies);
+
+  const exact = await index.search([projectRoot], 'actionoutline', { limit: 10, type: 'file' });
+  assert.deepEqual(exact.results.map((result) => [result.relativePath, result.matchRanges]), [
+    ['Assets/Scripts/Actions/Outlines/ActionOutline.cs', [[32, 45]]],
+  ]);
+
+  const camel = await index.search([projectRoot], 'acout', { limit: 10, type: 'file' });
+  assert.deepEqual(camel.results.map((result) => [result.name, result.matchRanges]), [['ActionOutline.cs', [[32, 34], [38, 41]]]]);
+
+  const acronym = await index.search([projectRoot], 'xmlp', { limit: 10, type: 'file' });
+  assert.deepEqual(acronym.results.map((result) => result.name), ['XMLParser.cs']);
+
+  const acrossPath = await index.search([projectRoot], 'scao', { limit: 10, type: 'file' });
+  assert.deepEqual(acrossPath.results.map((result) => [result.name, result.matchRanges]), [
+    ['ActionOutline.cs', [[7, 9], [15, 16], [23, 24]]],
+  ]);
+});
