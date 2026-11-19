@@ -2415,6 +2415,9 @@ async function queryClaudeSDK(
       if (message.type === 'rate_limit_event' && !billedToKey) {
         claudeBilling.noteRateLimit(message.rate_limit_info);
       }
+      if (message.type === 'assistant' && billedToKey) {
+        claudeBilling.recordUsage(message.message, sessionId || capturedSessionId || null);
+      }
       if (message.type === 'result' && billedToKey && typeof message.total_cost_usd === 'number') {
         claudeBilling.recordSpend(message.total_cost_usd - lastCostTotal, sessionId || capturedSessionId || null);
         lastCostTotal = message.total_cost_usd;

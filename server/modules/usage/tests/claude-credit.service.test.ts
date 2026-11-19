@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createClaudeCreditService, creditCycleStart } from '../claude-credit.service.js';
+import type { UsageResult } from '../claude-credit.service.js';
+import type { ListPriceLookup } from '../claude-list-prices.service.js';
 
 const NOW = Date.parse('2026-11-11T14:00:00Z');
 
@@ -37,9 +39,12 @@ function costRow(amount: string, tokenType: string | null, dimensions = DIMENSIO
   return { ...dimensions, amount, cost_type: tokenType ? 'tokens' : 'web_search', token_type: tokenType };
 }
 
-function createCredit(reports: Reports | { status: number; message: string }, settings: Record<string, string> = {}) {
+type Local = { listPrice?: ListPriceLookup; recent?: UsageResult[] };
+
+function createCredit(reports: Reports | { status: number; message: string }, settings: Record<string, string> = {}, local: Local = {}) {
   const config = new Map(Object.entries({ claude_cost_report_key: 'sk-org-key', claude_credit_renewal_day: '20', ...settings }));
   const requests: URL[] = [];
+  const recentSince: number[] = [];
   let clock = NOW;
   const fakeFetch = (async (input: URL) => {
     requests.push(input);
@@ -51,9 +56,11 @@ function createCredit(reports: Reports | { status: number; message: string }, se
   const credit = createClaudeCreditService({
     config: { get: (key) => config.get(key) ?? null, set: (key, value) => { config.set(key, value); } },
     fetch: fakeFetch,
+    listPrices: { load: async () => local.listPrice ?? (() => undefined) },
+    recentUsage: (since) => { recentSince.push(since); return local.recent ?? []; },
     now: () => clock,
   });
-  return { credit, requests, advance: (ms: number) => { clock += ms; } };
+  return { credit, requests, recentSince, advance: (ms: number) => { clock += ms; } };
 }
 
 const costRequests = (requests: URL[]) => requests.filter((url) => url.pathname.endsWith('/cost_report'));
@@ -80,7 +87,7 @@ test('today is the usage so far, priced at what the cost report charged per unit
     days: [{ data: [{ starting_at: '2026-11-10T00:00:00Z', results: [usageRow({ output: 100_000, cacheRead: 1_000_000, searches: 2 })] }], has_more: false, next_page: null }],
     today: [{ data: [
       { starting_at: '2026-11-11T09:00:00Z', results: [usageRow({ output: 50_000, cacheRead: 200_000 })] },
-      { starting_at: '2026-11-11T13:59:00Z', results: [usageRow({ searches: 1 })] },
+      { starting_at: '2026-11-11T13:29:00Z', results: [usageRow({ searches: 1 })] },
     ], has_more: false, next_page: null }],
   });
   const status = await credit.getStatus();
@@ -124,6 +131,53 @@ test('a model never billed before is left out of today and flagged', async () =>
   });
   const status = await credit.getStatus();
   assert.deepEqual({ today: status.org?.today, unpriced: status.org?.todayUnpriced }, { today: 0.04, unpriced: true });
+});
+
+test('a model never billed before is priced at its public list price', async () => {
+  const listPrice: ListPriceLookup = (dimensions, unit) => (dimensions.model === 'claude-new-6' && unit === 'output_tokens' ? 0.005 : undefined);
+  const { credit } = createCredit({
+    cost: [{ data: [{ starting_at: '2026-11-10T00:00:00Z', results: [costRow('400', 'output_tokens')] }], has_more: false, next_page: null }],
+    days: [{ data: [{ starting_at: '2026-11-10T00:00:00Z', results: [usageRow({ output: 100_000 })] }], has_more: false, next_page: null }],
+    today: [{ data: [{ starting_at: '2026-11-11T09:00:00Z', results: [
+      usageRow({ output: 1000 }),
+      usageRow({ output: 1000 }, { ...DIMENSIONS, model: 'claude-new-6' }),
+    ] }], has_more: false, next_page: null }],
+  }, {}, { listPrice });
+  const status = await credit.getStatus();
+  assert.deepEqual({ today: status.org?.today, unpriced: status.org?.todayUnpriced }, { today: 0.09, unpriced: false });
+});
+
+test("a learned price wins over the list price, the list price over another unit's ratio", async () => {
+  const listPrice: ListPriceLookup = (_dimensions, unit) => ({ output_tokens: 1, 'cache_creation.ephemeral_1h_input_tokens': 0.003 } as Record<string, number>)[unit];
+  const opus = { ...DIMENSIONS, model: 'claude-opus-5-5' };
+  const { credit } = createCredit({
+    cost: [{ data: [{ starting_at: '2026-11-10T00:00:00Z', results: [
+      costRow('400', 'output_tokens'), costRow('100', 'uncached_input_tokens'),
+      costRow('100', 'uncached_input_tokens', opus), costRow('200', 'cache_creation.ephemeral_1h_input_tokens', opus),
+    ] }], has_more: false, next_page: null }],
+    days: [{ data: [{ starting_at: '2026-11-10T00:00:00Z', results: [
+      usageRow({ output: 100_000, input: 100_000 }),
+      usageRow({ input: 1_000_000, cacheWrite1h: 1_000_000 }, opus),
+    ] }], has_more: false, next_page: null }],
+    today: [{ data: [{ starting_at: '2026-11-11T09:00:00Z', results: [usageRow({ output: 1000, cacheWrite1h: 1000 })] }], has_more: false, next_page: null }],
+  }, {}, { listPrice });
+  const status = await credit.getStatus();
+  // Output at the learned 0.004 cents a token; 1h writes at the listed 0.003, not Opus's 2x ratio to input (0.002).
+  assert.equal(status.org?.today, 0.07);
+});
+
+test("the report's last half hour is left to this app's own usage, which it lags behind", async () => {
+  const { credit, recentSince } = createCredit({
+    cost: [{ data: [{ starting_at: '2026-11-10T00:00:00Z', results: [costRow('400', 'output_tokens')] }], has_more: false, next_page: null }],
+    days: [{ data: [{ starting_at: '2026-11-10T00:00:00Z', results: [usageRow({ output: 100_000 })] }], has_more: false, next_page: null }],
+    today: [{ data: [
+      { starting_at: '2026-11-11T13:29:00Z', results: [usageRow({ output: 1000 })] },
+      { starting_at: '2026-11-11T13:30:00Z', results: [usageRow({ output: 50_000 })] },
+    ], has_more: false, next_page: null }],
+  }, {}, { recent: [usageRow({ output: 2000 })] });
+  const status = await credit.getStatus();
+  assert.deepEqual(recentSince, [Date.parse('2026-11-11T13:30:00Z')]);
+  assert.equal(status.org?.today, 0.12);
 });
 
 test('a reading is reused for a minute before the reports are asked again', async () => {

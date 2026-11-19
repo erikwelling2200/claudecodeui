@@ -4,6 +4,9 @@ export { apiKeysDb } from '@/modules/database/repositories/api-keys.js';
 export { appConfigDb } from '@/modules/database/repositories/app-config.js';
 // claudeApiSpendDb: used by Usage to record and total what turns billed to the fallback API key cost.
 export { claudeApiSpendDb } from '@/modules/database/repositories/claude-api-spend.db.js';
+// claudeApiUsageDb: used by Usage to record each API-key response's tokens and price the minutes the organization's report lags behind.
+export { claudeApiUsageDb } from '@/modules/database/repositories/claude-api-usage.db.js';
+export type { ClaudeApiUsageRow } from '@/modules/database/repositories/claude-api-usage.db.js';
 export { credentialsDb } from '@/modules/database/repositories/credentials.js';
 export { githubTokensDb } from '@/modules/database/repositories/github-tokens.js';
 export { notificationChannelEndpointsDb } from '@/modules/database/repositories/notification-channel-endpoints.js';

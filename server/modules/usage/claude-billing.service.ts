@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import type { ClaudeApiUsageRow } from '@/modules/database/index.js';
+
 type UsageLimitReading = { kind: string; percent: number; resetsAt: number };
 
 type ClaudeBillingDependencies = {
@@ -8,6 +10,7 @@ type ClaudeBillingDependencies = {
   hostEnv: NodeJS.ProcessEnv;
   config: { get(key: string): string | null; set(key: string, value: string): void };
   spend: { record(costUsd: number, sessionId: string | null, at: number): void; sumSince(since: number): number };
+  usage: { record(messageId: string, sessionId: string | null, usage: ClaudeApiUsageRow, at: number): void };
   /** The latest plan-usage reading, the same one the sidebar's bars show. */
   readUsageLimits: () => UsageLimitReading[];
   /** When the current API credit cycle began, in epoch milliseconds; spend is totalled from there. */
@@ -140,6 +143,27 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     if (costUsd > 0) dependencies.spend.record(costUsd, sessionId, now());
   }
 
+  /** Feeds an `assistant` message's model and usage from a run billed to the key, in the dimensions the usage report prices by. */
+  function recordUsage(message: { id?: string; model?: string; usage?: Record<string, any> } | null | undefined, sessionId: string | null): void {
+    const usage = message?.usage;
+    if (!message?.id || !message.model || !usage) return;
+    const contextTokens = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+    dependencies.usage.record(message.id, sessionId, {
+      model: message.model,
+      context_window: contextTokens > 200_000 ? '200k-1M' : '0-200k',
+      service_tier: usage.service_tier ?? 'standard',
+      speed: usage.speed ?? 'standard',
+      uncached_input_tokens: usage.input_tokens ?? 0,
+      output_tokens: usage.output_tokens ?? 0,
+      cache_read_input_tokens: usage.cache_read_input_tokens ?? 0,
+      cache_creation: {
+        ephemeral_5m_input_tokens: usage.cache_creation?.ephemeral_5m_input_tokens ?? 0,
+        ephemeral_1h_input_tokens: usage.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+      },
+      server_tool_use: { web_search_requests: usage.server_tool_use?.web_search_requests ?? 0 },
+    }, now());
+  }
+
   function setKey(key: string): void {
     config.set(STORED_KEY, key.trim());
   }
@@ -177,7 +201,7 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     return entry?.lastSessionId === sessionId && Number.isFinite(entry.lastCost) ? entry.lastCost! : 0;
   }
 
-  return { resolve, noteRateLimit, recordSpend, restoredCostTotal, setKey, clearKey, getStatus };
+  return { resolve, noteRateLimit, recordSpend, recordUsage, restoredCostTotal, setKey, clearKey, getStatus };
 }
 
 /**

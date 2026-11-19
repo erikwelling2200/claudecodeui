@@ -327,6 +327,29 @@ CREATE TABLE IF NOT EXISTS claude_api_spend (
 );
 `;
 
+/**
+ * The token usage of each model response billed to the fallback API key, one row per message id, in the
+ * dimensions Anthropic's usage report prices by. It covers the half hour the organization's report has not
+ * caught up with yet, so rows older than a day are pruned.
+ */
+export const CLAUDE_API_USAGE_TABLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS claude_api_usage (
+    message_id TEXT PRIMARY KEY,
+    session_id TEXT,
+    model TEXT NOT NULL,
+    context_window TEXT NOT NULL,
+    service_tier TEXT NOT NULL,
+    speed TEXT NOT NULL,
+    uncached_input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    cache_read_input_tokens INTEGER NOT NULL,
+    cache_write_5m_tokens INTEGER NOT NULL,
+    cache_write_1h_tokens INTEGER NOT NULL,
+    web_search_requests INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+);
+`;
+
 export const INIT_SCHEMA_SQL = `
 -- Initialize authentication database
 PRAGMA foreign_keys = ON;
@@ -387,4 +410,7 @@ ${SUPERSEDED_PROVIDER_SESSIONS_TABLE_SCHEMA_SQL}
 
 ${CLAUDE_API_SPEND_TABLE_SCHEMA_SQL}
 CREATE INDEX IF NOT EXISTS idx_claude_api_spend_created_at ON claude_api_spend(created_at);
+
+${CLAUDE_API_USAGE_TABLE_SCHEMA_SQL}
+CREATE INDEX IF NOT EXISTS idx_claude_api_usage_created_at ON claude_api_usage(created_at);
 `;
