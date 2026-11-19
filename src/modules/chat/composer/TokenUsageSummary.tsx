@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 type TokenUsageSummaryProps = {
   usage: Record<string, unknown> | null;
   onClick?: () => void;
+  /** Ctrl+click (Cmd+click on macOS) compacts the conversation; absent where the provider cannot. */
+  onCompact?: () => void;
 };
 
 const RING_RADIUS = 8;
@@ -19,7 +21,7 @@ const readUsageNumber = (value: unknown) => {
  * context-window usage; hovering shows the percentage and clicking opens the
  * detailed token breakdown.
  */
-function TokenUsageSummary({ usage, onClick }: TokenUsageSummaryProps) {
+function TokenUsageSummary({ usage, onClick, onCompact }: TokenUsageSummaryProps) {
   const { t } = useTranslation();
   const breakdown =
     usage?.breakdown && typeof usage.breakdown === 'object'
@@ -36,9 +38,9 @@ function TokenUsageSummary({ usage, onClick }: TokenUsageSummaryProps) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={(event) => (onCompact && (event.ctrlKey || event.metaKey) ? onCompact() : onClick?.())}
       className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-      title={t('chat:misc.contextUsed', { percent })}
+      title={onCompact ? `${t('chat:misc.contextUsed', { percent })}\n${t('chat:misc.ctrlClickToCompact')}` : t('chat:misc.contextUsed', { percent })}
       aria-label={t('chat:misc.showTokenUsage')}
     >
       <svg viewBox="0 0 20 20" className="h-5 w-5 -rotate-90" aria-hidden="true">

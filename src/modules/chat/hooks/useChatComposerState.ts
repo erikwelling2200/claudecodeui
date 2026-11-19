@@ -109,7 +109,11 @@ type SubmitOptions = {
    * run that command instead of being sent.
    */
   skipCommandInterception?: boolean;
+  /** The text did not come from the composer, so what the user is typing there stays. */
+  leaveComposer?: boolean;
 };
+
+const COMPACT_COMMAND = '/compact';
 
 const createFakeSubmitEvent = () => {
   return { preventDefault: () => undefined } as unknown as FormEvent<HTMLFormElement>;
@@ -1229,7 +1233,9 @@ export function useChatComposerState({
       // navigated to. Queued drafts were recorded when they were queued; the
       // consecutive-duplicate check keeps this second call a no-op.
       recordSentMessage(currentInput, targetSessionId);
-      clearComposerAfterSend(submittedScope, targetSessionId, currentInput, currentAttachments);
+      if (!submitOptions?.leaveComposer) {
+        clearComposerAfterSend(submittedScope, targetSessionId, currentInput, currentAttachments);
+      }
     },
     [
       selectedSession,
@@ -1293,6 +1299,25 @@ export function useChatComposerState({
   useEffect(() => {
     handleSubmitRef.current = handleSubmit;
   }, [handleSubmit]);
+
+  // Sends `/compact` as a message, which the provider's CLI runs as its own compaction, without
+  // touching the composer. During a turn it is queued behind it: a slash command is a turn of its own.
+  const compactConversation = useCallback(() => {
+    if (!selectedSession?.id && !currentSessionId) {
+      throw new Error('There is no conversation to compact yet.');
+    }
+    const draft: QueuedDraft = {
+      content: COMPACT_COMMAND,
+      attachments: [],
+      uploadedAttachments: [],
+      options: buildSendOptions(COMPACT_COMMAND),
+    };
+    if (isLoading) {
+      void queueMessage(draft, sessionKey, { fromComposer: false });
+      return;
+    }
+    void handleSubmit(createFakeSubmitEvent(), draft, { skipCommandInterception: true, leaveComposer: true });
+  }, [buildSendOptions, currentSessionId, handleSubmit, isLoading, queueMessage, selectedSession?.id, sessionKey]);
 
   // The VPS dispatcher owns sending. While the card is visible, periodically
   // reconcile it with the server, so the UI notices when the server claims it
@@ -1707,5 +1732,6 @@ export function useChatComposerState({
     commandModalPayload,
     closeCommandModal,
     showCostModal,
+    compactConversation,
   };
 }

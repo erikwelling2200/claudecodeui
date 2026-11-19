@@ -286,6 +286,7 @@ function ChatInterface({
     commandModalPayload,
     closeCommandModal,
     showCostModal,
+    compactConversation,
     editingAnchorId,
     beginEditMessage,
     cancelEditMessage,
@@ -637,6 +638,7 @@ function ChatInterface({
           modelsLoading={providerModelsLoading}
           tokenBudget={tokenBudget}
           onShowTokenUsage={showCostModal}
+          onCompactConversation={provider === 'claude' && (selectedSession?.id || currentSessionId) ? compactConversation : undefined}
           isEditingSentMessage={Boolean(editingAnchorId)}
           onCancelEditMessage={cancelEditMessage}
           scheduledMessages={scheduledMessages}

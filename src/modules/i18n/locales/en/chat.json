@@ -427,6 +427,7 @@
     "userDeniedTool": "User denied tool use",
     "showTokenUsage": "Show token usage",
     "contextUsed": "{{percent}}% of context used",
+    "ctrlClickToCompact": "Ctrl+click to compact",
     "fallbackCommands": {
       "models": "Browse available models for the active provider.",
       "cost": "Review token usage for the active session.",
