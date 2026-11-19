@@ -382,6 +382,8 @@ export type NormalizedMessage = {
   isCompactSummary?: boolean;
   /** Id of the subagent or teammate that sent this user-role row; the user did not type it. */
   agentMessageFrom?: string;
+  /** Claude session id of the other chat that sent this row, when it is a chat and not a subagent. */
+  agentMessageSessionId?: string;
   /** Set on the row that stands in for a compaction, so the UI can draw it as one. */
   compact?: CompactionInfo;
   images?: unknown;

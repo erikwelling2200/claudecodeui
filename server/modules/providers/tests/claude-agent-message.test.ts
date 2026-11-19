@@ -75,3 +75,37 @@ test('a queued peer message that is not an agent message stays hidden', () => {
     attachment: { type: 'queued_command', commandMode: 'prompt', origin: { kind: 'peer' }, prompt: '<cross-session-message>hi</cross-session-message>' },
   }, SESSION_ID), []);
 });
+
+const CROSS_SESSION = '<cross-session-message from="uds:\\\\.\\pipe\\LOCAL\\cc-msg-0123" from-name="operatie-ov-78" from-mode="prompting">\nThanks, already working on it.\n</cross-session-message>';
+
+test('another chat\'s message shows as that chat\'s, live and queued', () => {
+  const [live] = normalize(`Another Claude session sent a message:\n${CROSS_SESSION}\n\nThis came from another Claude session.`, true);
+  assert.equal(live.role, 'user');
+  assert.equal(live.agentMessageFrom, 'operatie-ov-78');
+  assert.equal(live.content, 'Thanks, already working on it.');
+
+  const [stored, ...rest] = provider.normalizeMessage({
+    type: 'attachment',
+    uuid: 'q-3',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    attachment: { type: 'queued_command', commandMode: 'prompt', source_uuid: 'stdin-2', origin: { kind: 'peer' }, prompt: CROSS_SESSION },
+  }, SESSION_ID);
+  assert.equal(rest.length, 0);
+  assert.equal(stored.agentMessageFrom, 'operatie-ov-78');
+  assert.equal(stored.steerId, undefined);
+});
+
+test('an idle notice shows as the watched chat\'s, without the harness disclaimer', () => {
+  const [row] = normalize('[Cross-session idle notice] "operatie-ov-d1", which you asked to be notified about, is idle now - it finished a turn at 16:29. This is an automated notice from that session\'s harness.', true);
+  assert.equal(row.agentMessageFrom, 'operatie-ov-d1');
+  assert.equal(row.content, 'operatie-ov-d1 is idle now - it finished a turn at 16:29.');
+});
+
+test('the path line of an attached image is not shown as a message', () => {
+  assert.deepEqual(normalize('[Image: source: C:\\Temp\\images\\1.png]'), []);
+});
+
+test('editor context the IDE attaches is not shown as a message', () => {
+  assert.deepEqual(normalize('<ide_opened_file>The user opened the file a.cs in the IDE.</ide_opened_file>'), []);
+  assert.deepEqual(normalize('<ide_selection>The user selected line 1 of a.cs.</ide_selection>'), []);
+});
