@@ -8,6 +8,10 @@ export type PaletteOps = {
   openFileInEditor: (path: string, line?: number | null) => void;
   // Directories cannot be read as text: they open in the file tree instead.
   openDirectory: (path: string) => void;
+  // The full path a chat file reference names, resolved the way openFileInEditor resolves it.
+  resolveFilePath: (path: string) => Promise<string>;
+  // Shows the file in the server machine's file manager; rejects when it cannot.
+  revealFile: (path: string) => Promise<void>;
   openSettings: (tab?: string) => void;
   refreshProjects: () => Promise<void> | void;
   // Appends text to the chat composer and focuses it (used by the quick
@@ -23,6 +27,10 @@ const defaultOps: PaletteOps = {
   openFile: () => undefined,
   openFileInEditor: () => undefined,
   openDirectory: () => undefined,
+  resolveFilePath: async (path) => path,
+  revealFile: async () => {
+    throw new Error('No workspace is open to reveal the file in.');
+  },
   openSettings: () => undefined,
   refreshProjects: () => undefined,
   insertComposerText: () => undefined,
@@ -42,6 +50,8 @@ export function usePaletteOps(): PaletteOps {
       openFileInEditor: (path, line) =>
         (ref?.current.openFileInEditor ?? defaultOps.openFileInEditor)(path, line),
       openDirectory: (path) => (ref?.current.openDirectory ?? defaultOps.openDirectory)(path),
+      resolveFilePath: (path) => (ref?.current.resolveFilePath ?? defaultOps.resolveFilePath)(path),
+      revealFile: (path) => (ref?.current.revealFile ?? defaultOps.revealFile)(path),
       openSettings: (tab) => (ref?.current.openSettings ?? defaultOps.openSettings)(tab),
       refreshProjects: () => (ref?.current.refreshProjects ?? defaultOps.refreshProjects)(),
       insertComposerText: (text) =>
@@ -57,6 +67,8 @@ export function usePaletteOpsRegister(partial: Partial<PaletteOps>) {
     openFile,
     openFileInEditor,
     openDirectory,
+    resolveFilePath,
+    revealFile,
     openSettings,
     refreshProjects,
     insertComposerText,
@@ -72,6 +84,8 @@ export function usePaletteOpsRegister(partial: Partial<PaletteOps>) {
     if (openFile) registry.openFile = openFile;
     if (openFileInEditor) registry.openFileInEditor = openFileInEditor;
     if (openDirectory) registry.openDirectory = openDirectory;
+    if (resolveFilePath) registry.resolveFilePath = resolveFilePath;
+    if (revealFile) registry.revealFile = revealFile;
     if (openSettings) registry.openSettings = openSettings;
     if (refreshProjects) registry.refreshProjects = refreshProjects;
     if (insertComposerText) registry.insertComposerText = insertComposerText;
@@ -79,9 +93,11 @@ export function usePaletteOpsRegister(partial: Partial<PaletteOps>) {
       if (openFile && registry.openFile === openFile) registry.openFile = prev.openFile;
       if (openFileInEditor && registry.openFileInEditor === openFileInEditor) registry.openFileInEditor = prev.openFileInEditor;
       if (openDirectory && registry.openDirectory === openDirectory) registry.openDirectory = prev.openDirectory;
+      if (resolveFilePath && registry.resolveFilePath === resolveFilePath) registry.resolveFilePath = prev.resolveFilePath;
+      if (revealFile && registry.revealFile === revealFile) registry.revealFile = prev.revealFile;
       if (openSettings && registry.openSettings === openSettings) registry.openSettings = prev.openSettings;
       if (refreshProjects && registry.refreshProjects === refreshProjects) registry.refreshProjects = prev.refreshProjects;
       if (insertComposerText && registry.insertComposerText === insertComposerText) registry.insertComposerText = prev.insertComposerText;
     };
-  }, [ref, openFile, openFileInEditor, openDirectory, openSettings, refreshProjects, insertComposerText]);
+  }, [ref, openFile, openFileInEditor, openDirectory, resolveFilePath, revealFile, openSettings, refreshProjects, insertComposerText]);
 }

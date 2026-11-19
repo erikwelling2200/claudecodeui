@@ -44,16 +44,15 @@ const findBestMatch = (files: FlatFile[], ref: string): string | null => {
 const SEARCH_LIMIT = 1000;
 
 /**
- * Wraps an `onFileOpen` handler so a possibly bare/partial file reference is
- * resolved through the server's project file search before the file is opened
- * in the in-app editor.
+ * Resolves a possibly bare/partial file reference to the project file it most
+ * likely names, through the server's project file search. A reference nothing
+ * matches comes back as it was, normalized.
  */
-export function useFileOpenResolver(
+export function useFileReferenceResolver(
   selectedProject: Project | null | undefined,
-  onFileOpen: OnFileOpen,
   // The chat the reference came from: the search runs in the worktrees that chat works in.
   sessionId: string | null = null,
-): OnFileOpen {
+): (filePath: string) => Promise<string> {
   const projectId = selectedProject?.projectId;
   // The search matches the reference as a path when it holds a slash, otherwise by name,
   // so every file `findBestMatch` could pick is among the results.
@@ -74,26 +73,38 @@ export function useFileOpenResolver(
     }
   }, [projectId, sessionId]);
 
+  return useCallback(async (filePath: string) => {
+    // Normalized once and used for every outcome: a reference picked up from
+    // link text can carry surrounding whitespace, which the API would take as
+    // part of the filename and answer with a 404.
+    const ref = normalize(filePath).trim();
+    // An absolute path already names one exact file: matching it against the
+    // tree can only send it somewhere else — `/home/user/.config/NOTES.md`
+    // used to fall through to the filename match and silently open the
+    // project's own `NOTES.md`. A path that exists is unaffected; one that no
+    // longer does now reports that instead of opening a same-named file.
+    if (isAbsoluteRef(ref)) {
+      return ref;
+    }
+    return findBestMatch(await searchFiles(ref), ref) ?? ref;
+  }, [searchFiles]);
+}
+
+/**
+ * Wraps an `onFileOpen` handler so a possibly bare/partial file reference is
+ * resolved through `useFileReferenceResolver` before the file is opened in the
+ * in-app editor.
+ */
+export function useFileOpenResolver(
+  selectedProject: Project | null | undefined,
+  onFileOpen: OnFileOpen,
+  sessionId: string | null = null,
+): OnFileOpen {
+  const resolveReference = useFileReferenceResolver(selectedProject, sessionId);
   return useCallback(
     (filePath: string, diffInfo?: any, line?: number | null) => {
-      // Normalized once and used for every outcome: a reference picked up from
-      // link text can carry surrounding whitespace, which the API would take as
-      // part of the filename and answer with a 404.
-      const ref = normalize(filePath).trim();
-      // An absolute path already names one exact file: matching it against the
-      // tree can only send it somewhere else — `/home/user/.config/NOTES.md`
-      // used to fall through to the filename match and silently open the
-      // project's own `NOTES.md`. A path that exists is unaffected; one that no
-      // longer does now reports that instead of opening a same-named file.
-      if (isAbsoluteRef(ref)) {
-        onFileOpen(ref, diffInfo, line);
-        return;
-      }
-      void searchFiles(ref).then((files) => {
-        const match = findBestMatch(files, ref);
-        onFileOpen(match ?? ref, diffInfo, line);
-      });
+      void resolveReference(filePath).then((resolved) => onFileOpen(resolved, diffInfo, line));
     },
-    [searchFiles, onFileOpen],
+    [resolveReference, onFileOpen],
   );
 }

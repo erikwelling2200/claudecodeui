@@ -328,6 +328,12 @@ export const api = {
   // Workspace file tree
   readFile: (projectId: string, filePath: string, sessionId?: string | null) =>
     get(`/api/file-tree/projects/${projectId}/file${query({ filePath, sessionId })}`),
+  // The full path a (possibly relative) reference names, and whether it exists.
+  resolveFilePath: (projectId: string, filePath: string, sessionId?: string | null) =>
+    get(`/api/file-tree/projects/${projectId}/files/resolve${query({ path: filePath, sessionId })}`),
+  // Opens the server machine's file manager with the file selected.
+  revealFile: (projectId: string, filePath: string, sessionId?: string | null) =>
+    post(`/api/file-tree/projects/${projectId}/files/reveal`, { path: filePath, ...(sessionId ? { sessionId } : {}) }),
   // Raw bytes for a workspace file. The endpoint requires the auth header, so
   // media call sites fetch a blob through here instead of using a bare `src`.
   readFileBlob: (projectId: string, filePath: string, { sessionId, ...options }: ApiRequestOptions & FileTreeSessionOptions = {}) =>

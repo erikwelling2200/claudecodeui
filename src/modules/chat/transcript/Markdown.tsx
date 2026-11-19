@@ -6,6 +6,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useTranslation } from 'react-i18next';
+import { AlertCircle, Check, Copy, ExternalLink, FolderOpen } from 'lucide-react';
 
 import { MermaidDiagram } from '@/modules/code-editor';
 import { ChatReference } from '@/modules/chat/transcript/ChatReference';
@@ -13,6 +14,7 @@ import { MarkdownImage } from '@/modules/chat/transcript/MarkdownImage';
 import { normalizeInlineCodeFences } from '@/modules/chat/utils/chatFormatting';
 import { normalizeLatexDelimiters } from '@/modules/chat/utils/latexDelimiters';
 import { copyTextToClipboard } from '@/shared/utils';
+import { ActionMenu } from '@/shared/ui';
 import { SyntaxHighlighter } from '@/shared/syntaxHighlighter';
 import { usePaletteOps } from '@/modules/command-palette';
 import { buildSyntaxTheme } from '@/modules/chat/utils/syntaxHighlightTheme';
@@ -96,10 +98,13 @@ const looksLikeCodeFileReference = (value: string): boolean => {
 type FileOps = Pick<ReturnType<typeof usePaletteOps>, 'openFileInEditor' | 'openDirectory'>;
 
 // `decode` is for markdown hrefs, which are URLs; link text and inline code are already literal.
+// Strip line metadata before decoding so an encoded colon in a filename is not taken for a line suffix.
+const fileReferencePath = (reference: string, decode: boolean): string =>
+  decode ? decodeFileHref(stripLineSuffix(reference)) : stripLineSuffix(reference);
+
 const openFileReference = (rawReference: string, { openFileInEditor, openDirectory }: FileOps, decode = false) => {
   const reference = rawReference.trim();
-  // Strip line metadata before decoding so an encoded colon in a filename is not taken for a line suffix.
-  const path = decode ? decodeFileHref(stripLineSuffix(reference)) : stripLineSuffix(reference);
+  const path = fileReferencePath(reference, decode);
   if (path.endsWith('/')) {
     openDirectory(path);
     return;
@@ -109,6 +114,102 @@ const openFileReference = (rawReference: string, { openFileInEditor, openDirecto
 
 // Set inside a rendered link, so inline code there does not nest a second link.
 const InsideLinkContext = React.createContext(false);
+
+type ActionState = 'idle' | 'busy' | 'done' | 'error';
+
+type FilePathLinkProps = {
+  reference: string;
+  href: string;
+  className: string;
+  /** The reference is a markdown href, so URL-encoded. */
+  decode?: boolean;
+  children: React.ReactNode;
+};
+
+/** A file reference in a message: a click opens it in the editor, a right-click offers the file actions. */
+const FilePathLink = ({ reference, href, className, decode = false, children }: FilePathLinkProps) => {
+  const fileOps = usePaletteOps();
+  const [link, setLink] = useState<HTMLAnchorElement | null>(null);
+  const [copyState, setCopyState] = useState<ActionState>('idle');
+  const [revealState, setRevealState] = useState<ActionState>('idle');
+  const path = fileReferencePath(reference.trim(), decode);
+
+  const runAction = async (action: () => Promise<void>, setState: (state: ActionState) => void) => {
+    setState('busy');
+    try {
+      await action();
+      setState('done');
+    } catch (error) {
+      console.error(error);
+      setState('error');
+    }
+  };
+
+  const copyPath = () => runAction(async () => {
+    if (!(await copyTextToClipboard(await fileOps.resolveFilePath(path)))) {
+      throw new Error('The clipboard refused the path.');
+    }
+  }, setCopyState);
+
+  const revealFile = () => runAction(() => fileOps.revealFile(path), setRevealState);
+
+  const resetStates = React.useCallback((open: boolean) => {
+    if (!open) {
+      setCopyState('idle');
+      setRevealState('idle');
+    }
+  }, []);
+
+  return (
+    <>
+      <a
+        ref={setLink}
+        href={href}
+        className={className}
+        onClick={(event) => {
+          event.preventDefault();
+          openFileReference(reference, fileOps, decode);
+        }}
+      >
+        {children}
+      </a>
+      <ActionMenu
+        label="File options"
+        hideTrigger
+        portal
+        contextMenuTarget={link}
+        onOpenChange={resetStates}
+        menuClassName="w-[260px] rounded-xl p-1.5 shadow-xl"
+        items={[
+          {
+            key: 'open',
+            label: 'Open',
+            icon: ExternalLink,
+            onSelect: () => openFileReference(reference, fileOps, decode),
+          },
+          {
+            key: 'reveal',
+            label: revealState === 'error' ? 'Could not show in Explorer' : 'Show in Explorer',
+            description: revealState === 'error' ? 'Click to try again.' : undefined,
+            icon: revealState === 'done' ? Check : revealState === 'error' ? AlertCircle : FolderOpen,
+            loading: revealState === 'busy',
+            closeOnSelect: false,
+            onSelect: () => void revealFile(),
+          },
+          {
+            key: 'copy',
+            label: copyState === 'done' ? 'Path copied' : copyState === 'error' ? 'Could not copy path' : 'Copy path',
+            description: copyState === 'error' ? 'Click to try again.' : undefined,
+            icon: copyState === 'done' ? Check : copyState === 'error' ? AlertCircle : Copy,
+            loading: copyState === 'busy',
+            closeOnSelect: false,
+            onSelect: () => void copyPath(),
+          },
+        ]}
+      />
+    </>
+  );
+};
 
 // Extract plain text from link children so a reference rendered only as link
 // text (e.g. `[src/foo.ts]()` with an empty href) can still be opened.
@@ -180,7 +281,6 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
   const { t } = useTranslation('chat');
   const [copied, setCopied] = useState(false);
   const insideLink = React.useContext(InsideLinkContext);
-  const fileOps = usePaletteOps();
   // Fenced blocks carry a trailing newline in the tree; trim it so the
   // highlighter doesn't render an empty final line.
   const raw = (Array.isArray(children) ? children.join('') : String(children ?? '')).replace(/\n$/, '');
@@ -190,14 +290,7 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
 
   if (shouldInline && !insideLink && looksLikeCodeFileReference(raw)) {
     return (
-      <a
-        href={raw.trim()}
-        className="cursor-pointer no-underline hover:underline"
-        onClick={(event) => {
-          event.preventDefault();
-          openFileReference(raw, fileOps);
-        }}
-      >
+      <FilePathLink reference={raw} href={raw.trim()} className="cursor-pointer no-underline hover:underline">
         <code
           className={`whitespace-pre-wrap break-words rounded-md border border-border/70 bg-muted px-1.5 py-0.5 font-mono text-[0.875em] text-blue-600 dark:text-blue-400 ${className || ''
             }`}
@@ -205,7 +298,7 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
         >
           {children}
         </code>
-      </a>
+      </FilePathLink>
     );
   }
 
@@ -285,16 +378,13 @@ const CodeBlock = ({ node: _node, className, children, forceBlock, ...props }: C
         <div className="break-all px-4 pb-4 pt-2 font-mono text-[0.8125rem] leading-[1.6]">
           {filePaths.map((filePath, index) => (
             <div key={index}>
-              <a
+              <FilePathLink
+                reference={filePath}
                 href={filePath.trim()}
                 className="cursor-pointer text-blue-600 no-underline hover:underline dark:text-blue-400"
-                onClick={(event) => {
-                  event.preventDefault();
-                  openFileReference(filePath, fileOps);
-                }}
               >
                 {filePath}
-              </a>
+              </FilePathLink>
             </div>
           ))}
         </div>
@@ -430,7 +520,6 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
     [breaks, hasMath, hasChatId],
   );
   const rehypePlugins = useMemo(() => (hasMath ? [rehypeKatex] : EMPTY_PLUGINS), [hasMath]);
-  const { openFileInEditor, openDirectory } = usePaletteOps();
 
   const components = useMemo(
     () => ({
@@ -446,18 +535,16 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
 
         if (fileRef && !isExternalHref(href)) {
           return (
-            <a
+            // The link-text fallback keeps a trailing space (``[`src/foo.ts:12` ]()``),
+            // which FilePathLink trims before the `$`-anchored suffix strip.
+            <FilePathLink
+              reference={fileRef}
               href={href || fileRef}
+              decode={href === fileRef}
               className="cursor-pointer text-blue-600 hover:underline dark:text-blue-400"
-              onClick={(event) => {
-                event.preventDefault();
-                // The link-text fallback keeps a trailing space (``[`src/foo.ts:12` ]()``),
-                // which openFileReference trims before the `$`-anchored suffix strip.
-                openFileReference(fileRef, { openFileInEditor, openDirectory }, href === fileRef);
-              }}
             >
               <InsideLinkContext.Provider value>{linkChildren}</InsideLinkContext.Provider>
-            </a>
+            </FilePathLink>
           );
         }
 
@@ -473,7 +560,7 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
         );
       },
     }),
-    [openFileInEditor, openDirectory],
+    [],
   );
 
   return (
