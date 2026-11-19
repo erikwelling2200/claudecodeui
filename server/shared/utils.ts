@@ -1290,6 +1290,70 @@ export async function readFileTimestamps(
   }
 }
 
+/**
+ * Returns the `timestamp` of the last JSONL entry that carries one, as an ISO string.
+ *
+ * Claude transcripts end with bookkeeping lines (`cost-state`, `mode`, `last-prompt`, titles) that carry
+ * no timestamp and are rewritten whenever any process loads the session, so the file's mtime is not when
+ * the conversation last changed. Reads backwards in chunks, so a large transcript costs only its tail.
+ * Returns undefined when the file is unreadable or no entry has a timestamp.
+ */
+export async function readLastJsonlEntryTimestamp(filePath: string): Promise<string | undefined> {
+  const chunkSize = 64 * 1024;
+  let handle: fs.promises.FileHandle | undefined;
+  try {
+    handle = await fs.promises.open(filePath, 'r');
+    const { size } = await handle.stat();
+    let position = size;
+    let carry = Buffer.alloc(0);
+
+    while (position > 0) {
+      const readSize = Math.min(chunkSize, position);
+      position -= readSize;
+      const chunk = Buffer.alloc(readSize);
+      await handle.read(chunk, 0, readSize, position);
+      const buffer = Buffer.concat([chunk, carry]);
+
+      // Until the start of the file is reached, the first line in the buffer may be cut off: keep it for the next round.
+      const firstNewline = position > 0 ? buffer.indexOf(0x0a) : -1;
+      let complete: Buffer;
+      if (position === 0) {
+        complete = buffer;
+        carry = Buffer.alloc(0);
+      } else if (firstNewline >= 0) {
+        complete = buffer.subarray(firstNewline + 1);
+        carry = buffer.subarray(0, firstNewline + 1);
+      } else {
+        complete = Buffer.alloc(0);
+        carry = buffer;
+      }
+
+      const lines = complete.toString('utf8').split(/\r?\n/);
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const line = lines[index]?.trim();
+        if (!line || !line.includes('"timestamp"')) {
+          continue;
+        }
+
+        try {
+          const timestamp = (JSON.parse(line) as Record<string, unknown>).timestamp;
+          if (typeof timestamp === 'string' && !Number.isNaN(Date.parse(timestamp))) {
+            return new Date(timestamp).toISOString();
+          }
+        } catch {
+          // A malformed line, such as one still being written, is skipped.
+        }
+      }
+    }
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close();
+  }
+
+  return undefined;
+}
+
 // ---------------------------
 //----------------- SESSION SYNCHRONIZER JSONL PARSING HELPERS ------------
 /**
