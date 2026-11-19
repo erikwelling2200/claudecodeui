@@ -39,6 +39,7 @@ function ProjectWorkspaceRouteContent() {
       sessionId={sessionId}
       navigate={navigate}
       subscribe={subscribe}
+      sendMessage={sendMessage}
       isMobile={isMobile}
       isSessionProcessing={isSessionProcessing}
     >

@@ -48,6 +48,7 @@ type ProjectsStateProviderProps = {
   sessionId?: string;
   navigate: NavigateFunction;
   subscribe: (listener: (event: ServerEvent) => void) => () => void;
+  sendMessage: (message: unknown) => void;
   isMobile: boolean;
   isSessionProcessing: IsSessionProcessing;
 };
@@ -64,6 +65,7 @@ export function ProjectsStateProvider({
   sessionId,
   navigate,
   subscribe,
+  sendMessage,
   isMobile,
   isSessionProcessing,
 }: ProjectsStateProviderProps) {
@@ -71,6 +73,7 @@ export function ProjectsStateProvider({
     sessionId,
     navigate,
     subscribe,
+    sendMessage,
     isMobile,
     isSessionProcessing,
   });

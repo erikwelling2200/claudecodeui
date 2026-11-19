@@ -63,6 +63,7 @@ const renderProjectsState = async () => {
     useProjectsState({
       sessionId: undefined,
       navigate: vi.fn(),
+      sendMessage: () => {},
       subscribe: (listener: ServerEventListener) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -233,6 +234,7 @@ test('a superseded first load never renders the sidebar as empty', async () => {
     const state = useProjectsState({
       sessionId: undefined,
       navigate: vi.fn(),
+      sendMessage: () => {},
       subscribe: (listener: ServerEventListener) => {
         listeners.add(listener);
         return () => listeners.delete(listener);

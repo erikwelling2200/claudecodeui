@@ -46,6 +46,8 @@ const emit = (event: ServerEvent) => {
   });
 };
 
+const sendMessage = vi.fn();
+
 const renderProjectsState = async () => {
   const { useProjectsState } = await import(
     '@/modules/project-workspace/hooks/useProjectsState'
@@ -55,6 +57,7 @@ const renderProjectsState = async () => {
     useProjectsState({
       sessionId: undefined,
       navigate: vi.fn(),
+      sendMessage,
       subscribe: (listener: (event: ServerEvent) => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -68,6 +71,7 @@ const renderProjectsState = async () => {
 beforeEach(() => {
   localStorage.clear();
   projectsResponse.mockReset();
+  sendMessage.mockReset();
   projectsResponse.mockResolvedValue({ ok: true, json: async () => [project] });
   listeners.clear();
 });
@@ -139,4 +143,17 @@ test('an answered permission request clears the amber dot', async () => {
 
   emit({ kind: 'permission_resolved', sessionId: BACKGROUND_SESSION_ID });
   assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), false);
+});
+
+test('a session read on another device loses its unread dot here, and opening one tells the other devices', async () => {
+  const { result } = await renderProjectsState();
+  await waitFor(() => assert.equal(result.current.sidebarSharedProps.isLoading, false));
+
+  emit({ kind: 'complete', sessionId: BACKGROUND_SESSION_ID, exitCode: 0 });
+  assert.equal(result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), true);
+  emit({ kind: 'session_read', sessionId: BACKGROUND_SESSION_ID });
+  assert.equal(result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), false);
+
+  act(() => result.current.sidebarSharedProps.onSessionSelect(project.sessions![0]));
+  assert.deepEqual(sendMessage.mock.calls.at(-1), [{ type: 'chat.mark-read', sessionId: BACKGROUND_SESSION_ID }]);
 });
