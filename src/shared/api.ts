@@ -302,6 +302,9 @@ export const api = {
   providerSessionId: (sessionId: string) =>
     get(`/api/providers/sessions/${encodeURIComponent(sessionId)}/provider-id`),
   restoreSession: (sessionId: string) => post(`/api/providers/sessions/${sessionId}/restore`),
+  // Stops the session's processes; the next message resumes it in a fresh one.
+  restartSession: (sessionId: string) =>
+    post(`/api/providers/sessions/${encodeURIComponent(sessionId)}/restart`),
   // Creates an independent session holding this one's conversation up to
   // `upToAnchorId` (all of it when omitted). The source is left untouched.
   forkSession: (sessionId: string, body: { upToAnchorId?: string; title?: string } = {}) =>
