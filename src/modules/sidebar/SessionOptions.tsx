@@ -1,13 +1,16 @@
-import { useEffect, useRef } from 'react';
-import { Check, Edit2, GitBranch, MoreHorizontal, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertCircle, Check, Edit2, GitBranch, MoreHorizontal, RotateCcw, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
+import { api } from '@/shared/api';
 import { ActionMenu } from '@/shared/ui';
 import { cn } from '@/shared/utils';
 import type { LLMProvider } from '@/shared/types';
 import { useSessionForkingProviders } from '@/shared/hooks/useProviderCapabilities';
 import { useProviderSessionIdCopy } from '@/modules/sidebar/hooks/useProviderSessionIdCopy';
 import { PROVIDER_LABELS } from '@/modules/sidebar/utils/sidebarProjectFormatting';
+
+type RestartState = 'idle' | 'restarting' | 'restarted' | 'error';
 
 type SessionOptionsProps = {
   sessionId: string;
@@ -43,6 +46,8 @@ type SessionOptionsProps = {
  * drift — the first cut of the Conversations row copied this markup, which is
  * how two rows end up diverging one fix at a time. Callers keep only what is
  * genuinely theirs: where the controls sit, and whether deleting is offered.
+ *
+ * Right-clicking the row, the element this one sits in, opens the same menu.
  */
 export default function SessionOptions({
   sessionId,
@@ -71,6 +76,29 @@ export default function SessionOptions({
   // provider id here; the request is cached module-side, so every row shares one.
   const forkableProviders = useSessionForkingProviders();
   const canFork = Boolean(onFork) && forkableProviders.has(provider) && !isProcessing;
+
+  const [rowElement, setRowElement] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setRowElement(containerRef.current?.parentElement ?? null);
+  }, []);
+
+  const [restartState, setRestartState] = useState<RestartState>('idle');
+  const handleOpenChange = useCallback((open: boolean) => {
+    setOptionsOpen(open);
+    if (!open) {
+      setRestartState('idle');
+    }
+  }, [setOptionsOpen]);
+
+  const restartSession = async () => {
+    setRestartState('restarting');
+    try {
+      const response = await api.restartSession(sessionId);
+      setRestartState(response.ok ? 'restarted' : 'error');
+    } catch {
+      setRestartState('error');
+    }
+  };
 
   // While editing, dismiss only when the click lands outside the rename panel,
   // matching Escape and the cancel button.
@@ -148,7 +176,8 @@ export default function SessionOptions({
           portal
           variant="ghost"
           size="icon"
-          onOpenChange={setOptionsOpen}
+          onOpenChange={handleOpenChange}
+          contextMenuTarget={isEditing ? null : rowElement}
           triggerClassName="h-7 w-7 text-muted-foreground opacity-70 hover:bg-muted hover:opacity-100"
           menuClassName="w-[260px] rounded-xl p-1.5 shadow-xl"
           header={(
@@ -174,6 +203,16 @@ export default function SessionOptions({
               loading: isCopyPending,
               closeOnSelect: false,
               onSelect: handleCopyAction,
+            },
+            {
+              key: 'restart',
+              label: restartState === 'restarted' ? 'Session restarted'
+                : restartState === 'error' ? 'Restart failed' : 'Restart session',
+              description: restartState === 'error' ? 'Click to try again.' : 'Starts in a fresh process with the next message.',
+              icon: restartState === 'restarted' ? Check : restartState === 'error' ? AlertCircle : RotateCcw,
+              loading: restartState === 'restarting',
+              closeOnSelect: false,
+              onSelect: () => void restartSession(),
             },
             ...(canFork && onFork ? [{
               key: 'fork',
