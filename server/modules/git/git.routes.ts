@@ -53,6 +53,7 @@ const COMMIT_DIFF_CHARACTER_LIMIT = 500_000;
 function spawnAsync(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
+      windowsHide: true,
       ...options,
       shell: false,
     });

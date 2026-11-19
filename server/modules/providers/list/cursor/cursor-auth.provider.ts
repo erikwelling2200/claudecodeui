@@ -78,7 +78,7 @@ export class CursorProviderAuth implements IProviderAuth {
       }, STATUS_TIMEOUT_MS);
 
       try {
-        childProcess = spawn('agent', ['status']);
+        childProcess = spawn('agent', ['status'], { windowsHide: true });
       } catch {
         clearTimeout(timeout);
         processCompleted = true;

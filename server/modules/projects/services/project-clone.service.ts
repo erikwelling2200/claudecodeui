@@ -158,6 +158,7 @@ const defaultDependencies: CloneProjectDependencies = {
     environment: NodeJS.ProcessEnv,
   ): GitCloneProcess =>
     spawn('git', ['clone', '--progress', '--', cloneUrl, clonePath], {
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: environment,
     }) as unknown as GitCloneProcess,

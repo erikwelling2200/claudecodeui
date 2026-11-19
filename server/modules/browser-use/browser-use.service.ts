@@ -244,6 +244,7 @@ const INSTALL_COMMAND_TIMEOUT_MS = Number.parseInt(
 function runCommand(command: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
+      windowsHide: true,
       cwd: process.cwd(),
       env: process.env,
       shell: false,

@@ -113,6 +113,7 @@ function runBuildIfNeeded(dir, packageJsonPath, onSuccess, onError) {
   }
 
   const buildProcess = spawn('npm', ['run', 'build'], {
+    windowsHide: true,
     cwd: dir,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -300,6 +301,7 @@ export function installPluginFromGit(url) {
     };
 
     const gitProcess = spawn('git', ['clone', '--depth', '1', '--', url, tempDir], {
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       ...getPluginGitSpawnOptions(),
     });
@@ -352,6 +354,7 @@ export function installPluginFromGit(url) {
       const packageJsonPath = path.join(tempDir, 'package.json');
       if (fs.existsSync(packageJsonPath)) {
         const npmProcess = spawn('npm', ['install', '--ignore-scripts'], {
+          windowsHide: true,
           cwd: tempDir,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
@@ -391,6 +394,7 @@ export function updatePluginFromGit(name) {
 
     // Only fast-forward to avoid silent divergence
     const gitProcess = spawn('git', ['pull', '--ff-only', '--'], {
+      windowsHide: true,
       cwd: pluginDir,
       stdio: ['ignore', 'pipe', 'pipe'],
       ...getPluginGitSpawnOptions(),
@@ -428,6 +432,7 @@ export function updatePluginFromGit(name) {
       const packageJsonPath = path.join(pluginDir, 'package.json');
       if (fs.existsSync(packageJsonPath)) {
         const npmProcess = spawn('npm', ['install', '--ignore-scripts'], {
+          windowsHide: true,
           cwd: pluginDir,
           stdio: ['ignore', 'pipe', 'pipe'],
         });

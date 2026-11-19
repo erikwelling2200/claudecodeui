@@ -26,7 +26,7 @@ function scriptMissing(): AppError {
 /** Runs the script with `args` (plus `--json`) and returns its parsed output. */
 export function runFindWorktree(args: string[]): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [SCRIPT_PATH, ...args, '--json'], { shell: false });
+    const child = spawn(process.execPath, [SCRIPT_PATH, ...args, '--json'], { shell: false, windowsHide: true });
     let stdout = '';
     let stderr = '';
     child.stdout?.on('data', (data: Buffer) => { stdout += data.toString(); });

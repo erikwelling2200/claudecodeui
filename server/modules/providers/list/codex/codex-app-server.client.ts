@@ -75,6 +75,7 @@ async function withAppServer<T>(
 ): Promise<T> {
   const launcher = resolveCodexLauncher();
   const child = spawn(process.execPath, [launcher, 'app-server'], {
+    windowsHide: true,
     env: process.env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });

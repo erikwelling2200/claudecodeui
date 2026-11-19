@@ -338,6 +338,7 @@ const readInstalledOpenCodeModels = async (): Promise<string[]> => new Promise((
     resolve([...models]);
   };
   const child = spawn('opencode', ['models'], {
+    windowsHide: true,
     stdio: ['ignore', 'pipe', 'ignore'],
     shell: false,
   });

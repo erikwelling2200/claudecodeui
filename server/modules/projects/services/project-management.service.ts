@@ -84,6 +84,7 @@ function isGitIgnoring(outerFolder: string, innerFolder: string): Promise<boolea
   const relativePath = path.relative(outerFolder, innerFolder).split(path.sep).join('/');
   return new Promise((resolve) => {
     const child = spawn('git', ['-C', outerFolder, 'check-ignore', '-q', '--', relativePath], {
+      windowsHide: true,
       shell: false,
       stdio: 'ignore',
     });

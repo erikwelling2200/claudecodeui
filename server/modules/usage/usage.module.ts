@@ -19,7 +19,7 @@ const usageLogin = createUsageLoginService({ homeDirectory: os.homedir(), fetch:
 const usageService = createUsageService({
   homeDirectory: os.homedir(),
   runUsageScript: (scriptPath) => new Promise((resolve, reject) => {
-    execFile(process.execPath, [scriptPath, '--force'], { cwd: os.homedir(), timeout: 30_000 }, (error) => (error ? reject(error) : resolve()));
+    execFile(process.execPath, [scriptPath, '--force'], { cwd: os.homedir(), timeout: 30_000, windowsHide: true }, (error) => (error ? reject(error) : resolve()));
   }),
   tokenUsable: usageLogin.tokenUsable,
 });

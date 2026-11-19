@@ -66,6 +66,7 @@ export function startPluginServer(name, pluginDir, serverEntry) {
     const serverPath = path.join(pluginDir, serverEntry);
 
     const pluginProcess = spawn('node', [serverPath], {
+      windowsHide: true,
       cwd: pluginDir,
       env: buildPluginEnv(name),
       stdio: ['ignore', 'pipe', 'pipe'],

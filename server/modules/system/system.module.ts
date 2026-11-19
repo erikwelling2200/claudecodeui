@@ -33,6 +33,7 @@ function runShellCommand(
 ): Promise<{ exitCode: number | null; output: string; errorOutput: string }> {
   return new Promise((resolve, reject) => {
     const childProcess = spawn('sh', ['-c', command], {
+      windowsHide: true,
       cwd: workingDirectory,
       env: environment,
     });

@@ -137,6 +137,7 @@ async function isRegisteredInEveryProvider(): Promise<boolean> {
 function checkMcpStarts(input: ReturnType<typeof buildMcpServerInput>): Promise<string | null> {
   return new Promise((resolve) => {
     const child = spawn(input.command, input.args, {
+      windowsHide: true,
       cwd: os.homedir(),
       env: { ...process.env, ...input.env, [AGENT_SESSION_ID_ENV]: 'startup-check' },
       stdio: ['pipe', 'pipe', 'pipe'],
