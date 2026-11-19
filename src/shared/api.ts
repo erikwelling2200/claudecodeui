@@ -717,6 +717,8 @@ export const api = {
 
   system: {
     update: () => post('/api/system/update'),
+    // Answers 202 and then exits; the process comes back under its supervisor or as a self-spawned replacement.
+    restart: () => post('/api/system/restart'),
   },
 
   // Claude plan limits shown at the bottom of the sidebar
