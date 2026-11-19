@@ -305,9 +305,10 @@ export const api = {
   // Stops the session's processes; the next message resumes it in a fresh one.
   restartSession: (sessionId: string) =>
     post(`/api/providers/sessions/${encodeURIComponent(sessionId)}/restart`),
-  // Creates an independent session holding this one's conversation up to
-  // `upToAnchorId` (all of it when omitted). The source is left untouched.
-  forkSession: (sessionId: string, body: { upToAnchorId?: string; title?: string } = {}) =>
+  // Creates an independent session holding this one's conversation up to and
+  // including `upToAnchorId`, or up to but excluding the user message
+  // `beforeAnchorId` (all of it when neither is given). The source is left untouched.
+  forkSession: (sessionId: string, body: { upToAnchorId?: string; beforeAnchorId?: string; title?: string } = {}) =>
     post(`/api/providers/sessions/${encodeURIComponent(sessionId)}/fork`, body),
   renameSession: (sessionId: string, summary: string) =>
     put(`/api/providers/sessions/${sessionId}`, { summary }),

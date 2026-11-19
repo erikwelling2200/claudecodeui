@@ -331,8 +331,10 @@ const parseProvider = (value: unknown): LLMProvider => {
   });
 };
 
-/** Both fields are optional: an empty body forks the whole conversation. */
-const parseSessionForkPayload = (payload: unknown): { upToAnchorId?: string; title?: string } => {
+/** Every field is optional: an empty body forks the whole conversation. */
+const parseSessionForkPayload = (
+  payload: unknown,
+): { upToAnchorId?: string; beforeAnchorId?: string; title?: string } => {
   if (payload === undefined || payload === null) {
     return {};
   }
@@ -345,10 +347,19 @@ const parseSessionForkPayload = (payload: unknown): { upToAnchorId?: string; tit
 
   const body = payload as Record<string, unknown>;
   const upToAnchorId = typeof body.upToAnchorId === 'string' ? body.upToAnchorId.trim() : '';
+  const beforeAnchorId = typeof body.beforeAnchorId === 'string' ? body.beforeAnchorId.trim() : '';
   const title = typeof body.title === 'string' ? body.title.trim() : '';
+
+  if (upToAnchorId && beforeAnchorId) {
+    throw new AppError('Send either upToAnchorId or beforeAnchorId, not both.', {
+      code: 'INVALID_REQUEST_BODY',
+      statusCode: 400,
+    });
+  }
 
   return {
     ...(upToAnchorId ? { upToAnchorId } : {}),
+    ...(beforeAnchorId ? { beforeAnchorId } : {}),
     ...(title ? { title } : {}),
   };
 };
