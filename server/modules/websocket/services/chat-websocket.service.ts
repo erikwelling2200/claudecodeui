@@ -924,6 +924,42 @@ export async function runDetachedChatTurn(
   );
 }
 
+/**
+ * Client frame ids received recently, with when. A client re-sends a frame whose
+ * receipt it never saw, so the same id can arrive twice; the second copy is
+ * acknowledged again but not handled. Process-wide because the re-send comes
+ * over a new socket.
+ */
+const receivedClientFrameIds = new Map<string, number>();
+const CLIENT_FRAME_ID_TTL_MS = 30 * 60 * 1000;
+const CLIENT_FRAME_ID_LIMIT = 2000;
+
+function readClientMessageId(data: AnyRecord): string | null {
+  const id = data.clientMessageId;
+  return typeof id === 'string' && id.length > 0 && id.length <= 64 ? id : null;
+}
+
+/** Records the id and tells whether it was new. */
+function rememberClientFrameId(id: string): boolean {
+  const now = Date.now();
+  const seenAt = receivedClientFrameIds.get(id);
+  if (seenAt !== undefined && now - seenAt < CLIENT_FRAME_ID_TTL_MS) {
+    return false;
+  }
+  receivedClientFrameIds.set(id, now);
+  // Map iteration is insertion order, so the oldest ids go first.
+  for (const [oldId, oldSeenAt] of receivedClientFrameIds) {
+    if (receivedClientFrameIds.size <= CLIENT_FRAME_ID_LIMIT && now - oldSeenAt < CLIENT_FRAME_ID_TTL_MS) break;
+    receivedClientFrameIds.delete(oldId);
+  }
+  return true;
+}
+
+/** Test hook: forgets every received frame id. */
+export function clearReceivedClientFrameIds(): void {
+  receivedClientFrameIds.clear();
+}
+
 export function handleChatConnection(
   ws: WebSocket,
   request: AuthenticatedWebSocketRequest,
@@ -931,6 +967,10 @@ export function handleChatConnection(
 ): void {
   console.log('[INFO] Chat WebSocket connected');
   connectedClients.add(ws);
+  // Tells the client this gateway confirms frames that carry a clientMessageId,
+  // so it may keep them until confirmed. A client that never sees this must not
+  // wait for receipts, or it would re-send every message to an older server.
+  sendJson(ws, { kind: 'gateway_features', clientFrameReceipts: true });
 
   const userId = readRequestUserId(request);
 
@@ -943,6 +983,16 @@ export function handleChatConnection(
 
       const data = parsed as AnyRecord;
       const messageType = typeof data.type === 'string' ? data.type : '';
+
+      // Acknowledged on arrival, before handling, so a frame that ends in a
+      // protocol error still counts as delivered and is not sent again.
+      const clientMessageId = readClientMessageId(data);
+      if (clientMessageId) {
+        sendJson(ws, { kind: 'client_frame_received', clientMessageId });
+        if (!rememberClientFrameId(clientMessageId)) {
+          return;
+        }
+      }
 
       switch (messageType) {
         case 'chat.edit-send':

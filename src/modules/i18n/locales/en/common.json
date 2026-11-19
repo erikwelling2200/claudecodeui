@@ -35,7 +35,10 @@
     "completed": "Completed",
     "inProgress": "In Progress",
     "reconnecting": "Reconnecting...",
-    "chatConnectionLost": "Chat connection lost. Reconnecting..."
+    "chatConnectionLost": "Chat connection lost. Reconnecting...",
+    "unsentMessages_one": "{{count}} message is sent once the connection is back",
+    "unsentMessages_other": "{{count}} messages are sent once the connection is back",
+    "unsentShort": "{{count}} unsent"
   },
   "messages": {
     "savedSuccessfully": "Saved successfully",
