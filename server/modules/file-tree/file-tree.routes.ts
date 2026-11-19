@@ -188,6 +188,15 @@ export function createFileTreeRouter(
     response.json(await services.browseWorkspace(readOptionalString(request.query.path)));
   }, logger));
 
+  router.post('/pick-folders', createRouteHandler(async (request, response) => {
+    const body = readBody(request);
+    response.json(await services.pickFoldersNatively({
+      multiple: body.multiple === true,
+      initialPath: readOptionalString(body.initialPath) ?? undefined,
+      title: readOptionalString(body.title) ?? undefined,
+    }));
+  }, logger));
+
   router.post('/create-folder', createRouteHandler(async (request, response) => {
     const body = readBody(request);
     const folderPath = readRequiredString(body.path, 'path', 'Path is required');

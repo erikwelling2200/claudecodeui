@@ -368,7 +368,8 @@
     "noSubfolders": "No subfolders found",
     "select": "Select",
     "pathLabel": "Path:",
-    "useThisFolder": "Use this folder"
+    "useThisFolder": "Use this folder",
+    "titleMultiple": "Select Folders"
   },
   "misc": {
     "errorTitle": "Something went wrong",

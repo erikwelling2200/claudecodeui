@@ -20,14 +20,20 @@ type CreateResponse = { status: number; body: Record<string, unknown> };
 
 const createRequests: unknown[] = [];
 let createResponse: CreateResponse = { status: 200, body: { success: true, project: { projectId: 'p1' } } };
+// What the server's folder dialog reports; no desktop session by default.
+let folderDialogResponse: Record<string, unknown> = { available: false, cancelled: false, paths: [] };
 
 beforeEach(() => {
   createRequests.length = 0;
   createResponse = { status: 200, body: { success: true, project: { projectId: 'p1' } } };
+  folderDialogResponse = { available: false, cancelled: false, paths: [] };
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (url.startsWith('/api/projects/create-project')) {
       createRequests.push(JSON.parse(String(init?.body)));
       return new Response(JSON.stringify(createResponse.body), { status: createResponse.status });
+    }
+    if (url.startsWith('/api/file-tree/pick-folders')) {
+      return new Response(JSON.stringify(folderDialogResponse), { status: 200 });
     }
     // Path autocompletion lookups.
     return new Response(JSON.stringify({ suggestions: [] }), { status: 200 });
@@ -46,8 +52,10 @@ const fillAndCreate = async ({ name, folders }: { name: string; folders: string[
   fireEvent.change(primaryInput, { target: { value: '/work/app' } });
   fireEvent.change(screen.getByLabelText('projectWizard.name.label'), { target: { value: name } });
 
-  for (const folder of folders) {
+  for (const [folderIndex, folder] of folders.entries()) {
     fireEvent.click(screen.getByText('projectWizard.folders.add'));
+    // The row appears once the server has answered whether it has a folder dialog.
+    await waitFor(() => assert.equal(screen.getAllByLabelText('projectWizard.folders.label').length, folderIndex + 1));
     const rows = screen.getAllByLabelText('projectWizard.folders.label');
     fireEvent.change(rows[rows.length - 1], { target: { value: folder } });
   }
@@ -80,4 +88,22 @@ test('an existing primary folder points the user to Edit project', async () => {
 
   assert.ok(await screen.findByText('projectWizard.errors.projectExists'));
   assert.equal(onProjectCreated.mock.calls.length, 0);
+});
+
+test('folders picked together in the dialog each become a row', async () => {
+  folderDialogResponse = { available: true, cancelled: false, paths: ['/work/lib', '/work/tools'] };
+  const onProjectCreated = vi.fn();
+  render(<ProjectCreationWizard onClose={vi.fn()} onProjectCreated={onProjectCreated} />);
+
+  const [primaryInput] = screen.getAllByPlaceholderText('/path/to/project/workspace');
+  fireEvent.change(primaryInput, { target: { value: '/work/app' } });
+
+  fireEvent.click(screen.getByText('projectWizard.folders.add'));
+  await waitFor(() => assert.equal(screen.getAllByLabelText('projectWizard.folders.label').length, 2));
+
+  fireEvent.click(screen.getByText('projectWizard.buttons.next'));
+  fireEvent.click(await screen.findByText('projectWizard.buttons.createProject'));
+
+  await waitFor(() => assert.equal(onProjectCreated.mock.calls.length, 1));
+  assert.deepEqual(createRequests, [{ path: '/work/app', additionalFolders: ['/work/lib', '/work/tools'] }]);
 });

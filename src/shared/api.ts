@@ -392,6 +392,10 @@ export const api = {
 
   createFolder: (folderPath: string) => post('/api/file-tree/create-folder', { path: folderPath }),
 
+  // Opens the operating system's folder dialog on the machine the server runs on.
+  pickFolders: (options: { multiple: boolean; initialPath?: string; title?: string }) =>
+    post('/api/file-tree/pick-folders', options),
+
   // Git endpoints. Each takes a GitTarget: `project` carries the DB projectId
   // and `folder` (absent for the primary) picks one folder of a multi-folder
   // project. Both ride in the query for GETs and in the body otherwise.

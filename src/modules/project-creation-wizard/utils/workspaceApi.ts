@@ -12,6 +12,13 @@ type BrowseFilesystemResponse = {
   error?: string;
 };
 
+type PickFoldersResponse = {
+  available?: boolean;
+  cancelled?: boolean;
+  paths?: string[];
+  error?: string;
+};
+
 type CreateFolderResponse = {
   success?: boolean;
   path?: string;
@@ -140,6 +147,26 @@ export const browseFilesystemFolders = async (pathToBrowse: string) => {
   return {
     path: data.path || pathToBrowse,
     suggestions: (data.suggestions || []) as FolderSuggestion[],
+  };
+};
+
+/**
+ * Asks the server to open the operating system's folder dialog on its own
+ * machine. `available` is false where that machine has no desktop session,
+ * which is the caller's cue to fall back to the in-app folder browser.
+ */
+export const pickFoldersNatively = async (options: { multiple: boolean; initialPath?: string; title?: string }) => {
+  const response = await api.pickFolders(options);
+  const data = await parseJson<PickFoldersResponse>(response);
+
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to open the folder dialog');
+  }
+
+  return {
+    available: data.available === true,
+    cancelled: data.cancelled === true,
+    paths: data.paths ?? [],
   };
 };
 

@@ -60,6 +60,7 @@ type ChatComposerProps = {
   /** False while the turn in flight runs in a CLI process the app does not drive, which nothing here can stop. */
   canAbortSession: boolean;
   onAbortSession: () => void;
+  isStoppingSession?: boolean;
   permissionMode: PermissionMode;
   availablePermissionModes: PermissionMode[];
   onSelectPermissionMode: (mode: PermissionMode) => void;
@@ -149,6 +150,7 @@ export default function ChatComposer({
   isLoading,
   canAbortSession,
   onAbortSession,
+  isStoppingSession = false,
   permissionMode,
   availablePermissionModes,
   onSelectPermissionMode,
@@ -304,7 +306,7 @@ export default function ChatComposer({
     <div className="chat-composer-shell relative flex-shrink-0 px-2 pb-2 pt-0 sm:px-4 sm:pb-4 md:px-4 md:pb-6">
       {!hasPendingPermissions && (
         <div className="pointer-events-none absolute bottom-full left-1/2 z-10 w-[calc(100%-1rem)] max-w-[54.25rem] -translate-x-1/2 translate-y-px bg-transparent sm:w-[calc(100%-2rem)]">
-          <ActivityIndicator activity={activity} onAbort={onAbortSession} isInputFocused={isInputFocused} />
+          <ActivityIndicator activity={activity} onAbort={onAbortSession} isInputFocused={isInputFocused} isStopping={isStoppingSession} />
         </div>
       )}
 
