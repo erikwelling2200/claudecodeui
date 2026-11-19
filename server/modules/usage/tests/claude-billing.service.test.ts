@@ -25,6 +25,7 @@ function createBilling(options: Options = {}) {
   }
   const config = new Map<string, string>(options.storedKey ? [['claude_fallback_api_key', options.storedKey]] : []);
   const ledger: { costUsd: number; at: number }[] = [];
+  const usage = new Map<string, unknown>();
   let clock = NOW;
   const billing = createClaudeBillingService({
     homeDirectory: home,
@@ -34,12 +35,35 @@ function createBilling(options: Options = {}) {
       record: (costUsd, _sessionId, at) => { ledger.push({ costUsd, at }); },
       sumSince: (since) => ledger.filter((row) => row.at >= since).reduce((sum, row) => sum + row.costUsd, 0),
     },
+    usage: { record: (messageId, _sessionId, row, at) => { usage.set(messageId, { ...row, at }); } },
     readUsageLimits: () => options.limits ?? [],
     creditCycleStart: () => options.cycleStart ?? Date.parse('2026-10-20T00:00:00Z'),
     now: () => clock,
   });
-  return { billing, home, advance: (ms: number) => { clock += ms; } };
+  return { billing, home, usage, advance: (ms: number) => { clock += ms; } };
 }
+
+test("a response's usage is recorded in the usage report's dimensions, its context window from the whole prompt", () => {
+  const { billing, usage } = createBilling();
+  billing.recordUsage({
+    id: 'msg_1',
+    model: 'claude-opus-5-5',
+    usage: {
+      input_tokens: 10, cache_read_input_tokens: 199_600, cache_creation_input_tokens: 500, output_tokens: 300,
+      cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 500 },
+      server_tool_use: { web_search_requests: 1 }, service_tier: 'standard', speed: 'standard',
+    },
+  }, 'session-1');
+  billing.recordUsage({ id: 'msg_2', model: 'claude-opus-5-5', usage: { input_tokens: 5, output_tokens: 1 } }, 'session-1');
+  billing.recordUsage({ model: 'claude-opus-5-5', usage: { input_tokens: 5 } }, 'session-1');
+  assert.deepEqual(usage.get('msg_1'), {
+    model: 'claude-opus-5-5', context_window: '200k-1M', service_tier: 'standard', speed: 'standard',
+    uncached_input_tokens: 10, output_tokens: 300, cache_read_input_tokens: 199_600,
+    cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 500 }, server_tool_use: { web_search_requests: 1 }, at: NOW,
+  });
+  assert.equal((usage.get('msg_2') as { context_window: string }).context_window, '0-200k');
+  assert.equal(usage.size, 2);
+});
 
 test('the subscription is used while it has room, even with a key stored', () => {
   const { billing } = createBilling({ storedKey: 'sk-stored' });
