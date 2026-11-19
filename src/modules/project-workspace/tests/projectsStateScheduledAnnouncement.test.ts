@@ -157,3 +157,28 @@ test('a session read on another device loses its unread dot here, and opening on
   act(() => result.current.sidebarSharedProps.onSessionSelect(project.sessions![0]));
   assert.deepEqual(sendMessage.mock.calls.at(-1), [{ type: 'chat.mark-read', sessionId: BACKGROUND_SESSION_ID }]);
 });
+
+test('a session marked unread by hand closes if open, survives focus and a reload, and clears only when opened again', async () => {
+  const first = await renderProjectsState();
+  await waitFor(() => assert.equal(first.result.current.sidebarSharedProps.isLoading, false));
+  act(() => first.result.current.sidebarSharedProps.onSessionSelect(project.sessions![0]));
+  assert.equal(first.result.current.selectedSession?.id, BACKGROUND_SESSION_ID);
+
+  act(() => first.result.current.sidebarSharedProps.onMarkSessionUnread(BACKGROUND_SESSION_ID));
+  assert.equal(first.result.current.selectedSession, null);
+  assert.equal(first.result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), true);
+
+  act(() => {
+    window.dispatchEvent(new Event('focus'));
+  });
+  assert.equal(first.result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), true);
+  first.unmount();
+
+  const second = await renderProjectsState();
+  await waitFor(() => assert.equal(second.result.current.sidebarSharedProps.isLoading, false));
+  assert.equal(second.result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), true);
+
+  act(() => second.result.current.sidebarSharedProps.onSessionSelect(project.sessions![0]));
+  assert.equal(second.result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), false);
+  assert.equal(localStorage.getItem('markedUnreadSessionIds'), null);
+});

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, Check, Edit2, GitBranch, MoreHorizontal, RotateCcw, Trash2, X } from 'lucide-react';
+import { AlertCircle, Check, Edit2, GitBranch, MailOpen, MoreHorizontal, RotateCcw, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { api } from '@/shared/api';
@@ -32,6 +32,7 @@ type SessionOptionsProps = {
   onDeleteSession: (sessionId: string, sessionTitle: string) => void;
   /** Bound by the caller, which owns the session object the fork needs. */
   onFork?: () => void;
+  onMarkUnread?: () => void;
   /** Withheld where the row has nowhere to send a delete. */
   canDelete?: boolean;
   className?: string;
@@ -63,6 +64,7 @@ export default function SessionOptions({
   onSaveEditingSession,
   onDeleteSession,
   onFork,
+  onMarkUnread,
   canDelete = true,
   className,
   t,
@@ -194,6 +196,12 @@ export default function SessionOptions({
               label: 'Rename session',
               icon: Edit2,
               onSelect: () => onStartEditingSession(projectId, sessionId, sessionName),
+            }] : []),
+            ...(onMarkUnread ? [{
+              key: 'mark-unread',
+              label: 'Mark as unread',
+              icon: MailOpen,
+              onSelect: onMarkUnread,
             }] : []),
             {
               key: 'copy',

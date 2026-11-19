@@ -93,6 +93,30 @@ const withoutSessionId = (ids: Set<string>, targetSessionId: string): Set<string
   return next;
 };
 
+/** Sessions the user marked as unread by hand; kept across reloads until the session is opened again. */
+const MARKED_UNREAD_STORAGE_KEY = 'markedUnreadSessionIds';
+
+const readMarkedUnreadSessionIds = (): Set<string> => {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(MARKED_UNREAD_STORAGE_KEY) ?? '[]');
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []);
+  } catch {
+    return new Set();
+  }
+};
+
+const writeMarkedUnreadSessionIds = (ids: ReadonlySet<string>) => {
+  try {
+    if (ids.size === 0) {
+      localStorage.removeItem(MARKED_UNREAD_STORAGE_KEY);
+    } else {
+      localStorage.setItem(MARKED_UNREAD_STORAGE_KEY, JSON.stringify([...ids]));
+    }
+  } catch {
+    // localStorage unavailable: the mark then lasts until the page reloads.
+  }
+};
+
 /** Whether the user can actually see the session on screen: the tab is visible and its window has focus. */
 const pageIsActive = (): boolean => document.visibilityState === 'visible' && document.hasFocus();
 
@@ -425,7 +449,9 @@ export function useProjectsState({
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedSession, setSelectedSession] = useState<ProjectSession | null>(null);
   const [attentionSessionIds, setAttentionSessionIds] = useState<Set<string>>(new Set());
-  const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(new Set());
+  // Mutated in place and never replaced: it mirrors localStorage and is not rendered itself.
+  const [markedUnreadSessionIds] = useState(readMarkedUnreadSessionIds);
+  const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => new Set(markedUnreadSessionIds));
   const [activeTab, setActiveTab] = useState<AppTab>(readPersistedTab);
 
   useEffect(() => {
@@ -554,7 +580,10 @@ export function useProjectsState({
 
   const clearSessionUnread = useCallback((targetSessionId: string) => {
     setUnreadSessionIds((previous) => withoutSessionId(previous, targetSessionId));
-  }, []);
+    if (markedUnreadSessionIds.delete(targetSessionId)) {
+      writeMarkedUnreadSessionIds(markedUnreadSessionIds);
+    }
+  }, [markedUnreadSessionIds]);
 
   /** Drops every indicator for a session, once it is opened or gone. */
   const clearSessionIndicators = useCallback((targetSessionId?: string | null) => {
@@ -960,8 +989,17 @@ export function useProjectsState({
     };
   }, []);
 
+  // Only a change of the viewed session counts as opening one: leaving a session can briefly read as the same id
+  // (selection cleared, URL not yet), which must not clear a mark set on it just before.
+  const lastViewedSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
-    clearSessionIndicators(selectedSession?.id ?? sessionId ?? null);
+    const viewedSessionId = selectedSession?.id ?? sessionId ?? null;
+    if (viewedSessionId === lastViewedSessionIdRef.current) {
+      return;
+    }
+
+    lastViewedSessionIdRef.current = viewedSessionId;
+    clearSessionIndicators(viewedSessionId);
   }, [clearSessionIndicators, selectedSession?.id, sessionId]);
 
   useEffect(() => {
@@ -1165,6 +1203,21 @@ export function useProjectsState({
     [clearSessionIndicators, navigate, selectedSession?.id],
   );
 
+  /** Shows the unread dot until the session is opened again, closing it first when it is the one on screen. */
+  const handleMarkSessionUnread = useCallback(
+    (targetSessionId: string) => {
+      markedUnreadSessionIds.add(targetSessionId);
+      writeMarkedUnreadSessionIds(markedUnreadSessionIds);
+      setUnreadSessionIds((previous) => (previous.has(targetSessionId) ? previous : new Set(previous).add(targetSessionId)));
+
+      if ((selectedSessionRef.current?.id ?? sessionIdRef.current) === targetSessionId) {
+        setSelectedSession(null);
+        navigate('/');
+      }
+    },
+    [markedUnreadSessionIds, navigate],
+  );
+
   const handleSidebarRefresh = useCallback(async () => {
     try {
       const response = await api.projects();
@@ -1334,6 +1387,7 @@ export function useProjectsState({
       onSessionSelect: handleSessionSelect,
       onNewSession: handleNewSession,
       onSessionDelete: handleSessionDelete,
+      onMarkSessionUnread: handleMarkSessionUnread,
       onLoadMoreSessions: loadMoreProjectSessions,
       onProjectDelete: handleProjectDelete,
       isLoading: isLoadingProjects,
@@ -1352,6 +1406,7 @@ export function useProjectsState({
       handleProjectDelete,
       handleProjectSelect,
       handleSessionDelete,
+      handleMarkSessionUnread,
       loadMoreProjectSessions,
       handleSessionSelect,
       handleSidebarRefresh,

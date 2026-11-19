@@ -44,6 +44,7 @@ type SidebarProjectItemProps = {
   onSessionSelect: (session: SessionWithProvider, projectName: string) => void;
   onDeleteSession: (sessionId: string, sessionTitle: string) => void;
   onForkSession?: (session: SessionWithProvider) => void;
+  onMarkSessionUnread?: (sessionId: string) => void;
   /** Archives the session at once, stopping every CLI process attached to it. Bound to a middle-click on the row. */
   onArchiveSessionNow: (sessionId: string) => void;
   onLoadMoreSessions: (projectId: string) => void;
@@ -104,6 +105,7 @@ function SidebarProjectItem({
   onSessionSelect,
   onDeleteSession,
   onForkSession,
+  onMarkSessionUnread,
   onArchiveSessionNow,
   onLoadMoreSessions,
   activeSessions,
@@ -543,6 +545,7 @@ function SidebarProjectItem({
         onSessionSelect={onSessionSelect}
         onDeleteSession={onDeleteSession}
         onForkSession={onForkSession}
+        onMarkSessionUnread={onMarkSessionUnread}
         onArchiveSessionNow={onArchiveSessionNow}
         onLoadMoreSessions={onLoadMoreSessions}
         onNewSession={onNewSession}

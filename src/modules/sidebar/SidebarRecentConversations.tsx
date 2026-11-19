@@ -284,6 +284,9 @@ export default function SidebarRecentConversations({
                     __projectId: conversation.projectId ?? undefined,
                   })
                   : undefined}
+                onMarkUnread={sessionActions.onMarkSessionUnread
+                  ? () => sessionActions.onMarkSessionUnread?.(conversation.sessionId)
+                  : undefined}
                 t={t}
               />
             </div>

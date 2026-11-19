@@ -34,6 +34,7 @@ type SidebarSessionItemProps = {
   onDeleteSession: (sessionId: string, sessionTitle: string) => void;
   /** Branches this session into an independent one; absent when its provider cannot. */
   onForkSession?: (session: SessionWithProvider) => void;
+  onMarkSessionUnread?: (sessionId: string) => void;
   /** Archives the session at once, stopping every CLI process attached to it. Bound to a middle-click on the row. */
   onArchiveSessionNow: (sessionId: string) => void;
   /** This project's list is in bulk-selection mode: the row acts as a checkbox and hides its options. */
@@ -94,6 +95,7 @@ function SidebarSessionItem({
   onSessionSelect,
   onDeleteSession,
   onForkSession,
+  onMarkSessionUnread,
   onArchiveSessionNow,
   isSelecting,
   isChecked,
@@ -564,6 +566,7 @@ function SidebarSessionItem({
             onSaveEditingSession={onSaveEditingSession}
             onDeleteSession={onDeleteSession}
             onFork={onForkSession ? () => onForkSession(session) : undefined}
+            onMarkUnread={onMarkSessionUnread ? () => onMarkSessionUnread(session.id) : undefined}
             t={t}
           />
         )}
