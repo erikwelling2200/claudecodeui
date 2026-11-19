@@ -47,6 +47,7 @@ const renderProjectsState = async () => {
     useProjectsState({
       sessionId: undefined,
       navigate: vi.fn(),
+      sendMessage: () => {},
       subscribe: () => () => {},
       isMobile: false,
       isSessionProcessing: () => false,

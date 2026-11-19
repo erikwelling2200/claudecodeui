@@ -51,6 +51,7 @@ const renderProjectsState = async (wrapper?: (props: { children: ReactNode }) =>
       useProjectsState({
         sessionId: undefined,
         navigate: vi.fn(),
+        sendMessage: () => {},
         subscribe: (listener: ServerEventListener) => {
           listeners.add(listener);
           return () => listeners.delete(listener);

@@ -694,6 +694,25 @@ export function broadcastRemoteControl(sessionId: string, provider: string, stat
 }
 
 /**
+ * Handles `chat.mark-read`: a client has the session on screen, so every other client drops its unread dot.
+ * Unread state itself lives in the clients; the server only relays this.
+ */
+function handleChatMarkRead(ws: WebSocket, data: AnyRecord): void {
+  const sessionId = readRequiredSessionId(data);
+  if (!sessionId) {
+    sendProtocolError(ws, 'SESSION_ID_REQUIRED', 'chat.mark-read requires a sessionId.');
+    return;
+  }
+
+  const payload = JSON.stringify({ kind: 'session_read', sessionId, timestamp: new Date().toISOString() });
+  connectedClients.forEach((client) => {
+    if (client !== ws && client.readyState === WS_OPEN_STATE) {
+      client.send(payload);
+    }
+  });
+}
+
+/**
  * Handles `chat.set-remote-control`: records the choice for the session and
  * each of its threads, starts or stops Remote Control in their live processes,
  * and reports each to every client with a `remote_control` event. A session
@@ -832,6 +851,7 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  * - `chat.stop-task`           { sessionId, taskId }
  * - `chat.set-permission-mode` { sessionId, permissionMode, applyToLiveTurn? }
  * - `chat.subscribe`           { sessions: [{ sessionId, lastSeq? }] }
+ * - `chat.mark-read`           { sessionId }  (relayed to the other clients as `session_read`)
  * - `chat.permission-response` { requestId, allow, updatedInput?, message?, rememberEntry?, permissionMode? }
  *
  * Outbound protocol (server to client): every frame is `kind`-based — either
@@ -954,6 +974,9 @@ export function handleChatConnection(
           return;
         case 'chat.subscribe':
           handleChatSubscribe(ws, data, dependencies);
+          return;
+        case 'chat.mark-read':
+          handleChatMarkRead(ws, data);
           return;
         case 'chat.permission-response':
           handlePermissionResponse(data, dependencies);

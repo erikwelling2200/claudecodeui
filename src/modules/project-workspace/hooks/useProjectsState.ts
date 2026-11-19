@@ -17,6 +17,7 @@ type UseProjectsStateArgs = {
   navigate: NavigateFunction;
   /** Subscription to the unified websocket event stream. */
   subscribe: (listener: (event: ServerEvent) => void) => () => void;
+  sendMessage: (message: unknown) => void;
   isMobile: boolean;
   isSessionProcessing: IsSessionProcessing;
 };
@@ -416,6 +417,7 @@ export function useProjectsState({
   sessionId,
   navigate,
   subscribe,
+  sendMessage,
   isMobile,
   isSessionProcessing,
 }: UseProjectsStateArgs) {
@@ -489,6 +491,8 @@ export function useProjectsState({
   projectsRef.current = projects;
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
+  const sendMessageRef = useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
   /** URL session id whose backend lookup already ran (or is in flight) — one attempt per id. */
   const sessionLookupRef = useRef<string | null>(null);
   /**
@@ -508,11 +512,12 @@ export function useProjectsState({
   /**
    * Adds a session to an indicator set unless the user is looking at it. The open session counts as looked at only
    * while the window has focus; flagged while unfocused, it is cleared again once the window regains focus.
+   * Returns false when the session was not flagged because it is on screen.
    */
-  const flagSession = useCallback((setIds: Dispatch<SetStateAction<Set<string>>>, targetSessionId: string) => {
+  const flagSession = useCallback((setIds: Dispatch<SetStateAction<Set<string>>>, targetSessionId: string): boolean => {
     const viewedSessionId = selectedSessionRef.current?.id ?? sessionId ?? null;
     if (targetSessionId === viewedSessionId && pageIsActive()) {
-      return;
+      return false;
     }
 
     setIds((previous) => {
@@ -524,20 +529,31 @@ export function useProjectsState({
       next.add(targetSessionId);
       return next;
     });
+    return true;
   }, [sessionId]);
+
+  /** Tells the other clients this session was seen here, so they drop its unread dot too. */
+  const announceSessionRead = useCallback((targetSessionId: string) => {
+    sendMessageRef.current({ type: 'chat.mark-read', sessionId: targetSessionId });
+  }, []);
 
   const markSessionAttention = useCallback(
     (targetSessionId: string) => flagSession(setAttentionSessionIds, targetSessionId),
     [flagSession],
   );
 
-  const markSessionUnread = useCallback(
-    (targetSessionId: string) => flagSession(setUnreadSessionIds, targetSessionId),
-    [flagSession],
-  );
+  const markSessionUnread = useCallback((targetSessionId: string) => {
+    if (!flagSession(setUnreadSessionIds, targetSessionId)) {
+      announceSessionRead(targetSessionId);
+    }
+  }, [announceSessionRead, flagSession]);
 
   const clearSessionAttention = useCallback((targetSessionId: string) => {
     setAttentionSessionIds((previous) => withoutSessionId(previous, targetSessionId));
+  }, []);
+
+  const clearSessionUnread = useCallback((targetSessionId: string) => {
+    setUnreadSessionIds((previous) => withoutSessionId(previous, targetSessionId));
   }, []);
 
   /** Drops every indicator for a session, once it is opened or gone. */
@@ -547,8 +563,9 @@ export function useProjectsState({
     }
 
     clearSessionAttention(targetSessionId);
-    setUnreadSessionIds((previous) => withoutSessionId(previous, targetSessionId));
-  }, [clearSessionAttention]);
+    clearSessionUnread(targetSessionId);
+    announceSessionRead(targetSessionId);
+  }, [announceSessionRead, clearSessionAttention, clearSessionUnread]);
 
   useEffect(() => {
     const clearViewedSessionOnReturn = () => {
@@ -818,6 +835,10 @@ export function useProjectsState({
           clearSessionAttention(eventSessionId);
         } else if (event.kind === 'complete') {
           markSessionUnread(eventSessionId);
+        } else if (event.kind === 'session_read') {
+          // Seen on another device or tab.
+          clearSessionUnread(eventSessionId);
+          return;
         }
       }
 
@@ -928,7 +949,7 @@ export function useProjectsState({
     };
 
     return subscribe(handleEvent);
-  }, [clearSessionAttention, isSessionProcessing, markSessionAttention, markSessionUnread, navigate, refreshProjectsSilently, sessionId, subscribe]);
+  }, [clearSessionAttention, clearSessionUnread, isSessionProcessing, markSessionAttention, markSessionUnread, navigate, refreshProjectsSilently, sessionId, subscribe]);
 
   useEffect(() => {
     return () => {

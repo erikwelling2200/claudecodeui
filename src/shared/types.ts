@@ -761,6 +761,8 @@ type MessageKind =
   | 'steer_cancelled'
   // Remote Control started or stopped in the session's process, or failed to start.
   | 'remote_control'
+  // Another client has the session on screen, so its unread dot goes.
+  | 'session_read'
   // A chat moved to another worktree; the file tree and editor read its folders again.
   | 'session_worktrees_changed';
 

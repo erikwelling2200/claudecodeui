@@ -83,6 +83,7 @@ const renderProjectsState = async (navigate: ReturnType<typeof vi.fn>, urlSessio
     useProjectsState({
       sessionId: urlSessionId,
       navigate: navigate as never,
+      sendMessage: () => {},
       subscribe: (listener: ServerEventListener) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
