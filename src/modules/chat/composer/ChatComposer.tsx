@@ -75,6 +75,8 @@ type ChatComposerProps = {
   modelsLoading: boolean;
   tokenBudget: Record<string, unknown> | null;
   onShowTokenUsage: () => void;
+  /** Absent where the provider cannot compact a conversation. */
+  onCompactConversation?: () => void;
   onToggleCommandMenu: () => void;
   /** Null when the provider has no Remote Control. */
   remoteControl: RemoteControlStatus | null;
@@ -163,6 +165,7 @@ export default function ChatComposer({
   modelsLoading,
   tokenBudget,
   onShowTokenUsage,
+  onCompactConversation,
   onToggleCommandMenu,
   remoteControl,
   onToggleRemoteControl,
@@ -379,7 +382,7 @@ export default function ChatComposer({
           how much context is left, so the token usage stays reachable below it. */}
       {hasQuestionPanel && (
         <div className="mx-auto flex max-w-[54.25rem] justify-end">
-          <TokenUsageSummary usage={tokenBudget} onClick={onShowTokenUsage} />
+          <TokenUsageSummary usage={tokenBudget} onClick={onShowTokenUsage} onCompact={onCompactConversation} />
         </div>
       )}
 
@@ -512,7 +515,7 @@ export default function ChatComposer({
               <VoiceInputButton state={voiceState} onToggle={voiceToggle} errorMsg={voiceError} />
             )}
 
-            <TokenUsageSummary usage={tokenBudget} onClick={onShowTokenUsage} />
+            <TokenUsageSummary usage={tokenBudget} onClick={onShowTokenUsage} onCompact={onCompactConversation} />
 
             <PromptInputButton
               tooltip={{ content: t('input.showAllCommands') }}

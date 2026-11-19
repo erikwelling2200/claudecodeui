@@ -65,6 +65,20 @@ const mapSkillToSlashCommand = (skill: ProviderSkill): SlashCommand => ({
 });
 
 /**
+ * Claude Code commands the CLI runs itself when it receives them as a message. Typed as skills so a
+ * pick inserts the name and Enter sends it as text, instead of going through `/api/commands/execute`.
+ */
+const CLAUDE_CLI_COMMANDS: SlashCommand[] = [
+  {
+    name: '/compact',
+    description: 'Summarize the conversation so far to free up context',
+    namespace: 'builtin',
+    type: 'skill',
+    metadata: { type: 'skill', scope: 'cli' },
+  },
+];
+
+/**
  * Used by the chat module (composer `/` menu) and the quick-settings-panel
  * module (Commands tab) to load the slash commands — built-in, provider skills
  * and custom — available to a project. Both surfaces must offer the same list,
@@ -126,6 +140,7 @@ export function useProjectSlashCommands(
             ...command,
             type: 'built-in',
           })),
+          ...(provider === 'claude' ? CLAUDE_CLI_COMMANDS : []),
           ...skillCommands,
           ...((data.custom || []) as SlashCommand[]).map((command) => ({
             ...command,

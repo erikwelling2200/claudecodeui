@@ -37,7 +37,7 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
-test('assembles built-in, deduped skills and custom commands in that order', async () => {
+test('assembles built-in, Claude CLI, deduped skills and custom commands in that order', async () => {
   listCommands.mockResolvedValue(jsonResponse({
     builtIn: [{ name: '/help', description: 'Show help' }],
     custom: [{ name: '/deploy', description: 'Deploy it' }],
@@ -59,9 +59,9 @@ test('assembles built-in, deduped skills and custom commands in that order', asy
   await waitFor(() => assert.equal(result.current.isLoading, false));
   assert.deepEqual(
     result.current.commands.map((command) => [command.name, command.type]),
-    [['/help', 'built-in'], ['/review', 'skill'], ['/commit', 'skill'], ['/deploy', 'custom']],
+    [['/help', 'built-in'], ['/compact', 'skill'], ['/review', 'skill'], ['/commit', 'skill'], ['/deploy', 'custom']],
   );
-  const review = result.current.commands[1];
+  const review = result.current.commands[2];
   assert.equal(review.namespace, 'skill');
   assert.equal(review.path, '/a');
   assert.deepEqual(review.metadata, {
@@ -106,7 +106,7 @@ test('a failed skills request keeps the server commands', async () => {
   const { result } = renderHook(() => useProjectSlashCommands(project, 'claude'));
 
   await waitFor(() => assert.equal(result.current.isLoading, false));
-  assert.deepEqual(result.current.commands.map((command) => command.name), ['/clear']);
+  assert.deepEqual(result.current.commands.map((command) => command.name), ['/clear', '/compact']);
   assert.equal(result.current.error, false);
 });
 
@@ -124,6 +124,6 @@ test('a disabled consumer does not request until it is enabled', async () => {
   assert.deepEqual(result.current.commands, []);
 
   rerender({ enabled: true });
-  await waitFor(() => assert.equal(result.current.commands.length, 1));
+  await waitFor(() => assert.equal(result.current.commands.length, 2));
   assert.equal(listCommands.mock.calls.length, 1);
 });
