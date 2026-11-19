@@ -11,6 +11,7 @@ import { TranscriptSessionContext } from '@/modules/chat/context/TranscriptSessi
 import { FindRevealContext } from '@/modules/chat/context/FindRevealContext';
 import { ExpandThinkingContext } from '@/modules/chat/context/ExpandThinkingContext';
 import { api } from '@/shared/api';
+import { writeDraftText } from '@/shared/chatDrafts';
 import { useSingleFolderProviders } from '@/shared/hooks/useProviderCapabilities';
 import { getFolderName } from '@/shared/utils';
 import type {
@@ -382,8 +383,9 @@ function ChatInterface({
   }, [resetStreamingState]);
 
   /**
-   * Branches the conversation into a new session that ends at this message,
-   * then opens it. The session being viewed is left exactly as it was.
+   * Branches the conversation into a new session that ends just before this
+   * message, opens it, and leaves the message in its composer to be rewritten.
+   * The session being viewed is left exactly as it was.
    */
   const handleForkFromMessage = useCallback(async (message: ChatMessage) => {
     const anchorId = message.transcriptAnchorId;
@@ -391,12 +393,13 @@ function ChatInterface({
     if (!anchorId || !sourceSessionId) return;
 
     try {
-      const response = await api.forkSession(sourceSessionId, { upToAnchorId: anchorId });
+      const response = await api.forkSession(sourceSessionId, { beforeAnchorId: anchorId });
       const payload = await response.json();
       const forkedSessionId = payload?.data?.sessionId;
       if (!response.ok || typeof forkedSessionId !== 'string') {
         throw new Error(payload?.message || `HTTP ${response.status}`);
       }
+      writeDraftText(forkedSessionId, message.content || '');
       onNavigateToSession?.(forkedSessionId);
     } catch (error) {
       console.error('Error forking session:', error);

@@ -380,14 +380,15 @@ export const sessionsService = {
 
   /**
    * Branches a session into an independent one containing its conversation up
-   * to `upToAnchorId` (the whole thing when omitted).
+   * to and including `upToAnchorId`, or up to but excluding the user message
+   * `beforeAnchorId` (the whole thing when neither is given).
    *
    * The source is left completely untouched — this is the "try two approaches"
    * action, not a destructive one.
    */
   async forkSessionById(
     sessionId: string,
-    options: { upToAnchorId?: string; title?: string } = {},
+    options: { upToAnchorId?: string; beforeAnchorId?: string; title?: string } = {},
   ): Promise<CreateAppSessionResult> {
     const source = sessionsDb.getSessionById(sessionId);
     if (!source) {
@@ -415,6 +416,26 @@ export const sessionsService = {
       });
     }
 
+    let upToAnchorId = options.upToAnchorId;
+    if (options.beforeAnchorId) {
+      // The same cut an edit of that message makes: a fork that kept the
+      // message would end on a prompt nobody answered.
+      const anchor = await sessionsService.resolveEditAnchor(sessionId, options.beforeAnchorId);
+      if (!anchor?.found) {
+        throw new AppError('That message is not in this session\'s transcript.', {
+          code: 'FORK_ANCHOR_NOT_FOUND',
+          statusCode: 404,
+        });
+      }
+      if (!anchor.resumeThroughId) {
+        throw new AppError('Nothing precedes this message, so a fork before it would be empty.', {
+          code: 'FORK_NOTHING_BEFORE',
+          statusCode: 409,
+        });
+      }
+      upToAnchorId = anchor.resumeThroughId;
+    }
+
     const sessionName = options.title?.trim()
       || `${source.custom_name?.trim() || 'Session'} (fork)`;
 
@@ -422,7 +443,7 @@ export const sessionsService = {
       providerSessionId: source.provider_session_id,
       jsonlPath: source.jsonl_path,
       projectPath: source.project_path ?? '',
-      upToAnchorId: options.upToAnchorId,
+      upToAnchorId,
       title: sessionName,
     });
 

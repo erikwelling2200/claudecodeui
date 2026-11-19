@@ -171,3 +171,41 @@ test('forking a session that does not exist is a 404', async () => {
     );
   });
 });
+
+async function writeSourceTranscript(directory: string): Promise<void> {
+  const rows = [
+    { type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: 'first prompt' } },
+    { type: 'assistant', uuid: 'a1', parentUuid: 'u1', message: { role: 'assistant', content: [{ type: 'text', text: 'first answer' }] } },
+    { type: 'user', uuid: 'u2', parentUuid: 'a1', message: { role: 'user', content: 'second prompt' } },
+  ].map((row) => JSON.stringify({ ...row, sessionId: 'native-source', timestamp: '2026-11-19T10:00:00.000Z' }));
+  await writeFile(path.join(directory, 'native-source.jsonl'), `${rows.join('\n')}\n`, 'utf8');
+}
+
+test('forking before a message ends the fork on the answer that preceded it', async () => {
+  await withForkableClaude(async ({ calls, directory }) => {
+    seedSource(directory);
+    await writeSourceTranscript(directory);
+
+    await sessionsService.forkSessionById(SOURCE_ID, { beforeAnchorId: 'u2' });
+
+    // Keeping `u2` would leave the fork on a prompt nobody answered.
+    assert.equal(calls[0].upToAnchorId, 'a1');
+  });
+});
+
+test('forking before the first message is refused rather than making an empty fork', async () => {
+  await withForkableClaude(async ({ calls, directory }) => {
+    seedSource(directory);
+    await writeSourceTranscript(directory);
+
+    await assert.rejects(
+      () => sessionsService.forkSessionById(SOURCE_ID, { beforeAnchorId: 'u1' }),
+      (error: Error & { code?: string }) => error.code === 'FORK_NOTHING_BEFORE',
+    );
+    await assert.rejects(
+      () => sessionsService.forkSessionById(SOURCE_ID, { beforeAnchorId: 'not-in-transcript' }),
+      (error: Error & { code?: string }) => error.code === 'FORK_ANCHOR_NOT_FOUND',
+    );
+    assert.equal(calls.length, 0);
+  });
+});
