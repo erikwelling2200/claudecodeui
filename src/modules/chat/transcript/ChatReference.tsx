@@ -33,18 +33,10 @@ const resolveChat = (chatId: string): Promise<ResolvedChat | null> => {
   return lookup;
 };
 
-type ChatReferenceProps = {
-  chatId: string;
-  /** Rendered while the id is being looked up, and for good when it is not a known chat. */
-  fallback: ReactNode;
-};
-
-/** Used by Markdown to turn a chat id an agent wrote into a button that opens that chat. */
-export function ChatReference({ chatId, fallback }: ChatReferenceProps) {
-  const navigate = useNavigate();
+/** The chat a Claude session id names, or null while it is looked up and when it names none. */
+function useResolvedChat(chatId: string): ResolvedChat | null {
   // The server's answer for an id, kept with that id so a changed prop never shows the previous chat.
   const [lookup, setLookup] = useState<{ chatId: string; chat: ResolvedChat | null } | null>(null);
-  const chat = lookup?.chatId === chatId ? lookup.chat : null;
 
   useEffect(() => {
     let active = true;
@@ -56,6 +48,20 @@ export function ChatReference({ chatId, fallback }: ChatReferenceProps) {
       active = false;
     };
   }, [chatId]);
+
+  return lookup?.chatId === chatId ? lookup.chat : null;
+}
+
+type ChatReferenceProps = {
+  chatId: string;
+  /** Rendered while the id is being looked up, and for good when it is not a known chat. */
+  fallback: ReactNode;
+};
+
+/** Used by Markdown to turn a chat id an agent wrote into a button that opens that chat. */
+export function ChatReference({ chatId, fallback }: ChatReferenceProps) {
+  const navigate = useNavigate();
+  const chat = useResolvedChat(chatId);
 
   if (!chat) {
     return <>{fallback}</>;
@@ -70,6 +76,36 @@ export function ChatReference({ chatId, fallback }: ChatReferenceProps) {
     >
       <MessageSquare className="h-3.5 w-3.5 shrink-0" aria-hidden />
       <span className="truncate">{chat.name}</span>
+    </button>
+  );
+}
+
+type ChatAvatarReferenceProps = {
+  chatId: string;
+  className: string;
+  /** Shown on hover until the chat is resolved, and when it never is. */
+  title: string;
+};
+
+/** Used by MessageComponent as the avatar of a message another chat sent: opens that chat once it is known. */
+export function ChatAvatarReference({ chatId, className, title }: ChatAvatarReferenceProps) {
+  const navigate = useNavigate();
+  const chat = useResolvedChat(chatId);
+  const icon = <MessageSquare className="h-4 w-4" aria-hidden />;
+
+  if (!chat) {
+    return <div title={title} className={className}>{icon}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      title={chat.name}
+      aria-label={chat.name}
+      onClick={() => navigate(`/session/${chat.sessionId}`)}
+      className={`${className} cursor-pointer hover:ring-2 hover:ring-purple-300`}
+    >
+      {icon}
     </button>
   );
 }

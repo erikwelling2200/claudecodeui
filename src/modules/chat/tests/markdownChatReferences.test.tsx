@@ -4,6 +4,7 @@ import { fireEvent, render } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom';
 import { test, vi } from 'vitest';
 
+import { ChatAvatarReference } from '@/modules/chat/transcript/ChatReference';
 import { Markdown } from '@/modules/chat/transcript/Markdown';
 
 const KNOWN_ID = 'f357c5d4-4d79-4f69-923f-9ba3e5c9fb93';
@@ -47,4 +48,17 @@ test('an id that is no chat, or sits inside a path, stays plain text', async () 
   await vi.waitFor(() => assert.ok(sessionDetails.mock.calls.some(([id]) => id === UNKNOWN_ID)));
   assert.equal(view.queryByRole('button'), null);
   assert.ok(view.container.textContent?.includes(UNKNOWN_ID));
+});
+
+test('the avatar of a message another chat sent opens that chat', async () => {
+  const view = render(
+    <MemoryRouter>
+      <Routes>
+        <Route path="/" element={<ChatAvatarReference chatId={KNOWN_ID} title="operatie-ov-78" className="avatar" />} />
+        <Route path="/session/:sessionId" element={<OpenedSession />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  fireEvent.click(await view.findByRole('button', { name: 'Audit PR 220' }));
+  await view.findByText('opened app-session-1');
 });
