@@ -37,6 +37,12 @@ type WebSocketContextType = {
    * one opens, never `disconnected`.
    */
   connectionStatus: ConnectionStatus;
+  /**
+   * Chat messages the server has not confirmed yet: queued while the socket is
+   * down, or sent and still waiting for the server's receipt. They are sent
+   * (again) when the next socket opens.
+   */
+  unsentCount: number;
 };
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null);
@@ -60,6 +66,33 @@ const buildWebSocketUrl = (token: string | null) => {
   return `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`; // OSS mode: Use same host:port that served the page
 };
 
+/**
+ * Frames that carry something the user wrote or answered. They are kept until
+ * the server confirms receipt (`client_frame_received`), so a socket that is
+ * down, or looks open but is dead, cannot swallow them. Control frames such as
+ * `chat.abort` or `chat.subscribe` are not kept: sent late they would act on a
+ * state that has moved on.
+ */
+const RELIABLE_FRAME_TYPES = new Set(['chat.send', 'chat.edit-send', 'chat.steer', 'chat.permission-response']);
+
+/** A sent frame with no receipt after this long means the socket is dead, even if it still reads as open. */
+const RECEIPT_TIMEOUT_MS = 10_000;
+
+type OutboxEntry = {
+  id: string;
+  frame: Record<string, unknown>;
+  /** The socket the frame last went out on, and when; null while it waits for a socket. */
+  sentOn: WebSocket | null;
+  sentAt: number;
+};
+
+const createClientMessageId = () => (
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    // crypto.randomUUID only exists in a secure context; a LAN address over http is not one.
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+);
+
 const useWebSocketProviderState = (): WebSocketContextType => {
   const wsRef = useRef<WebSocket | null>(null);
   const unmountedRef = useRef(false); // Track if component is unmounted
@@ -75,6 +108,16 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   // not read as a lost connection, or every page load would flash the indicator.
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const outboxRef = useRef<OutboxEntry[]>([]);
+  const [unsentCount, setUnsentCount] = useState(0);
+  const receiptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Whether the server announced `clientFrameReceipts`. Until it has, frames are
+   * not kept once sent: no receipt would come, and keeping them would send each
+   * one again on the next socket. Kept across sockets, because a reconnect
+   * flushes the outbox before the new socket's announcement arrives.
+   */
+  const serverConfirmsRef = useRef(false);
   const { isLoading: isAuthLoading, token, user } = useAuth();
 
   const dispatch = useCallback((event: ServerEvent) => {
@@ -86,6 +129,50 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       }
     }
   }, []);
+
+  const transmit = useCallback((entry: OutboxEntry, socket: WebSocket) => {
+    socket.send(JSON.stringify(entry.frame));
+    entry.sentOn = socket;
+    entry.sentAt = Date.now();
+    if (!serverConfirmsRef.current) {
+      // No receipt will come, so keeping it would send it twice on the next socket.
+      outboxRef.current = outboxRef.current.filter((kept) => kept !== entry);
+      setUnsentCount(outboxRef.current.length);
+    }
+  }, []);
+
+  /**
+   * Gives up on a socket that took a frame and never confirmed it. A socket
+   * whose peer is gone (the PC slept, the network changed) can read as open
+   * for a long time, and everything sent into it is lost; dropping it starts
+   * the normal reconnect, which sends the outbox again.
+   */
+  const checkReceipts = useCallback(function checkReceipts() {
+    receiptTimerRef.current = null;
+    const socket = wsRef.current;
+    const waiting = outboxRef.current.filter((entry) => entry.sentOn !== null && entry.sentOn === socket);
+    if (!socket || waiting.length === 0) return;
+    const oldest = Math.min(...waiting.map((entry) => entry.sentAt));
+    const overdueIn = oldest + RECEIPT_TIMEOUT_MS - Date.now();
+    if (overdueIn > 0) {
+      receiptTimerRef.current = setTimeout(checkReceipts, overdueIn);
+      return;
+    }
+    console.warn('WebSocket sent a chat message without a receipt; reconnecting');
+    const handleLost = socket.onclose;
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    socket.close();
+    handleLost?.call(socket, new Event('close') as CloseEvent);
+  }, []);
+
+  const armReceiptCheck = useCallback(() => {
+    if (receiptTimerRef.current === null) {
+      receiptTimerRef.current = setTimeout(checkReceipts, RECEIPT_TIMEOUT_MS);
+    }
+  }, [checkReceipts]);
 
   // Named function expression so the reconnect timer below can call itself
   // without reading the `connect` binding while it is still initializing.
@@ -105,6 +192,12 @@ const useWebSocketProviderState = (): WebSocketContextType => {
 
       websocket.onopen = () => {
         setConnectionStatus('connected');
+        // Before the reconnect signal, so a chat that re-subscribes in response
+        // already finds the queued message's run on the server.
+        for (const entry of outboxRef.current) {
+          transmit(entry, websocket);
+        }
+        if (outboxRef.current.length > 0) armReceiptCheck();
         if (hasConnectedRef.current) {
           // This is a reconnect — signal so components can catch up on missed messages
           dispatch({ kind: 'websocket_reconnected', timestamp: Date.now() });
@@ -115,6 +208,16 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       websocket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data) as ServerEvent;
+          if (data.kind === 'gateway_features') {
+            serverConfirmsRef.current = data.clientFrameReceipts === true;
+            return;
+          }
+          if (data.kind === 'client_frame_received') {
+            const remaining = outboxRef.current.filter((entry) => entry.id !== data.clientMessageId);
+            outboxRef.current = remaining;
+            setUnsentCount(remaining.length);
+            return;
+          }
           dispatch(data);
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
@@ -145,7 +248,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
     } catch (error) {
       console.error('Error creating WebSocket connection:', error);
     }
-  }, [dispatch, isAuthLoading, token, user]); // reconnect with current authentication state
+  }, [armReceiptCheck, dispatch, isAuthLoading, token, user, transmit]); // reconnect with current authentication state
 
   // Declared after `connect` so the effect body does not reference it before
   // initialization. `connect` is memoized on [dispatch, isAuthLoading, token,
@@ -165,6 +268,10 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       unmountedRef.current = true;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (receiptTimerRef.current) {
+        clearTimeout(receiptTimerRef.current);
+        receiptTimerRef.current = null;
       }
       const activeSocket = wsRef.current;
       if (activeSocket) {
@@ -187,12 +294,25 @@ const useWebSocketProviderState = (): WebSocketContextType => {
 
   const sendMessage = useCallback((message: unknown) => {
     const socket = wsRef.current;
-    if (socket && socket.readyState === WebSocket.OPEN) {
+    const isOpen = socket !== null && socket.readyState === WebSocket.OPEN;
+    const frame = message as Record<string, unknown> | null;
+    if (frame && typeof frame.type === 'string' && RELIABLE_FRAME_TYPES.has(frame.type)) {
+      const id = createClientMessageId();
+      const entry: OutboxEntry = { id, frame: { ...frame, clientMessageId: id }, sentOn: null, sentAt: 0 };
+      outboxRef.current = [...outboxRef.current, entry];
+      setUnsentCount(outboxRef.current.length);
+      if (isOpen) {
+        transmit(entry, socket);
+        armReceiptCheck();
+      }
+      return;
+    }
+    if (isOpen) {
       socket.send(JSON.stringify(message));
     } else {
       console.warn('WebSocket not connected');
     }
-  }, []);
+  }, [armReceiptCheck, transmit]);
 
   const subscribe = useCallback((listener: ServerEventListener) => {
     listenersRef.current.add(listener);
@@ -208,7 +328,8 @@ const useWebSocketProviderState = (): WebSocketContextType => {
     subscribe,
     isConnected: connectionStatus === 'connected',
     connectionStatus,
-  }), [sendMessage, subscribe, connectionStatus]);
+    unsentCount,
+  }), [sendMessage, subscribe, connectionStatus, unsentCount]);
 
   return value;
 };

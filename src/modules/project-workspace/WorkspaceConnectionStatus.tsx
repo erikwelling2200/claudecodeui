@@ -10,10 +10,12 @@ import { useWebSocket } from '@/shared/context/WebSocketContext';
  */
 export default function WorkspaceConnectionStatus() {
   const { t } = useTranslation();
-  const { connectionStatus } = useWebSocket();
+  const { connectionStatus, unsentCount } = useWebSocket();
   const isDisconnected = connectionStatus === 'disconnected';
   // Names the chat connection, since the Shell tab shows its own socket's state.
-  const description = t('status.chatConnectionLost');
+  const description = unsentCount > 0
+    ? `${t('status.chatConnectionLost')} ${t('status.unsentMessages', { count: unsentCount })}`
+    : t('status.chatConnectionLost');
 
   return (
     <>
@@ -35,6 +37,7 @@ export default function WorkspaceConnectionStatus() {
         >
           <WifiOff className="h-3.5 w-3.5 flex-shrink-0" />
           <span className="sm:hidden xl:inline">{t('status.reconnecting')}</span>
+          {unsentCount > 0 && <span>{t('status.unsentShort', { count: unsentCount })}</span>}
         </span>
       )}
     </>

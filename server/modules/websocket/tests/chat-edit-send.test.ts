@@ -7,7 +7,7 @@ import test from 'node:test';
 import { chatToolsService } from '@/modules/chat-tools/index.js';
 import { closeConnection, initializeDatabase, projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { sessionsService } from '@/modules/providers/index.js';
-import { handleChatConnection } from '@/modules/websocket/services/chat-websocket.service.js';
+import { clearReceivedClientFrameIds, handleChatConnection } from '@/modules/websocket/services/chat-websocket.service.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
 import { connectedClients } from '@/modules/websocket/services/websocket-state.service.js';
 import { createFakeSocket } from '@/modules/websocket/tests/fake-chat-socket.js';
@@ -315,5 +315,29 @@ test('a run in a single-folder project gets no extra folders', async () => {
 
     assert.equal(runs.length, 1);
     assert.deepEqual(runs[0].options.additionalDirectories, []);
+  });
+});
+
+test('a send carrying a client id is acknowledged, and a re-sent copy is acknowledged but not run twice', async () => {
+  clearReceivedClientFrameIds();
+  await withGateway('claude', async ({ socket, runs }) => {
+    const frame = { type: 'chat.send', sessionId: SESSION_ID, content: 'hello', clientMessageId: 'frame-1' };
+    await socket.deliver(frame);
+    await socket.deliver(frame);
+
+    assert.equal(runs.length, 1);
+    const receipts = socket.frames.filter((sent) => sent.kind === 'client_frame_received');
+    assert.deepEqual(receipts.map((receipt) => receipt.clientMessageId), ['frame-1', 'frame-1']);
+  });
+});
+
+test('a send that ends in a protocol error is still acknowledged', async () => {
+  clearReceivedClientFrameIds();
+  await withGateway('claude', async ({ socket, runs }) => {
+    await socket.deliver({ type: 'chat.send', sessionId: 'no-such-session', content: 'hello', clientMessageId: 'frame-2' });
+
+    assert.equal(runs.length, 0);
+    assert.ok(socket.frames.some((sent) => sent.kind === 'client_frame_received' && sent.clientMessageId === 'frame-2'));
+    assert.ok(socket.frames.some((sent) => sent.kind === 'protocol_error' && sent.code === 'SESSION_NOT_FOUND'));
   });
 });
