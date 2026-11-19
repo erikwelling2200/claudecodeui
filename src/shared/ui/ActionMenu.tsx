@@ -39,6 +39,8 @@ type ActionMenuProps = {
   onOpenChange?: (open: boolean) => void;
   /** Right-clicking this element opens the menu at the pointer instead of the browser's own. Needs `portal`. */
   contextMenuTarget?: HTMLElement | null;
+  /** No button: the menu opens only from `contextMenuTarget`. */
+  hideTrigger?: boolean;
 };
 
 /** Used by the mcp and sidebar modules for the "…" overflow menu on a server or session row. */
@@ -59,6 +61,7 @@ export function ActionMenu({
   header,
   onOpenChange,
   contextMenuTarget,
+  hideTrigger = false,
 }: ActionMenuProps) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [portalPosition, setPortalPosition] = React.useState<{ top: number; left: number } | null>(null);
@@ -88,11 +91,7 @@ export function ActionMenu({
 
     const closeOnOutsideClick = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (
-        rootRef.current
-        && !rootRef.current.contains(target)
-        && !menuRef.current?.contains(target)
-      ) {
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
         setMenuOpen(false);
       }
     };
@@ -264,6 +263,10 @@ export function ActionMenu({
       })}
     </div>
   );
+
+  if (hideTrigger) {
+    return portal && typeof document !== 'undefined' ? createPortal(menu, document.body) : null;
+  }
 
   return (
     <div ref={rootRef} className={cn('relative inline-flex', className)}>

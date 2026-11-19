@@ -1804,6 +1804,8 @@ export type FileTreeServiceDependencies = {
   fileIndex: FileTreeFileIndex;
   contentSearch: FileTreeContentSearch;
   logger: FileTreeLogger;
+  /** Shows the entry in the host's file manager (Explorer, Finder), selected. */
+  revealInFileManager(targetPath: string): void;
   /** Maps project folders onto the worktrees a chat works in; absent in deployments without worktree tracking. */
   sessionFolders?: {
     mapFolders(folders: string[], sessionId: string): SessionFolder[];
@@ -1830,6 +1832,10 @@ export type FileTreeServices = {
    */
   readTextFile(projectId: string, filePath: string, sessionId?: string): Promise<{ content: string; path: string }>;
   openFile(projectId: string, filePath: string, sessionId?: string): Promise<{ contentType: string; stream: Readable }>;
+  /** The full path a possibly relative reference names, resolved the way `readTextFile` resolves it. */
+  resolveFilePath(projectId: string, filePath: string, sessionId?: string): Promise<{ path: string; exists: boolean }>;
+  /** Opens the host's file manager with the entry selected. */
+  revealFile(projectId: string, filePath: string, sessionId?: string): Promise<{ path: string }>;
   saveTextFile(projectId: string, filePath: string, content: string, sessionId?: string): Promise<{
     success: true;
     path: string;
