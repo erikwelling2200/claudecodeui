@@ -7,12 +7,13 @@ import { GitPanel } from '@/modules/git-panel';
 import { PluginTabContent } from '@/modules/plugins';
 import { BrowserUsePanel, useBrowserUseEnabled } from '@/modules/browser-use';
 import { usePaletteOpsRegister } from '@/modules/command-palette';
+import { api } from '@/shared/api';
 import { TaskMasterPanel, useTaskMasterProjectSync, useTasksSettings } from '@/modules/task-master';
 import { WorktreeClaimsSidebar, useSessionWorktrees } from '@/modules/worktree-claims';
 import type { AppTab, DirectoryRevealRequest, Project, ProjectSession, SessionEstablishedContext, SessionNavigationOptions, SessionPrompt, SessionPromptBookends, SettingsMainTab } from '@/shared/types';
 import { useSetUiPreference, useUiPreferences } from '@/shared/context/UiPreferencesContext';
 import { useWebSocket } from '@/shared/context/WebSocketContext';
-import { useFileOpenResolver } from '@/modules/project-workspace/hooks/useFileOpenResolver';
+import { useFileOpenResolver, useFileReferenceResolver } from '@/modules/project-workspace/hooks/useFileOpenResolver';
 import { EditorSidebar, useEditorSidebar } from '@/modules/code-editor';
 import WorkspaceHeader from '@/modules/project-workspace/WorkspaceHeader';
 import WorkspaceStateView from '@/modules/project-workspace/WorkspaceStateView';
@@ -113,6 +114,7 @@ function WorkspaceMain({
   // Resolves bare/partial file references (e.g. links inside chat messages) to
   // real project files before opening them in the in-app editor.
   const resolvedFileOpen = useFileOpenResolver(selectedProject, handleFileOpen, sessionId);
+  const resolveFileReference = useFileReferenceResolver(selectedProject, sessionId);
 
   useEffect(() => {
     if (!shouldShowTasksTab && activeTab === 'tasks') {
@@ -155,9 +157,32 @@ function WorkspaceMain({
     setRevealDirectory({ path: directoryPath });
   }, [setActiveTab]);
 
+  const projectId = selectedProject?.projectId;
+  const resolveFilePath = useCallback(async (filePath: string) => {
+    const reference = await resolveFileReference(filePath);
+    if (!projectId) {
+      return reference;
+    }
+    const response = await api.resolveFilePath(projectId, reference, sessionId);
+    if (!response.ok) {
+      throw new Error(`Could not resolve ${reference} (HTTP ${response.status})`);
+    }
+    return ((await response.json()) as { path: string }).path;
+  }, [resolveFileReference, projectId, sessionId]);
+
+  const revealFile = useCallback(async (filePath: string) => {
+    if (!projectId) {
+      throw new Error('No project is open to reveal the file in.');
+    }
+    const response = await api.revealFile(projectId, await resolveFileReference(filePath), sessionId);
+    if (!response.ok) {
+      throw new Error(`Could not reveal ${filePath} (HTTP ${response.status})`);
+    }
+  }, [resolveFileReference, projectId, sessionId]);
+
   // Stable arguments keep usePaletteOpsRegister's effect from tearing down and
   // rewriting the whole palette registry on every render.
-  usePaletteOpsRegister({ openFile, openFileInEditor, openDirectory });
+  usePaletteOpsRegister({ openFile, openFileInEditor, openDirectory, resolveFilePath, revealFile });
 
   if (isLoading) {
     return <WorkspaceStateView mode="loading" isMobile={isMobile} onMenuClick={onMenuClick} />;

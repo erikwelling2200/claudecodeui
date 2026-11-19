@@ -3,11 +3,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { appConfigDb, claudeApiSpendDb } from '@/modules/database/index.js';
+import { appConfigDb, claudeApiSpendDb, claudeApiUsageDb } from '@/modules/database/index.js';
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 
 import { createClaudeBillingService } from './claude-billing.service.js';
 import { createClaudeCreditService } from './claude-credit.service.js';
+import { createClaudeListPrices } from './claude-list-prices.service.js';
 import { createUsageLoginService } from './usage-login.service.js';
 import { createUsageRouter } from './usage.routes.js';
 import { createUsageService } from './usage.service.js';
@@ -23,7 +24,12 @@ const usageService = createUsageService({
   tokenUsable: usageLogin.tokenUsable,
 });
 
-const claudeCredit = createClaudeCreditService({ config: appConfigDb, fetch: globalThis.fetch });
+const claudeCredit = createClaudeCreditService({
+  config: appConfigDb,
+  fetch: globalThis.fetch,
+  listPrices: createClaudeListPrices({ fetch: globalThis.fetch }),
+  recentUsage: (since) => claudeApiUsageDb.listSince(since),
+});
 
 /** Used by the Claude runtime to pick each run's credential and to record what API-key turns cost. */
 export const claudeBilling = createClaudeBillingService({
@@ -31,6 +37,7 @@ export const claudeBilling = createClaudeBillingService({
   hostEnv: process.env,
   config: appConfigDb,
   spend: claudeApiSpendDb,
+  usage: claudeApiUsageDb,
   readUsageLimits: () => usageService.getUsage().limits,
   creditCycleStart: () => claudeCredit.cycleStart(),
 });

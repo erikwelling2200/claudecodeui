@@ -1104,6 +1104,19 @@ router.post(
   }),
 );
 
+/**
+ * Stops every process the session runs, a turn in progress included. Nothing is
+ * started in their place: the next message resumes the transcript in a fresh process.
+ */
+router.post(
+  '/sessions/:sessionId/restart',
+  asyncHandler(async (req: Request, res: Response) => {
+    const sessionId = parseSessionId(req.params.sessionId);
+    await sessionsService.stopSessionProcesses(sessionId);
+    res.json(createApiSuccessResponse({ sessionId }));
+  }),
+);
+
 router.post(
   '/sessions/:sessionId/fork',
   asyncHandler(async (req: Request, res: Response) => {

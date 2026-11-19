@@ -166,7 +166,23 @@ const getProjectSessions = (project: Project): ProjectSession[] => {
   return project.sessions ?? [];
 };
 
-const countLoadedProjectSessions = (project: Project): number => getProjectSessions(project).length;
+/**
+ * Whether an upsert moves the session's last activity past what the sidebar already shows. A rename, an
+ * archive toggle or a resync of an unchanged transcript also arrives as an upsert, and must not mark it unread.
+ * A session this client has not loaded counts as new.
+ */
+const hasNewActivity = (projects: Project[], upsert: SessionUpsertedEvent): boolean => {
+  const known = projects.flatMap(getProjectSessions).find((session) => session.id === upsert.sessionId);
+  const knownTime = Date.parse(String(known?.lastActivity ?? ''));
+  const upsertTime = Date.parse(String(upsert.session?.lastActivity ?? ''));
+  if (Number.isNaN(knownTime) || Number.isNaN(upsertTime)) {
+    return true;
+  }
+
+  return upsertTime > knownTime;
+};
+
+const countLoadedProjectSessions =(project: Project): number => getProjectSessions(project).length;
 
 const mergeSessionProviderLists = (baseSessions: ProjectSession[], additionalSessions: ProjectSession[]): ProjectSession[] => {
   const merged = [...baseSessions];
@@ -824,7 +840,7 @@ export function useProjectsState({
         && !isSessionProcessing(upsert.sessionId)
       ) {
         setExternalMessageUpdate((prev) => prev + 1);
-      } else {
+      } else if (hasNewActivity(projectsRef.current, upsert)) {
         // The transcript grew while the session was not on screen, also for runs
         // this tab never streamed (another tab, the CLI). The row hides the dot
         // while the session is still running, so it appears once the turn ends.

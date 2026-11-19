@@ -81,10 +81,26 @@ const RUNNING_VERSION = (() => {
         return null;
     }
 })();
+// Lets a client tell a restarted server from the one it asked to restart.
+const SERVER_STARTED_AT = new Date().toISOString();
+
+const SERVER_PORT = Number.parseInt(process.env.SERVER_PORT || '3001', 10);
+const HOST = process.env.HOST || '0.0.0.0';
+const DISPLAY_HOST = getConnectableHost(HOST);
+const VITE_PORT = process.env.VITE_PORT || 5173;
+const LOCAL_SERVER_MARKER_PATH = path.join(os.homedir(), '.cloudcli', 'local-server.json');
+// Set by a self-spawned replacement: the port is still held by the process it replaces, so listening is retried.
+const REPLACES_PID = process.env.CLOUDCLI_REPLACES_PID ? Number.parseInt(process.env.CLOUDCLI_REPLACES_PID, 10) : null;
+
 const systemRoutes = createSystemModule({
     appRoot: APP_ROOT,
     installMode,
     isPlatform: IS_PLATFORM,
+    restart: {
+        isSupervised: process.env.CLOUDCLI_SUPERVISED === '1',
+        replacementLogPath: path.join(os.homedir(), '.cloudcli', 'logs', `server-${SERVER_PORT}.log`),
+        shutdown: shutdownServer,
+    },
 });
 console.log('SERVER_PORT from env:', process.env.SERVER_PORT);
 
@@ -152,6 +168,7 @@ app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
+        startedAt: SERVER_STARTED_AT,
         installMode,
         version: RUNNING_VERSION
     });
@@ -307,12 +324,6 @@ app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   });
 });
 
-const SERVER_PORT = Number.parseInt(process.env.SERVER_PORT || '3001', 10);
-const HOST = process.env.HOST || '0.0.0.0';
-const DISPLAY_HOST = getConnectableHost(HOST);
-const VITE_PORT = process.env.VITE_PORT || 5173;
-const LOCAL_SERVER_MARKER_PATH = path.join(os.homedir(), '.cloudcli', 'local-server.json');
-
 function getErrorCode(error: unknown): string | undefined {
     if (typeof error !== 'object' || error === null || !('code' in error)) {
         return undefined;
@@ -357,6 +368,65 @@ async function removeLocalServerMarker() {
     }
 }
 
+function listenOnce(): Promise<void> {
+    return new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(SERVER_PORT, HOST, () => {
+            server.off('error', reject);
+            resolve();
+        });
+    });
+}
+
+// A replacement spawned by a restart starts while the old process is still shutting down and holding the port.
+const REPLACEMENT_LISTEN_TIMEOUT_MS = 30_000;
+const REPLACEMENT_LISTEN_RETRY_MS = 250;
+
+async function listen(): Promise<void> {
+    const deadline = Date.now() + REPLACEMENT_LISTEN_TIMEOUT_MS;
+    for (;;) {
+        try {
+            await listenOnce();
+            return;
+        } catch (error) {
+            if (REPLACES_PID === null || getErrorCode(error) !== 'EADDRINUSE' || Date.now() >= deadline) throw error;
+            await new Promise((resolve) => setTimeout(resolve, REPLACEMENT_LISTEN_RETRY_MS));
+        }
+    }
+}
+
+// Ends the process after closing what would outlive it: session CLI processes, browser sessions, plugins, the marker.
+// Runs on SIGTERM/SIGINT and on a restart from the UI.
+async function shutdownServer(): Promise<void> {
+    server.close();
+    await closeSessionsWatcher();
+    closeScheduledMessageDispatcher();
+    workdayPing.stop();
+    // Session CLI processes (and their MCP servers) live as long as their
+    // chat is open, so they would outlive the server without this.
+    try {
+        providerRuntimeService.closeAll();
+    } catch (err) {
+        console.error('[Providers] Error closing session processes during shutdown:', getErrorMessage(err));
+    }
+    try {
+        await browserUseService.stopAllSessions();
+    } catch (err) {
+        console.error('[Browser] Error stopping sessions during shutdown:', getErrorMessage(err));
+    }
+    try {
+        await stopAllPlugins();
+    } catch (err) {
+        console.error('[Plugins] Error stopping plugins during shutdown:', getErrorMessage(err));
+    }
+    try {
+        await removeLocalServerMarker();
+    } catch (err) {
+        console.error('[Local Server] Error removing server marker during shutdown:', getErrorMessage(err));
+    }
+    process.exit(0);
+}
+
 // Initialize database and start server
 async function startServer() {
     try {
@@ -384,70 +454,43 @@ async function startServer() {
 
         console.log(`${terminalTextStyles.info('[INFO]')} To run in development mode with hot-module replacement, go to http://${DISPLAY_HOST}:${VITE_PORT}`);
    
-        server.listen(SERVER_PORT, HOST, async () => {
-            const appInstallPath = APP_ROOT;
-            await writeLocalServerMarker().catch((error) => {
-                console.warn('[WARN] Could not write local server marker:', error.message);
-            });
-
-            console.log('');
-            console.log(terminalTextStyles.dim('═'.repeat(63)));
-            console.log(`  ${terminalTextStyles.bright('CloudCLI Server - Ready')}`);
-            console.log(terminalTextStyles.dim('═'.repeat(63)));
-            console.log('');
-            console.log(`${terminalTextStyles.info('[INFO]')} Server URL:  ${terminalTextStyles.bright('http://' + DISPLAY_HOST + ':' + SERVER_PORT)}`);
-            console.log(`${terminalTextStyles.info('[INFO]')} Installed at: ${terminalTextStyles.dim(appInstallPath)}`);
-            console.log(`${terminalTextStyles.tip('[TIP]')}  Run "cloudcli status" for full configuration details`);
-            console.log('');
-
-            // Start watching the projects folder for changes
-            await initializeSessionsWatcher();
-            // Sends anything that came due while the server was not running,
-            // then keeps polling.
-            initializeScheduledMessageDispatcher(providerRuntimeService);
-            workdayPing.start();
-
-            // Start server-side plugin processes for enabled plugins
-            startEnabledPluginServers().catch(err => {
-                console.error('[Plugins] Error during startup:', err.message);
-            });
-
-            chatToolsService.ensureMcpRegistered().catch((error: unknown) => {
-                console.error('[ChatTools] Could not register the cloudcli-chat MCP server:', getErrorMessage(error));
-            });
+        if (REPLACES_PID !== null) {
+            console.log(`${terminalTextStyles.info('[INFO]')} Replacing server process ${REPLACES_PID}; waiting for it to release port ${SERVER_PORT}`);
+        }
+        await listen();
+        const appInstallPath = APP_ROOT;
+        await writeLocalServerMarker().catch((error) => {
+            console.warn('[WARN] Could not write local server marker:', error.message);
         });
 
-        await closeSessionsWatcher();
-        closeScheduledMessageDispatcher();
-        workdayPing.stop();
-        // Clean up plugin processes on shutdown
-        const shutdownRuntimeServices = async () => {
-            // Session CLI processes (and their MCP servers) live as long as their
-            // chat is open, so they would outlive the server without this.
-            try {
-                providerRuntimeService.closeAll();
-            } catch (err) {
-                console.error('[Providers] Error closing session processes during shutdown:', getErrorMessage(err));
-            }
-            try {
-                await browserUseService.stopAllSessions();
-            } catch (err) {
-                console.error('[Browser] Error stopping sessions during shutdown:', getErrorMessage(err));
-            }
-            try {
-                await stopAllPlugins();
-            } catch (err) {
-                console.error('[Plugins] Error stopping plugins during shutdown:', getErrorMessage(err));
-            }
-            try {
-                await removeLocalServerMarker();
-            } catch (err) {
-                console.error('[Local Server] Error removing server marker during shutdown:', getErrorMessage(err));
-            }
-            process.exit(0);
-        };
-        process.on('SIGTERM', () => void shutdownRuntimeServices());
-        process.on('SIGINT', () => void shutdownRuntimeServices());
+        console.log('');
+        console.log(terminalTextStyles.dim('═'.repeat(63)));
+        console.log(`  ${terminalTextStyles.bright('CloudCLI Server - Ready')}`);
+        console.log(terminalTextStyles.dim('═'.repeat(63)));
+        console.log('');
+        console.log(`${terminalTextStyles.info('[INFO]')} Server URL:  ${terminalTextStyles.bright('http://' + DISPLAY_HOST + ':' + SERVER_PORT)}`);
+        console.log(`${terminalTextStyles.info('[INFO]')} Installed at: ${terminalTextStyles.dim(appInstallPath)}`);
+        console.log(`${terminalTextStyles.tip('[TIP]')}  Run "cloudcli status" for full configuration details`);
+        console.log('');
+
+        // Start watching the projects folder for changes
+        await initializeSessionsWatcher();
+        // Sends anything that came due while the server was not running,
+        // then keeps polling.
+        initializeScheduledMessageDispatcher(providerRuntimeService);
+        workdayPing.start();
+
+        // Start server-side plugin processes for enabled plugins
+        startEnabledPluginServers().catch(err => {
+            console.error('[Plugins] Error during startup:', err.message);
+        });
+
+        chatToolsService.ensureMcpRegistered().catch((error: unknown) => {
+            console.error('[ChatTools] Could not register the cloudcli-chat MCP server:', getErrorMessage(error));
+        });
+
+        process.on('SIGTERM', () => void shutdownServer());
+        process.on('SIGINT', () => void shutdownServer());
     } catch (error) {
         console.error('[ERROR] Failed to start server:', error);
         process.exit(1);

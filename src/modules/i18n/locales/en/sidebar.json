@@ -154,6 +154,13 @@
     "updateAvailable": "Update available",
     "restartRequired": "Update installed — restart the server to apply"
   },
+  "server": {
+    "restart": "Restart server",
+    "confirm": "Restart?",
+    "confirmHint": "Ends the chats running in this server",
+    "restarting": "Restarting the server",
+    "failed": "The server did not come back. Click to reload."
+  },
   "search": {
     "modeProjects": "Projects",
     "modeConversations": "Conversations",

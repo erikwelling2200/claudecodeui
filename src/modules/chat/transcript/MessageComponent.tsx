@@ -10,6 +10,7 @@ import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/modules/chat/tr
 import ChatMessageImages from '@/modules/chat/transcript/ChatMessageImages';
 import ChatMessageFiles from '@/modules/chat/transcript/ChatMessageFiles';
 import { Markdown } from '@/modules/chat/transcript/Markdown';
+import { ChatAvatarReference } from '@/modules/chat/transcript/ChatReference';
 import StreamingMarkdown from '@/modules/chat/transcript/StreamingMarkdown';
 import MessageCopyControl from '@/modules/chat/transcript/MessageCopyControl';
 import MessagePinControl from '@/modules/chat/transcript/MessagePinControl';
@@ -45,6 +46,7 @@ type MessageComponentProps = {
 };
 
 const COPY_HIDDEN_TOOL_NAMES = new Set(['Bash', 'Edit', 'Write', 'ApplyPatch']);
+const AGENT_AVATAR_CLASS = 'hidden h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-purple-500 text-white dark:bg-purple-400 sm:flex';
 
 /**
  * Rendered by chat's ChatMessagesPane and ToolGroupContainer to draw one
@@ -110,16 +112,19 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
       className={`chat-message ${message.type} ${isGrouped ? 'grouped' : ''} ${message.type === 'user' && !isAgentMessage ? 'flex justify-end px-3 sm:px-0' : 'px-3 sm:px-0'}`}
     >
       {isAgentMessage ? (
-        /* A subagent's or teammate's message: the user's bubble, mirrored to the left and spanning the column */
+        /* A subagent's, teammate's or other chat's message: the user's bubble, mirrored to the left and spanning the column */
         <div className="flex w-full items-end space-x-0 sm:space-x-3">
-          {!isGrouped && (
-            <div
-              title={message.agentMessageFrom}
-              className="hidden h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-purple-500 text-sm text-white dark:bg-purple-400 sm:flex"
-            >
+          {!isGrouped && (message.agentMessageSessionId ? (
+            <ChatAvatarReference
+              chatId={message.agentMessageSessionId}
+              title={message.agentMessageFrom ?? ''}
+              className={AGENT_AVATAR_CLASS}
+            />
+          ) : (
+            <div title={message.agentMessageFrom} className={`${AGENT_AVATAR_CLASS} text-sm`}>
               S
             </div>
-          )}
+          ))}
           <div className={`group min-w-0 max-w-full flex-1 rounded-2xl rounded-bl-md border border-border/60 bg-muted/60 px-3 py-2 text-foreground shadow-sm dark:bg-gray-800/60 sm:px-4 ${isGrouped ? 'sm:ml-11' : ''}`}>
             <div dir="auto" className="break-words font-serif text-[15px] leading-relaxed">
               <Markdown breaks className="prose prose-base max-w-none font-serif text-[15px] dark:prose-invert">

@@ -31,6 +31,7 @@ import {
   truncateSubagentActivity,
 } from '@/shared/utils.js';
 import { sessionsDb } from '@/modules/database/index.js';
+import { resolvePeerSessionId } from '@/modules/providers/list/claude/claude-peer-sessions.js';
 import { getClaudeSDKSessionStartTime } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import {
   getReportedClaudeContextWindow,
@@ -505,8 +506,8 @@ async function readTranscriptRows(jsonlPath: string, providerSessionId: string):
  * as, or null for any other row. The CLI stores such a message as a
  * `queued_command` attachment of the turn it went into, the same shape it uses
  * for a background task's report, which `commandMode` tells apart. Its origin
- * is the user (`human`) or another agent (`peer`): a subagent's hand-back, whose
- * prompt is a bare `<agent-message>` that `parseAgentMessage` turns into its report.
+ * is the user (`human`) or another agent (`peer`): a subagent's hand-back or another
+ * chat's message, whose bare prompt `parseAgentMessage` turns into the message itself.
  */
 function readSteeredPromptRow(row: AnyRecord): AnyRecord | null {
   const attachment = row.type === 'attachment' ? row.attachment : null;
@@ -1008,10 +1009,17 @@ async function getSessionMessages(
  * same case: meta in the transcript, untagged in the live stream.
  */
 const INTERNAL_CONTENT_PREFIXES = [
-  '<system-reminder>',
+  // Also `<system-reminder id="...">`.
+  '<system-reminder',
   'Caveat:',
+  '<local-command-caveat>',
+  // What the IDE extension attaches about the editor state; the user did not type it.
+  '<ide_opened_file>',
+  '<ide_selection>',
   '[Request interrupted',
   'Base directory for this skill:',
+  // The path of an image the user attached, which the bubble already shows.
+  '[Image: source:',
   '[Your previous response had no visible output',
   '[Your previous response reached the output limit with no visible output',
 ] as const;
@@ -1051,20 +1059,39 @@ function unwrapPastedContent(text: string): string {
  */
 const AGENT_MESSAGE = /^(?:Another Claude session sent a message:\n)?<agent-message from="([^"]*)">\n?([\s\S]*?)\n?<\/agent-message>/;
 const HANDBACK_FRAME = /^\[Subagent hand-back\][^\n]*\n/;
+/**
+ * A message from another chat has the same two shapes, as a `<cross-session-message>`
+ * whose `from` is the sender's pipe and whose `from-name` is its chat name.
+ */
+const CROSS_SESSION_MESSAGE = /^(?:Another Claude session sent a message:\n)?<cross-session-message from="([^"]*)"(?: from-name="([^"]*)")?[^>]*>\n?([\s\S]*?)\n?<\/cross-session-message>/;
+/** The harness's notice that a chat this one asked to watch has finished a turn. */
+const IDLE_NOTICE = /^\[Cross-session idle notice\] "([^"]*)",? ([\s\S]*?)(?: This is an automated notice[\s\S]*)?$/;
 
 /**
- * Returns the sender and the report body of an `<agent-message>` turn, with
- * the harness text around and inside it removed, or null for any other text.
+ * Returns the sender and the body of a message another agent or chat sent this
+ * one, with the harness text around and inside it removed, or null for any
+ * other text. `sessionId` is set when the sender is another chat.
  */
-export function parseAgentMessage(text: string): { from: string; content: string } | null {
+export function parseAgentMessage(text: string): { from: string; content: string; sessionId?: string } | null {
   const match = AGENT_MESSAGE.exec(text);
-  if (!match) return null;
-
-  let body = match[2];
-  if (HANDBACK_FRAME.test(body)) {
-    body = body.replace(HANDBACK_FRAME, '').replace(/^ {2}/gm, '').replace(/^\[harness: [^\n]*\]\n/, '');
+  if (match) {
+    let body = match[2];
+    if (HANDBACK_FRAME.test(body)) {
+      body = body.replace(HANDBACK_FRAME, '').replace(/^ {2}/gm, '').replace(/^\[harness: [^\n]*\]\n/, '');
+    }
+    return { from: match[1], content: body.trim() };
   }
-  return { from: match[1], content: body.trim() };
+
+  const crossSession = CROSS_SESSION_MESSAGE.exec(text);
+  if (crossSession) {
+    return { from: crossSession[2] || crossSession[1], content: crossSession[3].trim(), sessionId: resolvePeerSessionId(crossSession[1]) };
+  }
+
+  const idle = IDLE_NOTICE.exec(text);
+  if (idle) {
+    return { from: idle[1], content: `${idle[1]} ${idle[2].replace(/^which you asked to be notified about, /, '')}`.trim() };
+  }
+  return null;
 }
 
 function isInternalContent(content: string): boolean {
@@ -1464,6 +1491,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
           role: 'user',
           content: agentMessage.content,
           agentMessageFrom: agentMessage.from,
+          agentMessageSessionId: agentMessage.sessionId,
         }));
         return messages;
       }

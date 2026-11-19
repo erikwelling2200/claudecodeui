@@ -1,8 +1,14 @@
+import type { ListPriceLookup, PriceDimensions } from './claude-list-prices.service.js';
+
 type CreditConfig = { get(key: string): string | null; set(key: string, value: string): void };
 
 type ClaudeCreditDependencies = {
   config: CreditConfig;
   fetch: typeof fetch;
+  /** Public list prices, for usage the organization's own bills cannot price. */
+  listPrices: { load(): Promise<ListPriceLookup> };
+  /** This app's own API-key usage recorded at or after `since`, for the minutes the usage report has not caught up with. */
+  recentUsage: (since: number) => UsageResult[];
   now?: () => number;
 };
 
@@ -25,6 +31,8 @@ const USAGE_REPORT_URL = 'https://api.anthropic.com/v1/organizations/usage_repor
 const API_VERSION = '2026-10-21';
 // The reports lag a few minutes, so polling them faster than this shows nothing new.
 const REFRESH_MS = 60_000;
+// The usage report runs about half an hour behind, so today's most recent minutes come from this app's own usage instead.
+const REPORT_LAG_MS = 30 * 60_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const DAY_MS = 86_400_000;
 // How many finished days the per-unit prices are learned from, at least; the whole cycle when it is longer.
@@ -32,9 +40,8 @@ const PRICE_HISTORY_DAYS = 31;
 
 // The dimensions a price depends on, named the same in both reports.
 const USAGE_GROUPS = ['model', 'context_window', 'service_tier', 'speed'];
-type PriceDimensions = { model: string | null; context_window: string | null; service_tier: string | null; speed: string | null };
 type CostBucket = { starting_at: string; results: (PriceDimensions & { amount: string; cost_type: string | null; token_type: string | null })[] };
-type UsageResult = PriceDimensions & {
+export type UsageResult = PriceDimensions & {
   uncached_input_tokens: number;
   cache_read_input_tokens: number;
   output_tokens: number;
@@ -56,10 +63,10 @@ function median(values: number[]): number | undefined {
 
 /**
  * Prices a unit from learned per-unit prices (keyed by `priceKey`), most specific first: the exact rate; the same
- * model's rate in another context window; or the model's input price times that unit's usual ratio to input, the
- * median over the models that have both. A model never billed before has no price.
+ * model's rate in another context window; the public list price; or the model's input price times that unit's usual
+ * ratio to input, the median over the models that have both.
  */
-function createPriceLookup(prices: Map<string, number>): (dimensions: PriceDimensions, unit: string) => number | undefined {
+function createPriceLookup(prices: Map<string, number>, listPrice: ListPriceLookup): (dimensions: PriceDimensions, unit: string) => number | undefined {
   const modelKey = (model: string | null, tier: string | null, speed: string | null) => [model, tier, speed].join('|');
   const byModel = new Map<string, Map<string, number[]>>();
   for (const [key, price] of prices) {
@@ -83,9 +90,10 @@ function createPriceLookup(prices: Map<string, number>): (dimensions: PriceDimen
     const exact = prices.get(priceKey(dimensions, unit));
     if (exact !== undefined) return exact;
     const units = modelPrice.get(modelKey(dimensions.model, dimensions.service_tier, dimensions.speed));
-    if (!units) return undefined;
-    const sameModel = units.get(unit);
+    const sameModel = units?.get(unit);
     if (sameModel !== undefined) return sameModel;
+    const listed = listPrice(dimensions, unit);
+    if (listed !== undefined || !units) return listed;
     const ratio = ratios.get(unit);
     if (ratio === undefined) return undefined;
     const input = units.get('uncached_input_tokens')
@@ -174,12 +182,15 @@ export function createClaudeCreditService(dependencies: ClaudeCreditDependencies
 
   /**
    * Finished days come from the cost report, which never returns the day in progress. Today is the token report's
-   * per-minute usage priced at what the cost report charged per unit over the previous days.
+   * per-minute usage priced at what the cost report charged per unit over the previous days, up to half an hour ago;
+   * after that, this app's own usage at the same prices.
    */
   async function fetchSpend(apiKey: string, since: number): Promise<{ today: number; cycle: number; todayUnpriced: boolean }> {
     const todayStart = Math.floor(now() / DAY_MS) * DAY_MS;
     const historyStart = Math.min(since, todayStart - PRICE_HISTORY_DAYS * DAY_MS);
-    const [costBuckets, usageBuckets, todayBuckets] = await Promise.all([
+    const reportEnd = Math.max(todayStart, Math.floor((now() - REPORT_LAG_MS) / 60_000) * 60_000);
+    const [listPrice, costBuckets, usageBuckets, todayBuckets] = await Promise.all([
+      dependencies.listPrices.load(),
       fetchPages<CostBucket>(apiKey, COST_REPORT_URL, { starting_at: isoSeconds(historyStart), ending_at: isoSeconds(todayStart), limit: '31', 'group_by[]': 'description' }),
       fetchPages<UsageBucket>(apiKey, USAGE_REPORT_URL, { starting_at: isoSeconds(historyStart), ending_at: isoSeconds(todayStart), bucket_width: '1d', limit: '31', 'group_by[]': USAGE_GROUPS }),
       fetchPages<UsageBucket>(apiKey, USAGE_REPORT_URL, { starting_at: isoSeconds(todayStart), ending_at: isoSeconds(now()), bucket_width: '1m', limit: '1440', 'group_by[]': USAGE_GROUPS }),
@@ -208,17 +219,19 @@ export function createClaudeCreditService(dependencies: ClaudeCreditDependencies
     }
     const prices = new Map<string, number>();
     for (const [key, { cents, units }] of charged) if (units > 0) prices.set(key, cents / units);
-    const priceOf = createPriceLookup(prices);
+    const priceOf = createPriceLookup(prices, listPrice);
 
+    const todayResults = [
+      ...todayBuckets.filter((bucket) => Date.parse(bucket.starting_at) < reportEnd).flatMap((bucket) => bucket.results),
+      ...dependencies.recentUsage(reportEnd),
+    ];
     let todayCents = 0;
     let todayUnpriced = false;
-    for (const bucket of todayBuckets) {
-      for (const result of bucket.results) {
-        for (const [unit, units] of usageUnits(result)) {
-          const price = priceOf(result, unit);
-          if (price === undefined) todayUnpriced = true;
-          else todayCents += units * price;
-        }
+    for (const result of todayResults) {
+      for (const [unit, units] of usageUnits(result)) {
+        const price = priceOf(result, unit);
+        if (price === undefined) todayUnpriced = true;
+        else todayCents += units * price;
       }
     }
     return { today: todayCents / 100, cycle: (cycleCents + todayCents) / 100, todayUnpriced };

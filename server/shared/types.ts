@@ -382,6 +382,8 @@ export type NormalizedMessage = {
   isCompactSummary?: boolean;
   /** Id of the subagent or teammate that sent this user-role row; the user did not type it. */
   agentMessageFrom?: string;
+  /** Claude session id of the other chat that sent this row, when it is a chat and not a subagent. */
+  agentMessageSessionId?: string;
   /** Set on the row that stands in for a compaction, so the UI can draw it as one. */
   compact?: CompactionInfo;
   images?: unknown;
@@ -1821,6 +1823,8 @@ export type FileTreeServiceDependencies = {
   logger: FileTreeLogger;
   /** The OS folder dialog; absent in deployments where the server has no desktop session. */
   nativeFolderPicker?: NativeFolderPicker;
+  /** Shows the entry in the host's file manager (Explorer, Finder), selected. */
+  revealInFileManager(targetPath: string): void;
   /** Maps project folders onto the worktrees a chat works in; absent in deployments without worktree tracking. */
   sessionFolders?: {
     mapFolders(folders: string[], sessionId: string): SessionFolder[];
@@ -1857,6 +1861,10 @@ export type FileTreeServices = {
    */
   readTextFile(projectId: string, filePath: string, sessionId?: string): Promise<{ content: string; path: string }>;
   openFile(projectId: string, filePath: string, sessionId?: string): Promise<{ contentType: string; stream: Readable }>;
+  /** The full path a possibly relative reference names, resolved the way `readTextFile` resolves it. */
+  resolveFilePath(projectId: string, filePath: string, sessionId?: string): Promise<{ path: string; exists: boolean }>;
+  /** Opens the host's file manager with the entry selected. */
+  revealFile(projectId: string, filePath: string, sessionId?: string): Promise<{ path: string }>;
   saveTextFile(projectId: string, filePath: string, content: string, sessionId?: string): Promise<{
     success: true;
     path: string;

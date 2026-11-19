@@ -9,6 +9,7 @@ import {
   findFilesRecursivelyCreatedAfter,
   normalizeSessionName,
   readFileTimestamps,
+  readLastJsonlEntryTimestamp,
 } from '@/shared/utils.js';
 import type { IProviderSessionSynchronizer } from '@/shared/interfaces.js';
 
@@ -64,7 +65,7 @@ export class ClaudeSessionSynchronizer implements IProviderSessionSynchronizer {
         continue;
       }
 
-      const timestamps = await readFileTimestamps(filePath);
+      const timestamps = await this.readSessionTimestamps(filePath);
       sessionsDb.createSession(
         parsed.sessionId,
         this.provider,
@@ -78,6 +79,16 @@ export class ClaudeSessionSynchronizer implements IProviderSessionSynchronizer {
     }
 
     return processed;
+  }
+
+  /**
+   * `updatedAt` is the last transcript entry's own timestamp, not the file's mtime: Claude Code appends
+   * untimestamped bookkeeping whenever a process loads the session, and that is not activity.
+   */
+  private async readSessionTimestamps(filePath: string): Promise<{ createdAt?: string; updatedAt?: string }> {
+    const fileTimestamps = await readFileTimestamps(filePath);
+    const lastEntryTimestamp = await readLastJsonlEntryTimestamp(filePath);
+    return { ...fileTimestamps, updatedAt: lastEntryTimestamp ?? fileTimestamps.updatedAt };
   }
 
   /**
@@ -97,7 +108,7 @@ export class ClaudeSessionSynchronizer implements IProviderSessionSynchronizer {
       return null;
     }
 
-    const timestamps = await readFileTimestamps(filePath);
+    const timestamps = await this.readSessionTimestamps(filePath);
     return sessionsDb.createSession(
       parsed.sessionId,
       this.provider,

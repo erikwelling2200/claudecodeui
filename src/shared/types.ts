@@ -433,6 +433,8 @@ export type ChatMessage = {
   isCompactSummary?: boolean;
   /** Id of the subagent or teammate that sent this message; drawn as theirs, not the user's. */
   agentMessageFrom?: string;
+  /** Claude session id of the other chat that sent this message, which its avatar opens. */
+  agentMessageSessionId?: string;
   /** Set on the row that stands in for a compaction, so it is drawn as one. */
   compact?: CompactionInfo;
   /** The summary that compaction produced, folded into the row above rather than left loose. */
@@ -607,6 +609,8 @@ export type NormalizedMessage = {
   isCompactSummary?: boolean;
   /** Id of the subagent or teammate that sent this user-role row. */
   agentMessageFrom?: string;
+  /** Claude session id of the other chat that sent this user-role row. */
+  agentMessageSessionId?: string;
   /** Set by the provider on the row that stands in for a compaction. */
   compact?: CompactionInfo;
   images?: Array<{ path?: string; data?: string; name?: string }>;

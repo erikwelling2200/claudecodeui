@@ -107,6 +107,7 @@ function createDependencies(
     fileIndex: unusedFileIndex,
     contentSearch: unusedContentSearch,
     logger: { error: () => undefined },
+    revealInFileManager: () => undefined,
   };
 }
 
@@ -382,6 +383,7 @@ function createRealFileSystemService(
   workspaceRoot = projectRoot,
   additionalFolders: string[] = [],
   sessionFolders?: FileTreeServiceDependencies['sessionFolders'],
+  revealInFileManager: FileTreeServiceDependencies['revealInFileManager'] = () => undefined,
 ): FileTreeServices {
   return createFileTreeService({
     ...(sessionFolders ? { sessionFolders } : {}),
@@ -417,6 +419,7 @@ function createRealFileSystemService(
     fileIndex: unusedFileIndex,
     contentSearch: unusedContentSearch,
     logger: { error: () => undefined },
+    revealInFileManager,
   });
 }
 
@@ -845,4 +848,40 @@ test('a worktree that does not exist falls back to the main checkout, marked mis
     assert.deepEqual(tree[0].worktree, { suffix: 'gone', branch: null, mainPath: primary, missing: true });
     assert.deepEqual(tree[0].children?.map((node) => node.name), ['main.txt']);
   });
+});
+
+test('a relative reference resolves to the full path in whichever project folder has it', async () => {
+  const projectRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'file-tree-resolve-'));
+  const secondFolder = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'file-tree-resolve-second-'));
+  try {
+    await fsPromises.mkdir(path.join(secondFolder, 'src'));
+    await fsPromises.writeFile(path.join(secondFolder, 'src', 'only-here.ts'), '');
+    const service = createRealFileSystemService(projectRoot, path.dirname(projectRoot), [secondFolder]);
+
+    const found = await service.resolveFilePath('project-1', 'src/only-here.ts');
+    assert.deepEqual(found, { path: path.join(secondFolder, 'src', 'only-here.ts'), exists: true });
+
+    const missing = await service.resolveFilePath('project-1', 'src/nowhere.ts');
+    assert.deepEqual(missing, { path: path.join(projectRoot, 'src', 'nowhere.ts'), exists: false });
+  } finally {
+    await fsPromises.rm(projectRoot, { recursive: true, force: true });
+    await fsPromises.rm(secondFolder, { recursive: true, force: true });
+  }
+});
+
+test('revealing a file hands its full path to the file manager, and a missing one is a 404', async () => {
+  const projectRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'file-tree-reveal-'));
+  try {
+    await fsPromises.writeFile(path.join(projectRoot, 'notes.md'), '');
+    const revealed: string[] = [];
+    const service = createRealFileSystemService(projectRoot, projectRoot, [], undefined, (target) => revealed.push(target));
+
+    assert.deepEqual(await service.revealFile('project-1', 'notes.md'), { path: path.join(projectRoot, 'notes.md') });
+    assert.deepEqual(revealed, [path.join(projectRoot, 'notes.md')]);
+
+    await assert.rejects(service.revealFile('project-1', 'gone.md'), (error: AppError) => error.statusCode === 404);
+    assert.equal(revealed.length, 1);
+  } finally {
+    await fsPromises.rm(projectRoot, { recursive: true, force: true });
+  }
 });

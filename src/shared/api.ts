@@ -302,6 +302,9 @@ export const api = {
   providerSessionId: (sessionId: string) =>
     get(`/api/providers/sessions/${encodeURIComponent(sessionId)}/provider-id`),
   restoreSession: (sessionId: string) => post(`/api/providers/sessions/${sessionId}/restore`),
+  // Stops the session's processes; the next message resumes it in a fresh one.
+  restartSession: (sessionId: string) =>
+    post(`/api/providers/sessions/${encodeURIComponent(sessionId)}/restart`),
   // Creates an independent session holding this one's conversation up to
   // `upToAnchorId` (all of it when omitted). The source is left untouched.
   forkSession: (sessionId: string, body: { upToAnchorId?: string; title?: string } = {}) =>
@@ -325,6 +328,12 @@ export const api = {
   // Workspace file tree
   readFile: (projectId: string, filePath: string, sessionId?: string | null) =>
     get(`/api/file-tree/projects/${projectId}/file${query({ filePath, sessionId })}`),
+  // The full path a (possibly relative) reference names, and whether it exists.
+  resolveFilePath: (projectId: string, filePath: string, sessionId?: string | null) =>
+    get(`/api/file-tree/projects/${projectId}/files/resolve${query({ path: filePath, sessionId })}`),
+  // Opens the server machine's file manager with the file selected.
+  revealFile: (projectId: string, filePath: string, sessionId?: string | null) =>
+    post(`/api/file-tree/projects/${projectId}/files/reveal`, { path: filePath, ...(sessionId ? { sessionId } : {}) }),
   // Raw bytes for a workspace file. The endpoint requires the auth header, so
   // media call sites fetch a blob through here instead of using a bare `src`.
   readFileBlob: (projectId: string, filePath: string, { sessionId, ...options }: ApiRequestOptions & FileTreeSessionOptions = {}) =>
@@ -721,6 +730,8 @@ export const api = {
 
   system: {
     update: () => post('/api/system/update'),
+    // Answers 202 and then exits; the process comes back under its supervisor or as a self-spawned replacement.
+    restart: () => post('/api/system/restart'),
   },
 
   // Claude plan limits shown at the bottom of the sidebar

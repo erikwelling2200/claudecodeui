@@ -37,6 +37,10 @@ type ActionMenuProps = {
   portal?: boolean;
   header?: React.ReactNode;
   onOpenChange?: (open: boolean) => void;
+  /** Right-clicking this element opens the menu at the pointer instead of the browser's own. Needs `portal`. */
+  contextMenuTarget?: HTMLElement | null;
+  /** No button: the menu opens only from `contextMenuTarget`. */
+  hideTrigger?: boolean;
 };
 
 /** Used by the mcp and sidebar modules for the "…" overflow menu on a server or session row. */
@@ -56,6 +60,8 @@ export function ActionMenu({
   portal = false,
   header,
   onOpenChange,
+  contextMenuTarget,
+  hideTrigger = false,
 }: ActionMenuProps) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [portalPosition, setPortalPosition] = React.useState<{ top: number; left: number } | null>(null);
@@ -85,11 +91,7 @@ export function ActionMenu({
 
     const closeOnOutsideClick = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (
-        rootRef.current
-        && !rootRef.current.contains(target)
-        && !menuRef.current?.contains(target)
-      ) {
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
         setMenuOpen(false);
       }
     };
@@ -157,6 +159,10 @@ export function ActionMenu({
     item.onSelect();
   };
 
+  const menuWidth = 260;
+  const estimatedHeight = (header ? 52 : 0)
+    + items.reduce((height, item) => height + (item.description ? 58 : 40) + (item.showDividerBefore ? 9 : 0), 12);
+
   const toggleMenu = () => {
     if (isOpen) {
       setMenuOpen(false);
@@ -165,9 +171,6 @@ export function ActionMenu({
 
     if (portal && triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
-      const menuWidth = 260;
-      const estimatedHeight = (header ? 52 : 0)
-        + items.reduce((height, item) => height + (item.description ? 58 : 40) + (item.showDividerBefore ? 9 : 0), 12);
       setPortalPosition({
         top: rect.bottom + 6 + estimatedHeight <= window.innerHeight - 8
           ? rect.bottom + 6
@@ -177,6 +180,32 @@ export function ActionMenu({
     }
     setMenuOpen(true);
   };
+
+  // Read through a ref so the listener is not rebuilt on every render the items change in.
+  const openAtPointerRef = React.useRef<(event: MouseEvent) => void>(() => {});
+  React.useLayoutEffect(() => {
+    openAtPointerRef.current = (event: MouseEvent) => {
+      event.preventDefault();
+      focusMenuOnOpenRef.current = false;
+      setPortalPosition({
+        top: event.clientY + estimatedHeight <= window.innerHeight - 8
+          ? event.clientY
+          : Math.max(8, event.clientY - estimatedHeight),
+        left: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      });
+      setMenuOpen(true);
+    };
+  });
+
+  React.useEffect(() => {
+    if (!contextMenuTarget || !portal) {
+      return;
+    }
+
+    const openAtPointer = (event: MouseEvent) => openAtPointerRef.current(event);
+    contextMenuTarget.addEventListener('contextmenu', openAtPointer);
+    return () => contextMenuTarget.removeEventListener('contextmenu', openAtPointer);
+  }, [contextMenuTarget, portal]);
 
   const menu = isOpen && (!portal || portalPosition) && (
     <div
@@ -234,6 +263,10 @@ export function ActionMenu({
       })}
     </div>
   );
+
+  if (hideTrigger) {
+    return portal && typeof document !== 'undefined' ? createPortal(menu, document.body) : null;
+  }
 
   return (
     <div ref={rootRef} className={cn('relative inline-flex', className)}>
