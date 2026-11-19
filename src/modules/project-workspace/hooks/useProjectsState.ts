@@ -395,6 +395,20 @@ const renameSessionInProject = (project: Project, sessionIdToRename: string, sum
   return { ...project, sessions: nextSessions };
 };
 
+/**
+ * Writes a new title onto the workspace header's `selectedSession`, or returns it unchanged when it is another session
+ * or already carries that title. A session opened from a Conversations search hit carries the one-shot jump target the
+ * chat reads off every new `selectedSession` identity; it is left behind, or the rename would scroll the transcript back
+ * to the matched message and flash the search highlight again.
+ */
+const renameSelectedSession = (selected: ProjectSession | null, sessionIdToRename: string, summary: string): ProjectSession | null => {
+  if (selected?.id !== sessionIdToRename || selected.summary === summary) {
+    return selected;
+  }
+  const { __searchTargetSnippet: _snippet, __searchTargetTimestamp: _timestamp, ...session } = selected;
+  return { ...session, summary };
+};
+
 const VALID_TABS: Set<string> = new Set(['chat', 'files', 'shell', 'git', 'tasks', 'browser']);
 
 const isValidTab = (tab: string): tab is AppTab => {
@@ -917,6 +931,13 @@ export function useProjectsState({
         return mergeProjectSelectionMetadata(previousProject, upsert.project);
       });
 
+      // A chat renamed by its agent, another tab or the CLI arrives only as this upsert. An empty summary is a row the
+      // server has not titled yet, never a cleared title.
+      const upsertedSummary = upsert.session.summary?.trim();
+      if (upsertedSummary) {
+        setSelectedSession((previousSession) => renameSelectedSession(previousSession, upsert.sessionId, upsertedSummary));
+      }
+
       const aliasedSelectedSessionId =
         typeof upsert.providerSessionId === 'string' && upsert.providerSessionId !== upsert.sessionId
           ? upsert.providerSessionId
@@ -1251,17 +1272,7 @@ export function useProjectsState({
       return changed ? nextProjects : previousProjects;
     });
 
-    setSelectedSession((previousSession) => {
-      if (previousSession?.id !== sessionIdToRename || previousSession.summary === trimmed) {
-        return previousSession;
-      }
-      // A session opened from a Conversations search hit carries the one-shot
-      // jump target the chat reads off every new `selectedSession` identity.
-      // Leave it behind, or the rename would scroll the transcript back to the
-      // matched message and flash the search highlight again.
-      const { __searchTargetSnippet: _snippet, __searchTargetTimestamp: _timestamp, ...session } = previousSession;
-      return { ...session, summary: trimmed };
-    });
+    setSelectedSession((previousSession) => renameSelectedSession(previousSession, sessionIdToRename, trimmed));
 
     return true;
   }, []);
