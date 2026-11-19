@@ -1,6 +1,8 @@
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs, { promises as fsPromises } from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 
 import mime from 'mime-types';
 import multer from 'multer';
@@ -84,6 +86,19 @@ const fileTreeLogger: FileTreeLogger = {
   error: (message, error) => console.error(message, error),
 };
 
+/** Explorer, Finder or the Linux desktop's file manager, on the machine the server runs on. */
+function revealInFileManager(targetPath: string): void {
+  const [command, args, windowsVerbatimArguments] = process.platform === 'win32'
+    // Explorer reads `/select,"<path>"` itself, so Node must not quote the argument as a whole.
+    ? ['explorer.exe', [`/select,"${path.win32.normalize(targetPath)}"`], true]
+    : process.platform === 'darwin'
+      ? ['open', ['-R', targetPath], false]
+      : ['xdg-open', [path.dirname(targetPath)], false];
+  const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsVerbatimArguments });
+  child.on('error', (error) => fileTreeLogger.error(`Could not reveal ${targetPath}`, error));
+  child.unref();
+}
+
 const fileSearchIndex = createFileSearchIndex({
   listFiles: listFilesWithRipgrep,
   watchFolder: watchFolderRecursively,
@@ -100,6 +115,7 @@ const fileTreeServices = createFileTreeService({
   fileIndex: fileSearchIndex,
   contentSearch: createFileContentSearch({ runRipgrep: runRipgrepJson }),
   logger: fileTreeLogger,
+  revealInFileManager,
   sessionFolders: {
     mapFolders: (folders, sessionId) => mapFoldersToSessionWorktrees(folders, sessionWorktreesDb.listBySession(sessionId)),
   },

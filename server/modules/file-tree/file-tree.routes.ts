@@ -212,6 +212,17 @@ export function createFileTreeRouter(
     });
   }, logger));
 
+  router.get('/projects/:projectId/files/resolve', createRouteHandler(async (request, response) => {
+    const filePath = readRequiredString(request.query.path, 'path', 'Invalid file path');
+    response.json(await services.resolveFilePath(readProjectId(request), filePath, ...sessionIdArgument(request)));
+  }, logger));
+
+  router.post('/projects/:projectId/files/reveal', createRouteHandler(async (request, response) => {
+    const body = readBody(request);
+    const filePath = readRequiredString(body.path, 'path', 'Invalid file path');
+    response.json(await services.revealFile(readProjectId(request), filePath, ...sessionIdArgument(request)));
+  }, logger));
+
   router.put('/projects/:projectId/file', createRouteHandler(async (request, response) => {
     const body = readBody(request);
     const filePath = readRequiredString(body.filePath, 'filePath', 'Invalid file path');
