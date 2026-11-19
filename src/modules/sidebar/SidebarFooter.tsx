@@ -1,6 +1,7 @@
 import { Settings, AlertTriangle } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
+import ServerRestartButton from '@/modules/sidebar/ServerRestartButton';
 import SidebarUsage from '@/modules/sidebar/SidebarUsage';
 import { IS_PLATFORM } from '@/shared/utils';
 
@@ -43,15 +44,16 @@ export default function SidebarFooter({
 
       <SidebarUsage t={t} />
 
-      {/* Desktop settings */}
-      <div className="hidden px-2 py-1.5 md:block">
+      {/* Desktop settings + server restart */}
+      <div className="hidden items-center gap-1 px-2 py-1.5 md:flex">
         <button
-          className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
           onClick={onShowSettings}
         >
           <Settings className="h-3.5 w-3.5" />
           <span className="text-sm">{t('actions.settings')}</span>
         </button>
+        <ServerRestartButton t={t} />
       </div>
 
       {/* Desktop version brand line (OSS mode only) */}
@@ -68,10 +70,10 @@ export default function SidebarFooter({
         </div>
       )}
 
-      {/* Mobile settings */}
-      <div className="px-3 pb-3 pt-2 md:hidden">
+      {/* Mobile settings + server restart */}
+      <div className="flex items-center gap-2 px-3 pb-3 pt-2 md:hidden">
         <button
-          className="flex h-10 w-full items-center gap-3 rounded-xl bg-muted/40 px-3.5 transition-all hover:bg-muted/60 active:scale-[0.98]"
+          className="flex h-10 min-w-0 flex-1 items-center gap-3 rounded-xl bg-muted/40 px-3.5 transition-all hover:bg-muted/60 active:scale-[0.98]"
           onClick={onShowSettings}
         >
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-background/80">
@@ -79,6 +81,7 @@ export default function SidebarFooter({
           </div>
           <span className="text-sm font-normal text-foreground">{t('actions.settings')}</span>
         </button>
+        <ServerRestartButton t={t} className="h-10 w-10 rounded-xl bg-muted/40" />
       </div>
     </div>
   );
