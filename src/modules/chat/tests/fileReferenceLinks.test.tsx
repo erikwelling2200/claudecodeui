@@ -93,6 +93,12 @@ test('a code block holding only an absolute path opens that file', () => {
   assert.deepEqual(openFileInEditor.mock.calls[0], [filePath, null]);
 });
 
+test('an absolute path with an extension outside the known list still opens', () => {
+  const filePath = String.raw`C:\Users\erikw\AppData\Local\Temp\claude\tasks\w4840nxgb.output`;
+  clickReference(`\`\`\`\n${filePath}\n\`\`\``, filePath);
+  assert.deepEqual(openFileInEditor.mock.calls[0], [filePath, null]);
+});
+
 test('each line of a code block holding several paths opens its own file', () => {
   const first = String.raw`C:\Temp\scratchpad\excel\formula_edits.json`;
   const second = String.raw`C:\Temp\scratchpad\excel\text\text-edits-log.json`;

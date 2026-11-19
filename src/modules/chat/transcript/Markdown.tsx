@@ -81,6 +81,8 @@ const FILE_EXTENSIONS =
   'vue|svelte|gradle|csproj|sln|props|targets|asmdef|asmref|unity|prefab|asset|mat|anim|controller|meta|shader|' +
   'hlsl|cginc|compute|uss|uxml|inputactions|blend|fbx|png|jpg|jpeg|gif|svg|webp|pdf|lock';
 const FILE_NAME_PATTERN = new RegExp(`(^|[\\\\/])[^\\\\/]+\\.(${FILE_EXTENSIONS})$`, 'i');
+// An absolute path is unambiguous enough that any extension counts, such as a task's `.output` file.
+const ANY_EXTENSION_PATTERN = /[\\/][^\\/]+\.[A-Za-z0-9]+$/;
 
 // `C:/…`, `~/…` or `/dir/…`: a POSIX path needs a space-free first segment, so `/compact notes.md` is no path.
 const ABSOLUTE_PATH_PATTERN = /^([A-Za-z]:[\\/]|~[\\/]|\/[^\s\\/]+\/)/;
@@ -88,11 +90,12 @@ const ABSOLUTE_PATH_PATTERN = /^([A-Za-z]:[\\/]|~[\\/]|\/[^\s\\/]+\/)/;
 const looksLikeCodeFileReference = (value: string): boolean => {
   const cleaned = stripLineSuffix(value.trim());
   // Spaces are only allowed in an absolute path; elsewhere they mark a command such as `git add foo.ts`.
-  const forbidden = ABSOLUTE_PATH_PATTERN.test(cleaned) ? /[\t\r\n*?<>|"(){}]/ : /[\s*?<>|"(){}]/;
+  const isAbsolute = ABSOLUTE_PATH_PATTERN.test(cleaned);
+  const forbidden = isAbsolute ? /[\t\r\n*?<>|"(){}]/ : /[\s*?<>|"(){}]/;
   if (!cleaned || forbidden.test(cleaned) || cleaned.includes('://')) {
     return false;
   }
-  return FILE_NAME_PATTERN.test(cleaned);
+  return FILE_NAME_PATTERN.test(cleaned) || (isAbsolute && ANY_EXTENSION_PATTERN.test(cleaned));
 };
 
 type FileOps = Pick<ReturnType<typeof usePaletteOps>, 'openFileInEditor' | 'openDirectory'>;
