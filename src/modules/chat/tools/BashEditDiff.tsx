@@ -6,6 +6,7 @@ import { cn } from '@/shared/utils';
 import type { DiffStats } from '@/shared/types';
 import { CollapsibleDisplay } from '@/modules/chat/tools/CollapsibleDisplay';
 import { DiffStatsBadge } from '@/modules/chat/tools/DiffStatsBadge';
+import { FileActionMenu } from '@/modules/chat/transcript/FileActionMenu';
 
 type BashEditDiffHunk = {
   oldStart: number;
@@ -281,6 +282,7 @@ function BashEditDiffFileSection({ file, onFileOpen }: BashEditDiffFileSectionPr
       toolCategory="edit"
       badge={stats.added > 0 || stats.removed > 0 ? <DiffStatsBadge stats={stats} /> : undefined}
       onTitleClick={openFile}
+      titleMenu={openFile ? (target) => <FileActionMenu target={target} path={file.filePath} onOpenFile={openFile} /> : undefined}
     >
       <div className="overflow-hidden rounded border border-gray-200/60 dark:border-gray-700/50">
         <div className="border-b border-gray-200/60 bg-gray-50/80 px-2.5 py-1 dark:border-gray-700/50 dark:bg-gray-800/40">

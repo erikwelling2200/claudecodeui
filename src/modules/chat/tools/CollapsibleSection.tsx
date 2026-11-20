@@ -13,6 +13,8 @@ type CollapsibleSectionProps = {
   action?: React.ReactNode;
   badge?: React.ReactNode;
   onTitleClick?: () => void;
+  /** Renders the right-click menu of a clickable title, given the title element. */
+  titleMenu?: (target: HTMLElement | null) => React.ReactNode;
   children: React.ReactNode;
   className?: string;
 };
@@ -31,9 +33,11 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   action,
   badge,
   onTitleClick,
+  titleMenu,
   children,
   className = '',
 }) => {
+  const [titleButton, setTitleButton] = React.useState<HTMLButtonElement | null>(null);
   // A document has no chevron to click, so a section that stays collapsed in
   // an export is simply content the reader can never reach.
   const isExporting = useIsExportingTranscript();
@@ -60,6 +64,7 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
             <span className="flex-shrink-0 text-[10px] text-muted-foreground/40">/</span>
           )}
           <button
+            ref={setTitleButton}
             onClick={onTitleClick}
             className={cn(
               'flex-1 truncate text-left font-mono text-primary transition-colors hover:text-primary/80 hover:underline',
@@ -68,6 +73,7 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
           >
             {title}
           </button>
+          {titleMenu?.(titleButton)}
           {badge && <span className="ml-auto flex-shrink-0">{badge}</span>}
           {action && <span className="ml-1 flex-shrink-0">{action}</span>}
         </div>

@@ -13,6 +13,7 @@ type CollapsibleDisplayProps = {
   action?: React.ReactNode;
   badge?: React.ReactNode;
   onTitleClick?: () => void;
+  titleMenu?: (target: HTMLElement | null) => React.ReactNode;
   children: React.ReactNode;
   showRawParameters?: boolean;
   rawContent?: string;
@@ -45,6 +46,7 @@ export const CollapsibleDisplay: React.FC<CollapsibleDisplayProps> = ({
   action,
   badge,
   onTitleClick,
+  titleMenu,
   children,
   showRawParameters = false,
   rawContent,
@@ -63,6 +65,7 @@ export const CollapsibleDisplay: React.FC<CollapsibleDisplayProps> = ({
         action={action}
         badge={badge}
         onTitleClick={onTitleClick}
+        titleMenu={titleMenu}
       >
         {children}
 

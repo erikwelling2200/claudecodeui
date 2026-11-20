@@ -6,7 +6,6 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, Check, Copy, ExternalLink, FolderOpen } from 'lucide-react';
 
 import { MermaidDiagram } from '@/modules/code-editor';
 import { ChatReference } from '@/modules/chat/transcript/ChatReference';
@@ -14,7 +13,7 @@ import { MarkdownImage } from '@/modules/chat/transcript/MarkdownImage';
 import { normalizeInlineCodeFences } from '@/modules/chat/utils/chatFormatting';
 import { normalizeLatexDelimiters } from '@/modules/chat/utils/latexDelimiters';
 import { copyTextToClipboard } from '@/shared/utils';
-import { ActionMenu } from '@/shared/ui';
+import { FileActionMenu } from '@/modules/chat/transcript/FileActionMenu';
 import { SyntaxHighlighter } from '@/shared/syntaxHighlighter';
 import { usePaletteOps } from '@/modules/command-palette';
 import { buildSyntaxTheme } from '@/modules/chat/utils/syntaxHighlightTheme';
@@ -118,8 +117,6 @@ const openFileReference = (rawReference: string, { openFileInEditor, openDirecto
 // Set inside a rendered link, so inline code there does not nest a second link.
 const InsideLinkContext = React.createContext(false);
 
-type ActionState = 'idle' | 'busy' | 'done' | 'error';
-
 type FilePathLinkProps = {
   reference: string;
   href: string;
@@ -133,35 +130,6 @@ type FilePathLinkProps = {
 const FilePathLink = ({ reference, href, className, decode = false, children }: FilePathLinkProps) => {
   const fileOps = usePaletteOps();
   const [link, setLink] = useState<HTMLAnchorElement | null>(null);
-  const [copyState, setCopyState] = useState<ActionState>('idle');
-  const [revealState, setRevealState] = useState<ActionState>('idle');
-  const path = fileReferencePath(reference.trim(), decode);
-
-  const runAction = async (action: () => Promise<void>, setState: (state: ActionState) => void) => {
-    setState('busy');
-    try {
-      await action();
-      setState('done');
-    } catch (error) {
-      console.error(error);
-      setState('error');
-    }
-  };
-
-  const copyPath = () => runAction(async () => {
-    if (!(await copyTextToClipboard(await fileOps.resolveFilePath(path)))) {
-      throw new Error('The clipboard refused the path.');
-    }
-  }, setCopyState);
-
-  const revealFile = () => runAction(() => fileOps.revealFile(path), setRevealState);
-
-  const resetStates = React.useCallback((open: boolean) => {
-    if (!open) {
-      setCopyState('idle');
-      setRevealState('idle');
-    }
-  }, []);
 
   return (
     <>
@@ -176,39 +144,10 @@ const FilePathLink = ({ reference, href, className, decode = false, children }: 
       >
         {children}
       </a>
-      <ActionMenu
-        label="File options"
-        hideTrigger
-        portal
-        contextMenuTarget={link}
-        onOpenChange={resetStates}
-        menuClassName="w-[260px] rounded-xl p-1.5 shadow-xl"
-        items={[
-          {
-            key: 'open',
-            label: 'Open',
-            icon: ExternalLink,
-            onSelect: () => openFileReference(reference, fileOps, decode),
-          },
-          {
-            key: 'reveal',
-            label: revealState === 'error' ? 'Could not show in Explorer' : 'Show in Explorer',
-            description: revealState === 'error' ? 'Click to try again.' : undefined,
-            icon: revealState === 'done' ? Check : revealState === 'error' ? AlertCircle : FolderOpen,
-            loading: revealState === 'busy',
-            closeOnSelect: false,
-            onSelect: () => void revealFile(),
-          },
-          {
-            key: 'copy',
-            label: copyState === 'done' ? 'Path copied' : copyState === 'error' ? 'Could not copy path' : 'Copy path',
-            description: copyState === 'error' ? 'Click to try again.' : undefined,
-            icon: copyState === 'done' ? Check : copyState === 'error' ? AlertCircle : Copy,
-            loading: copyState === 'busy',
-            closeOnSelect: false,
-            onSelect: () => void copyPath(),
-          },
-        ]}
+      <FileActionMenu
+        target={link}
+        path={fileReferencePath(reference.trim(), decode)}
+        onOpenFile={() => openFileReference(reference, fileOps, decode)}
       />
     </>
   );
