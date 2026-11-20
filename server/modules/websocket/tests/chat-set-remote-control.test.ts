@@ -102,3 +102,40 @@ test('a thread switched on its own leaves its parent alone', async () => {
     assert.equal(sessionsDb.getSessionById(PARENT_ID)?.remote_control, 0);
   });
 });
+
+test('starting a Remote Control chat launches its process idle with the bridge on', async () => {
+  await withGateway(async () => {
+    const runs: Array<{ command: string; options: Record<string, unknown> }> = [];
+    const socket = createFakeSocket();
+    handleChatConnection(socket as never, { user: { id: 1 } } as never, {
+      runtime: {
+        hasRuntime: () => true,
+        run: async (_provider: string, command: string, options: Record<string, unknown>) => {
+          runs.push({ command, options });
+        },
+      } as never,
+    });
+    await socket.deliver({ type: 'chat.start-remote-control', sessionId: OTHER_ID, options: { model: 'opus' } });
+
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].options.startIdle, true);
+    assert.equal(runs[0].options.remoteControl, true);
+    assert.equal(runs[0].options.model, 'opus');
+    assert.equal(sessionsDb.getSessionById(OTHER_ID)?.remote_control, 1);
+  });
+});
+
+test('a chat that already ran a turn is not started again for Remote Control', async () => {
+  await withGateway(async () => {
+    sessionsDb.assignProviderSessionId(OTHER_ID, 'provider-other');
+    let launched = false;
+    const socket = createFakeSocket();
+    handleChatConnection(socket as never, { user: { id: 1 } } as never, {
+      runtime: { hasRuntime: () => true, run: async () => { launched = true; } } as never,
+    });
+    await socket.deliver({ type: 'chat.start-remote-control', sessionId: OTHER_ID });
+
+    assert.equal(launched, false);
+    assert.ok(socket.frames.some((frame) => frame.code === 'SESSION_ALREADY_STARTED' || JSON.stringify(frame).includes('SESSION_ALREADY_STARTED')));
+  });
+});

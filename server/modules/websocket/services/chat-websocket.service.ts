@@ -751,6 +751,41 @@ async function handleChatSetRemoteControl(
 }
 
 /**
+ * Handles `chat.start-remote-control`: launches a Claude process for a chat that
+ * has not run a turn yet, with Remote Control on and no prompt, so its first
+ * message can come from claude.ai as well as from the composer.
+ */
+async function handleChatStartRemoteControl(
+  ws: WebSocket,
+  userId: string | number | null,
+  data: AnyRecord,
+  dependencies: ChatWebSocketDependencies
+): Promise<void> {
+  const resolved = resolveSendTarget(ws, data, dependencies, 'chat.start-remote-control');
+  if (!resolved) {
+    return;
+  }
+  const { sessionId, session, provider } = resolved;
+  if (provider !== 'claude') {
+    sendProtocolError(ws, 'UNSUPPORTED_PROVIDER', 'Remote Control is only available for Claude chats.', sessionId);
+    return;
+  }
+  if (session.provider_session_id) {
+    sendProtocolError(ws, 'SESSION_ALREADY_STARTED', 'chat.start-remote-control only starts a chat that has not run a turn yet.', sessionId);
+    return;
+  }
+
+  sessionsDb.setSessionRemoteControl(sessionId, true);
+  broadcastRemoteControl(sessionId, provider, { enabled: true, sessionUrl: null });
+  const options = { ...((data.options ?? {}) as AnyRecord), remoteControl: true };
+  const result = await dispatchRun(ws, userId, sessionId, session, { content: '', options }, dependencies, { startIdle: true });
+  if (result.error) {
+    sessionsDb.setSessionRemoteControl(sessionId, false);
+    broadcastRemoteControl(sessionId, provider, { enabled: false, sessionUrl: null, error: result.error });
+  }
+}
+
+/**
  * Handles `chat.subscribe`: for each requested session, reports whether a run
  * is processing, re-attaches the live stream to this socket, replays missed
  * events (seq > lastSeq), and includes pending permission requests.
@@ -1021,6 +1056,9 @@ export function handleChatConnection(
           return;
         case 'chat.set-remote-control':
           await handleChatSetRemoteControl(ws, data, dependencies);
+          return;
+        case 'chat.start-remote-control':
+          await handleChatStartRemoteControl(ws, userId, data, dependencies);
           return;
         case 'chat.subscribe':
           handleChatSubscribe(ws, data, dependencies);
