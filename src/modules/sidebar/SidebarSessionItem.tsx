@@ -111,7 +111,10 @@ function SidebarSessionItem({
   const isSelected = selectedSession?.id === session.id;
   const compactSessionAge = formatCompactAge(sessionView.sessionTime, currentTime);
   const [isMobileOptionsOpen, setIsMobileOptionsOpen] = useState(false);
-  const showAttentionIndicator = needsAttention && !isSelected;
+  // Stays on the open chat too: only answering the prompt clears it.
+  const showAttentionIndicator = needsAttention;
+  // A session blocked on a prompt is not busy, so it shows the attention dot instead of the spinner.
+  const showProcessingSpinner = isProcessing && !needsAttention;
   // Background work outranks unread output: the session is still doing something.
   const showBackgroundIndicator = !showAttentionIndicator && hasBackgroundWork;
   const showUnreadIndicator = !showAttentionIndicator && !showBackgroundIndicator && !isProcessing && hasUnreadOutput && !isSelected;
@@ -276,7 +279,7 @@ function SidebarSessionItem({
                 >
                   {sessionView.sessionName}
                 </div>
-                {isProcessing ? (
+                {showProcessingSpinner ? (
                   <span className="ml-auto flex-shrink-0">
                     <Tooltip content={t('tooltips.processingSessionIndicator', 'Processing session')} position="top">
                       <span className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground">
@@ -508,7 +511,7 @@ function SidebarSessionItem({
                 >
                   {sessionView.sessionName}
                 </div>
-                {isProcessing ? (
+                {showProcessingSpinner ? (
                   <span
                     className={cn(
                       'ml-auto flex-shrink-0 transition-opacity duration-200',

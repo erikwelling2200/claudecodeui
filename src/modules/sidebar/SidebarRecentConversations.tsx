@@ -161,8 +161,7 @@ export default function SidebarRecentConversations({
           const age = formatCompactAge(conversation.lastActivity, currentTime);
           const hasBackgroundWork = sessionActions.backgroundSessionIds.has(conversation.sessionId);
           const isProcessing = sessionActions.activeSessions.has(conversation.sessionId) && !hasBackgroundWork;
-          const showAttentionIndicator =
-            sessionActions.attentionSessionIds.has(conversation.sessionId) && !isSelected;
+          const showAttentionIndicator = sessionActions.attentionSessionIds.has(conversation.sessionId);
           const showUnreadIndicator = !showAttentionIndicator && !hasBackgroundWork && !isProcessing
             && sessionActions.unreadSessionIds.has(conversation.sessionId) && !isSelected;
           const indicatorLabel = showAttentionIndicator
@@ -228,7 +227,7 @@ export default function SidebarRecentConversations({
                   </span>
                   <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] leading-3 text-muted-foreground">
                     <span className="truncate">{conversation.projectDisplayName}</span>
-                    {isProcessing ? (
+                    {isProcessing && !showAttentionIndicator ? (
                       <>
                         <span className="flex-shrink-0 text-muted-foreground/40">·</span>
                         <Tooltip content={t('tooltips.processingSessionIndicator', 'Processing session')} position="top">
