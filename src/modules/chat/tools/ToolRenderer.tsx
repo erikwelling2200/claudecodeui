@@ -15,6 +15,7 @@ import { TextContent } from '@/modules/chat/tools/ContentRenderers/TextContent';
 import { QuestionAnswerContent } from '@/modules/chat/tools/ContentRenderers/QuestionAnswerContent';
 import { PlanDisplay } from '@/modules/chat/tools/PlanDisplay';
 import { MarkdownImage } from '@/modules/chat/transcript/MarkdownImage';
+import { FileActionMenu } from '@/modules/chat/transcript/FileActionMenu';
 import { ToolStatusBadge } from '@/modules/chat/tools/ToolStatusBadge';
 import { DiffStatsBadge } from '@/modules/chat/tools/DiffStatsBadge';
 import { parseToolPayload, summarizeDiff } from '@/modules/chat/utils/messageTransforms';
@@ -326,6 +327,16 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
           new_string: contentProps.newContent
         })
       : undefined;
+    const titleMenu = handleTitleClick
+      ? (target: HTMLElement | null) => (
+        <FileActionMenu
+          target={target}
+          path={contentProps.filePath}
+          onOpenDiff={handleTitleClick}
+          onOpenFile={() => onFileOpen?.(contentProps.filePath)}
+        />
+      )
+      : undefined;
 
     // Not memoized on purpose: `createDiff` is the session's cached calculator,
     // so this is a Map hit on the same key ToolDiffViewer is about to use.
@@ -358,6 +369,7 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
         title={title}
         defaultOpen={defaultOpen}
         onTitleClick={handleTitleClick}
+        titleMenu={titleMenu}
         badge={badgeElement}
         showRawParameters={mode === 'input' && showRawParameters}
         rawContent={rawToolInput}
