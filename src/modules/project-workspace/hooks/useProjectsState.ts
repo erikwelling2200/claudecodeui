@@ -577,10 +577,18 @@ export function useProjectsState({
     sendMessageRef.current({ type: 'chat.mark-read', sessionId: targetSessionId });
   }, []);
 
-  const markSessionAttention = useCallback(
-    (targetSessionId: string) => flagSession(setAttentionSessionIds, targetSessionId),
-    [flagSession],
-  );
+  /** Unlike unread output, a pending prompt stays flagged while it is on screen: viewing it does not answer it. */
+  const markSessionAttention = useCallback((targetSessionId: string) => {
+    setAttentionSessionIds((previous) => {
+      if (previous.has(targetSessionId)) {
+        return previous;
+      }
+
+      const next = new Set(previous);
+      next.add(targetSessionId);
+      return next;
+    });
+  }, []);
 
   const markSessionUnread = useCallback((targetSessionId: string) => {
     if (!flagSession(setUnreadSessionIds, targetSessionId)) {
@@ -599,16 +607,15 @@ export function useProjectsState({
     }
   }, [markedUnreadSessionIds]);
 
-  /** Drops every indicator for a session, once it is opened or gone. */
+  /** Drops the unread indicator of a session once it is opened. Attention stays until the prompt is answered. */
   const clearSessionIndicators = useCallback((targetSessionId?: string | null) => {
     if (!targetSessionId) {
       return;
     }
 
-    clearSessionAttention(targetSessionId);
     clearSessionUnread(targetSessionId);
     announceSessionRead(targetSessionId);
-  }, [announceSessionRead, clearSessionAttention, clearSessionUnread]);
+  }, [announceSessionRead, clearSessionUnread]);
 
   useEffect(() => {
     const clearViewedSessionOnReturn = () => {
@@ -877,6 +884,7 @@ export function useProjectsState({
           // Answered, possibly from another tab, so it no longer waits on the user.
           clearSessionAttention(eventSessionId);
         } else if (event.kind === 'complete') {
+          clearSessionAttention(eventSessionId);
           markSessionUnread(eventSessionId);
         } else if (event.kind === 'session_read') {
           // Seen on another device or tab.
@@ -1211,6 +1219,7 @@ export function useProjectsState({
   const handleSessionDelete = useCallback(
     (sessionIdToDelete: string) => {
       clearSessionIndicators(sessionIdToDelete);
+      clearSessionAttention(sessionIdToDelete);
 
       if (selectedSession?.id === sessionIdToDelete) {
         setSelectedSession(null);
@@ -1221,7 +1230,7 @@ export function useProjectsState({
         prevProjects.map((project) => removeSessionFromProject(project, sessionIdToDelete)),
       );
     },
-    [clearSessionIndicators, navigate, selectedSession?.id],
+    [clearSessionAttention, clearSessionIndicators, navigate, selectedSession?.id],
   );
 
   /** Shows the unread dot until the session is opened again, closing it first when it is the one on screen. */

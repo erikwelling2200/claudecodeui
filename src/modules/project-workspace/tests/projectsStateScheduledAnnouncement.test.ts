@@ -130,8 +130,27 @@ test('the open session is marked unread only while the window is unfocused, and 
     window.dispatchEvent(new Event('focus'));
   });
   assert.equal(result.current.sidebarSharedProps.unreadSessionIds.has(BACKGROUND_SESSION_ID), false);
-  assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), false);
   hasFocus.mockRestore();
+});
+
+test('a pending prompt stays flagged while its chat is open, until it is answered', async () => {
+  const { result } = await renderProjectsState();
+  await waitFor(() => assert.equal(result.current.sidebarSharedProps.isLoading, false));
+
+  emit({ kind: 'permission_request', sessionId: BACKGROUND_SESSION_ID });
+  act(() => result.current.sidebarSharedProps.onSessionSelect(project.sessions![0]));
+  act(() => {
+    window.dispatchEvent(new Event('focus'));
+  });
+  assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), true);
+
+  emit({ kind: 'permission_resolved', sessionId: BACKGROUND_SESSION_ID });
+  assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), false);
+
+  emit({ kind: 'permission_request', sessionId: BACKGROUND_SESSION_ID });
+  assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), true);
+  emit({ kind: 'complete', sessionId: BACKGROUND_SESSION_ID, exitCode: 0 });
+  assert.equal(result.current.sidebarSharedProps.attentionSessionIds.has(BACKGROUND_SESSION_ID), false);
 });
 
 test('an answered permission request clears the amber dot', async () => {
