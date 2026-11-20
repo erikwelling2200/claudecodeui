@@ -182,19 +182,50 @@ export const sortProjects = (
   return byName;
 };
 
-export const filterProjects = (projects: Project[], searchFilter: string): Project[] => {
+export type FilteredProjects = {
+  projects: Project[];
+  /** Projects kept only because some of their chats matched; they list just those chats and open by themselves. */
+  chatMatchedProjectIds: Set<string>;
+};
+
+const sessionMatchesSearch = (session: ProjectSession, normalizedSearch: string): boolean =>
+  [session.summary, session.name].some(
+    (value) => typeof value === 'string' && value.toLowerCase().includes(normalizedSearch),
+  );
+
+// Chats are matched among the sessions already loaded per project; older ones are reached through the Conversations tab.
+export const filterProjects = (projects: Project[], searchFilter: string): FilteredProjects => {
+  const chatMatchedProjectIds = new Set<string>();
   const normalizedSearch = searchFilter.trim().toLowerCase();
   if (!normalizedSearch) {
-    return projects;
+    return { projects, chatMatchedProjectIds };
   }
 
-  return projects.filter((project) => {
+  const matchedProjects = projects.reduce<Project[]>((acc, project) => {
     const displayName = (project.displayName || project.projectId).toLowerCase();
     // `project.path`/`fullPath` is the most useful search target now that the
     // folder-derived name is gone; fall back to displayName above.
     const searchPath = (project.path || project.fullPath || '').toLowerCase();
-    return displayName.includes(normalizedSearch) || searchPath.includes(normalizedSearch);
-  });
+    if (displayName.includes(normalizedSearch) || searchPath.includes(normalizedSearch)) {
+      acc.push(project);
+      return acc;
+    }
+
+    const matchingSessions = (project.sessions ?? []).filter((session) => sessionMatchesSearch(session, normalizedSearch));
+    if (matchingSessions.length === 0) {
+      return acc;
+    }
+
+    chatMatchedProjectIds.add(project.projectId);
+    acc.push({
+      ...project,
+      sessions: matchingSessions,
+      sessionMeta: { ...project.sessionMeta, total: matchingSessions.length, hasMore: false },
+    });
+    return acc;
+  }, []);
+
+  return { projects: matchedProjects, chatMatchedProjectIds };
 };
 
 export const getTaskIndicatorStatus = (

@@ -694,14 +694,6 @@ export function useSidebarController({
     });
   }, []);
 
-  const isProjectExpanded = useCallback(
-    (projectId: string) =>
-      searchMode === 'running'
-        ? !collapsedRunningProjects.has(projectId)
-        : expandedProjects.has(projectId),
-    [collapsedRunningProjects, expandedProjects, searchMode],
-  );
-
   const handleSessionClick = useCallback(
     (session: SessionWithProvider, projectId: string) => {
       // Tag the session with its owning projectId so downstream handlers
@@ -899,9 +891,20 @@ export function useSidebarController({
     [hiddenProjectIds, showHiddenProjects, sortedProjects],
   );
 
-  const filteredProjects = useMemo(
+  const { projects: filteredProjects, chatMatchedProjectIds } = useMemo(
     () => filterProjects(searchMode === 'running' ? runningProjects : visibleProjects, debouncedSearchQuery),
     [debouncedSearchQuery, runningProjects, searchMode, visibleProjects],
+  );
+
+  // A project found through its chats opens by itself, or the matching chats would stay out of sight.
+  const isProjectExpanded = useCallback(
+    (projectId: string) => {
+      if (searchMode === 'running') {
+        return !collapsedRunningProjects.has(projectId);
+      }
+      return chatMatchedProjectIds.has(projectId) || expandedProjects.has(projectId);
+    },
+    [chatMatchedProjectIds, collapsedRunningProjects, expandedProjects, searchMode],
   );
 
   const filteredArchivedSessions = useMemo(() => {
