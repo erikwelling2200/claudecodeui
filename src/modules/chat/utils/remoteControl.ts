@@ -4,10 +4,9 @@ import { useSyncExternalStore } from 'react';
  * Remote Control per Claude chat: whether the user wants it on, and the
  * claude.ai URL of the bridge while the chat's process runs one.
  *
- * The wish is stored per session, plus a "last" key a brand-new chat reads
- * until it has a session id. A turn that launches a process carries the wish
- * and the server starts the bridge then; a toggle while the process runs
- * starts or stops it there and then. The server records the wish as well and
+ * The wish is stored per session, so a chat without a session id has it off.
+ * A turn that launches a process carries the wish and the server starts the
+ * bridge then; a toggle while the process runs starts or stops it there and then. The server records the wish as well and
  * reports every change to it, which is how a chat's threads follow the chat.
  */
 export type RemoteControlStatus = {
@@ -18,12 +17,11 @@ export type RemoteControlStatus = {
 
 type Listener = () => void;
 
-const LAST_KEY = 'remoteControl-last';
 const listeners = new Set<Listener>();
 const sessionUrls = new Map<string, string>();
 const snapshots = new Map<string, RemoteControlStatus>();
 
-const storageKey = (sessionId: string | null): string => (sessionId ? `remoteControl-${sessionId}` : LAST_KEY);
+const storageKey = (sessionId: string): string => `remoteControl-${sessionId}`;
 
 function readStored(key: string): string | null {
   try {
@@ -55,22 +53,13 @@ function subscribe(listener: Listener): () => void {
   };
 }
 
-/** A chat with no recorded wish of its own has Remote Control off; only a chat without a session id reads the "last" key. */
+/** A chat with no recorded wish of its own, including one without a session id, has Remote Control off. */
 export function readRemoteControlWanted(sessionId: string | null): boolean {
-  return readStored(storageKey(sessionId)) === '1';
+  return sessionId !== null && readStored(storageKey(sessionId)) === '1';
 }
 
-/** Records the wish a brand-new chat was showing under the session id it has just been given. */
-export function adoptRemoteControlWish(sessionId: string): void {
-  writeStored(storageKey(sessionId), readRemoteControlWanted(null));
-  publish();
-}
-
-export function setRemoteControlWanted(sessionId: string | null, wanted: boolean): void {
-  writeStored(LAST_KEY, wanted);
-  if (sessionId) {
-    writeStored(storageKey(sessionId), wanted);
-  }
+export function setRemoteControlWanted(sessionId: string, wanted: boolean): void {
+  writeStored(storageKey(sessionId), wanted);
   publish();
 }
 
@@ -83,9 +72,6 @@ export function applyRemoteControlEvent(sessionId: string, event: { enabled?: un
   }
   if (typeof event.enabled === 'boolean') {
     writeStored(storageKey(sessionId), event.enabled);
-  }
-  if (event.error) {
-    writeStored(LAST_KEY, false);
   }
   publish();
 }

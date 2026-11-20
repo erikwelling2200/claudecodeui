@@ -291,6 +291,7 @@ function ChatInterface({
     editingAnchorId,
     beginEditMessage,
     cancelEditMessage,
+    startRemoteControlChat,
   } = useChatComposerState({
     selectedProject,
     selectedSession,
@@ -453,14 +454,17 @@ function ChatInterface({
 
   const remoteControlSessionId = currentSessionId || selectedSession?.id || null;
   const remoteControl = useRemoteControl(remoteControlSessionId);
-  // A process that is up switches now; otherwise the next turn starts it.
+  // A process that is up switches now; otherwise the next turn starts it. A chat
+  // without a session is started on the spot.
   const handleToggleRemoteControl = useCallback(() => {
+    if (!remoteControlSessionId) {
+      void startRemoteControlChat();
+      return;
+    }
     const wanted = !remoteControl.wanted;
     setRemoteControlWanted(remoteControlSessionId, wanted);
-    if (remoteControlSessionId) {
-      sendMessage({ type: 'chat.set-remote-control', sessionId: remoteControlSessionId, enabled: wanted });
-    }
-  }, [remoteControl.wanted, remoteControlSessionId, sendMessage]);
+    sendMessage({ type: 'chat.set-remote-control', sessionId: remoteControlSessionId, enabled: wanted });
+  }, [remoteControl.wanted, remoteControlSessionId, sendMessage, startRemoteControlChat]);
 
   // A composer pick becomes the default for new chats and, when a session is
   // open, is recorded against that session so reopening it restores this model.

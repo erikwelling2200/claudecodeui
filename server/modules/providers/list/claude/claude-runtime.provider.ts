@@ -1386,6 +1386,9 @@ async function queryClaudeSDK(
   // Process-map key: the app session id when the caller supplied one, else
   // the provider-native id once captured (legacy/direct API callers).
   const sessionKey = () => sessionId || capturedSessionId || null;
+  // Launches the process with no prompt and leaves it waiting between turns, for
+  // a chat whose first message comes in later, possibly through Remote Control.
+  const startIdle = options.startIdle === true;
 
   // The turn this process is serving. A later turn delivered into the process
   // takes these over: its events, permission prompts and notifications go to
@@ -1563,7 +1566,7 @@ async function queryClaudeSDK(
     // Every turn uses streaming input so stdin stays open past the turn's
     // `result`. The message list is reusable, but each query attempt needs its
     // own stream because an async generator cannot be replayed once consumed.
-    const promptMessages = await buildPromptMessages(command, options.images, options.files, options.cwd);
+    const promptMessages = startIdle ? [] : await buildPromptMessages(command, options.images, options.files, options.cwd);
 
     // A process this session left running for its background work takes the
     // turn as streaming input when it can, so that work keeps going. An edit
@@ -1572,6 +1575,9 @@ async function queryClaudeSDK(
       return;
     }
     const heldSession = sessionKey() ? getSession(sessionKey()!) : undefined;
+    if (heldSession?.liveProcess && startIdle) {
+      throw new Error('This chat already has a running Claude process.');
+    }
     if (heldSession?.liveProcess && !options.resumeAnchorId && !options.resumeFromScratch) {
       const delivery = await heldSession.liveProcess.deliverTurn({
         messages: promptMessages,
@@ -1998,7 +2004,7 @@ async function queryClaudeSDK(
       const key = sessionKey();
       return Boolean(
         key
-        && capturedSessionId
+        && (capturedSessionId || startIdle)
         && (betweenTurns || deliveredTurnInterrupted)
         && !promptReleased
         && !abortedSessionIds.has(key)
@@ -2276,12 +2282,24 @@ async function queryClaudeSDK(
       startRequestedRemoteControl();
     }
 
+    // An idle launch has no turn of its own: it ends at once and leaves the process ready for the next.
+    if (startIdle) {
+      settleBetweenTurns();
+      turnCompleteSent = true;
+      turnWriter.send({
+        ...createCompleteMessage({ provider: 'claude', sessionId: sessionId || null, exitCode: 0 }),
+        ...(liveProcess.canTakeTurn() ? { liveTurn: launchTerms } : {}),
+      });
+    }
+
     // Process streaming messages
     console.log('Starting async generator loop for session:', capturedSessionId || 'NEW');
     for await (const rawMessage of queryInstance) {
       const message = rawMessage as AnyRecord;
       // Capture session ID from first message
-      if (message.session_id && !capturedSessionId) {
+      // An idle process reports its id from startup hooks before any transcript exists; recording that id
+      // would leave the chat resuming a conversation the CLI never wrote.
+      if (message.session_id && !capturedSessionId && !(startIdle && message.type === 'system')) {
 
         capturedSessionId = message.session_id;
         addSession(sessionKey()!, queryInstance, turnWriter, releasePromptStream, liveProcess, applyPermissionMode);

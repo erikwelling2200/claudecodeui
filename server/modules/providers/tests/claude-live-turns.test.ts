@@ -751,3 +751,50 @@ test('a built-in command gets no follow-up, since it never reaches the model', a
   });
   assert.deepEqual(script.prompts, ['/compact']);
 });
+
+test('an idle launch waits between turns with no prompt, and its first turn goes into it', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'claude-live-turns-'));
+  const { createQuery, script, queries } = createScriptedQuery();
+  const sessions = new ClaudeSessionsProvider({ getLiveRunStartTime: () => null });
+  const context: ProviderRuntimeContext = {
+    resolveProviderSessionId: () => null,
+    resolveResumeModel: async () => undefined,
+    getProviderModels: async () => CLAUDE_PREDEFINED_MODELS as never,
+    normalizeMessage: (raw, id) => sessions.normalizeMessage(raw, id),
+    isProviderInstalled: async () => true,
+    explainToolCall: async () => null,
+    createQuery,
+  };
+
+  const idle = createWriter();
+  const idleRun = queryClaudeSDK('', { sessionId: 'app-idle', cwd, startIdle: true }, idle.writer, context);
+  try {
+    await waitFor(() => idle.completes().length === 1);
+    assert.ok(idle.completes()[0]?.liveTurn, 'the composer may send into the process');
+    assert.deepEqual(script.prompts, [], 'nothing went to stdin');
+    assert.equal(acceptsClaudeSDKLiveTurn('app-idle', {}), true);
+
+    // Startup hooks name a session before any transcript exists; that id is not recorded.
+    script.emit({ type: 'system', subtype: 'hook_started', session_id: NATIVE_ID });
+    await settle();
+    assert.ok(!idle.sent.some((message) => message.kind === 'session_created'));
+
+    const writer = createWriter();
+    const firstTurn = queryClaudeSDK('hello', { sessionId: 'app-idle', cwd }, writer.writer, context);
+    await waitFor(() => script.prompts.length === 1);
+    assert.deepEqual(script.prompts, ['hello']);
+    assert.equal(queries(), 1, 'no new process');
+
+    script.emit(init());
+    script.emit(text('Hi.'));
+    script.emit(result());
+    await firstTurn;
+    assert.ok(writer.sent.some((message) => message.kind === 'session_created'));
+    assert.equal(writer.completes().length, 1);
+    assert.equal(idle.completes().length, 1, 'the idle launch is not completed again');
+  } finally {
+    script.end();
+    await idleRun;
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

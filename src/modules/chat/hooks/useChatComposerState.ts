@@ -42,7 +42,7 @@ import {
 import { useFileMentions } from '@/modules/chat/hooks/useFileMentions';
 import { useInputHistory } from '@/modules/chat/hooks/useInputHistory';
 import { useSlashCommands } from '@/modules/chat/hooks/useSlashCommands';
-import { adoptRemoteControlWish, readRemoteControlWanted } from '@/modules/chat/utils/remoteControl';
+import { readRemoteControlWanted, setRemoteControlWanted } from '@/modules/chat/utils/remoteControl';
 import { writeSessionPermissionMode } from '@/modules/chat/utils/permissionModeStorage';
 
 type UseChatComposerStateArgs = {
@@ -1130,9 +1130,6 @@ export function useChatComposerState({
           return;
         }
 
-        if (provider === 'claude') {
-          adoptRemoteControlWish(targetSessionId);
-        }
         // Before the navigation below, which reads the new chat's mode from its own key.
         writeSessionPermissionMode(targetSessionId, resolvePermissionModeForProvider(provider, permissionMode));
         onSessionEstablished?.(targetSessionId, {
@@ -1677,7 +1674,49 @@ export function useChatComposerState({
     inputValueRef.current = '';
   }, [setInput]);
 
+  // Turning Remote Control on in a chat with no session yet starts the chat right
+  // away, so its first message can be written on claude.ai instead of here.
+  const startRemoteControlChat = useCallback(async () => {
+    if (!selectedProject || provider !== 'claude') {
+      return;
+    }
+    let sessionId: string | null = null;
+    let sessionName = '';
+    try {
+      const response = await api.providers.createSession({
+        provider,
+        projectPath: selectedProject.fullPath || selectedProject.path || '',
+        initialMessage: '',
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to create session (${response.status})`);
+      }
+      const body = await response.json();
+      sessionId = body?.data?.sessionId || null;
+      sessionName = typeof body?.data?.sessionName === 'string' ? body.data.sessionName : '';
+      if (!sessionId) {
+        throw new Error('no session id returned.');
+      }
+    } catch (error) {
+      addMessage({
+        type: 'error',
+        content: `Failed to start a Remote Control chat: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date(),
+      });
+      return;
+    }
+
+    const options = buildSendOptions('');
+    setRemoteControlWanted(sessionId, true);
+    if (typeof options.permissionMode === 'string') {
+      writeSessionPermissionMode(sessionId, options.permissionMode);
+    }
+    onSessionEstablished?.(sessionId, { provider, project: selectedProject, summary: sessionName });
+    sendMessage({ type: 'chat.start-remote-control', sessionId, options: { ...options, remoteControl: true } });
+  }, [addMessage, buildSendOptions, onSessionEstablished, provider, selectedProject, sendMessage]);
+
   return {
+    startRemoteControlChat,
     input,
     setInput,
     editingAnchorId,
