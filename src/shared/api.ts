@@ -312,6 +312,8 @@ export const api = {
     post(`/api/providers/sessions/${encodeURIComponent(sessionId)}/fork`, body),
   renameSession: (sessionId: string, summary: string) =>
     put(`/api/providers/sessions/${sessionId}`, { summary }),
+  setSessionStarred: (sessionId: string, isStarred: boolean) =>
+    put(`/api/providers/sessions/${encodeURIComponent(sessionId)}/star`, { isStarred }),
   // What one agent of a workflow run did, read from its transcript on demand
   // when its row in the workflow card is opened.
   workflowAgentActivity: (sessionId: string, runId: string, agentId: string) =>

@@ -419,6 +419,20 @@ const renameSessionInProject = (project: Project, sessionIdToRename: string, sum
   return { ...project, sessions: nextSessions };
 };
 
+// Writes a chat's star onto its sidebar row. Returns the same project when it
+// holds no such row or the row already has that state.
+const setSessionStarredInProject = (project: Project, sessionIdToStar: string, isStarred: boolean): Project => {
+  const sessions = project.sessions ?? [];
+  const existingIndex = sessions.findIndex((session) => session.id === sessionIdToStar);
+  if (existingIndex < 0 || Boolean(sessions[existingIndex].isStarred) === isStarred) {
+    return project;
+  }
+
+  const nextSessions = [...sessions];
+  nextSessions[existingIndex] = { ...sessions[existingIndex], isStarred };
+  return { ...project, sessions: nextSessions };
+};
+
 /**
  * Writes a new title onto the workspace header's `selectedSession`, or returns it unchanged when it is another session
  * or already carries that title. A session opened from a Conversations search hit carries the one-shot jump target the
@@ -1339,6 +1353,37 @@ export function useProjectsState({
     return true;
   }, []);
 
+  /**
+   * Stars or unstars one chat. The row moves at once and moves back when the
+   * server refuses; like a rename, the route broadcasts nothing, so other tabs
+   * pick it up on their next fetch.
+   */
+  const setSessionStarred = useCallback((sessionIdToStar: string, isStarred: boolean) => {
+    const applyStar = (value: boolean) => setProjects((previousProjects) => {
+      let changed = false;
+      const nextProjects = previousProjects.map((project) => {
+        const starredProject = setSessionStarredInProject(project, sessionIdToStar, value);
+        if (starredProject !== project) {
+          changed = true;
+        }
+        return starredProject;
+      });
+      return changed ? nextProjects : previousProjects;
+    });
+
+    applyStar(isStarred);
+    void api.setSessionStarred(sessionIdToStar, isStarred)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+      })
+      .catch((error) => {
+        console.error('[Workspace] Failed to star session:', error);
+        applyStar(!isStarred);
+      });
+  }, []);
+
   const loadMoreProjectSessions = useCallback(async (projectId: string) => {
     const project = projects.find((candidate) => candidate.projectId === projectId);
     if (!project) {
@@ -1408,6 +1453,7 @@ export function useProjectsState({
       onNewSession: handleNewSession,
       onSessionDelete: handleSessionDelete,
       onMarkSessionUnread: handleMarkSessionUnread,
+      onSetSessionStarred: setSessionStarred,
       onLoadMoreSessions: loadMoreProjectSessions,
       onProjectDelete: handleProjectDelete,
       isLoading: isLoadingProjects,
@@ -1427,6 +1473,7 @@ export function useProjectsState({
       handleProjectSelect,
       handleSessionDelete,
       handleMarkSessionUnread,
+      setSessionStarred,
       loadMoreProjectSessions,
       handleSessionSelect,
       handleSidebarRefresh,

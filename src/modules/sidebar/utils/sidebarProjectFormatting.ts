@@ -102,8 +102,9 @@ type SessionThreadGroup = {
  * among them (not loaded yet, deleted, archived, in another project, or not
  * running on the Running tab) stays a top-level row, so no session ever drops
  * out of the list. Threads are one level deep, so a session is only a parent
- * when it is itself top-level. Top-level rows are ordered newest first by
- * their own or their threads' activity, whichever is later.
+ * when it is itself top-level. Starred top-level rows come first; within that,
+ * rows are ordered newest first by their own or their threads' activity,
+ * whichever is later.
  */
 export const groupSessionThreads = (sessions: SessionWithProvider[]): SessionThreadGroup[] => {
   const loadedIds = new Set(sessions.map((session) => session.id));
@@ -138,7 +139,9 @@ export const groupSessionThreads = (sessions: SessionWithProvider[]): SessionThr
   // A parent sits where its most recent thread's activity puts it, as the server pages it.
   const getGroupActivity = (group: SessionThreadGroup): number =>
     Math.max(getSessionDate(group.session).getTime(), ...group.threads.map((thread) => getSessionDate(thread).getTime()));
-  return groups.sort((a, b) => getGroupActivity(b) - getGroupActivity(a));
+  return groups.sort((a, b) => (
+    Number(Boolean(b.session.isStarred)) - Number(Boolean(a.session.isStarred)) || getGroupActivity(b) - getGroupActivity(a)
+  ));
 };
 
 const getProjectLastActivity = (project: Project): Date => {

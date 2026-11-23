@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, Check, Edit2, GitBranch, MailOpen, MoreHorizontal, RotateCcw, Trash2, X } from 'lucide-react';
+import { AlertCircle, Check, Edit2, GitBranch, MailOpen, MoreHorizontal, RotateCcw, Star, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { api } from '@/shared/api';
@@ -33,6 +33,9 @@ type SessionOptionsProps = {
   /** Bound by the caller, which owns the session object the fork needs. */
   onFork?: () => void;
   onMarkUnread?: () => void;
+  isStarred?: boolean;
+  /** Withheld where the row cannot tell whether the chat is starred. */
+  onToggleStar?: () => void;
   /** Withheld where the row has nowhere to send a delete. */
   canDelete?: boolean;
   className?: string;
@@ -65,6 +68,8 @@ export default function SessionOptions({
   onDeleteSession,
   onFork,
   onMarkUnread,
+  isStarred = false,
+  onToggleStar,
   canDelete = true,
   className,
   t,
@@ -196,6 +201,12 @@ export default function SessionOptions({
               label: 'Rename session',
               icon: Edit2,
               onSelect: () => onStartEditingSession(projectId, sessionId, sessionName),
+            }] : []),
+            ...(onToggleStar ? [{
+              key: 'star',
+              label: isStarred ? t('tooltips.removeFromFavorites') : t('tooltips.addToFavorites'),
+              icon: Star,
+              onSelect: onToggleStar,
             }] : []),
             ...(onMarkUnread ? [{
               key: 'mark-unread',

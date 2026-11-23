@@ -300,6 +300,8 @@ export type SessionUpsertedEvent = {
     lastActivity: string;
     /** The session this one is a thread of; null for a top-level chat. */
     parentSessionId: string | null;
+    /** The user starred this chat, which sorts it above the rest of its project. */
+    isStarred: boolean;
   };
   project: SessionUpsertedProject | null;
   timestamp: string;

@@ -50,6 +50,7 @@ async function buildSessionUpsertedEvent(
       messageCount: 0,
       lastActivity: row.updated_at ?? row.created_at ?? new Date().toISOString(),
       parentSessionId: row.parent_session_id ?? null,
+      isStarred: Boolean(row.isStarred),
     },
     project: project
       ? {

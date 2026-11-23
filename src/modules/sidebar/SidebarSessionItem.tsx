@@ -1,6 +1,6 @@
 import { memo, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { Check, CheckSquare, ChevronDown, ChevronRight, Edit2, Loader2, MoreHorizontal, Square, Trash2, X } from 'lucide-react';
+import { Check, CheckSquare, ChevronDown, ChevronRight, Edit2, Loader2, MoreHorizontal, Square, Star, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { Badge, Dialog, DialogContent, DialogTitle, LLMProviderLogo, Tooltip, buttonVariants } from '@/shared/ui';
@@ -35,6 +35,7 @@ type SidebarSessionItemProps = {
   /** Branches this session into an independent one; absent when its provider cannot. */
   onForkSession?: (session: SessionWithProvider) => void;
   onMarkSessionUnread?: (sessionId: string) => void;
+  onSetSessionStarred?: (sessionId: string, isStarred: boolean) => void;
   /** Archives the session at once, stopping every CLI process attached to it. Bound to a middle-click on the row. */
   onArchiveSessionNow: (sessionId: string) => void;
   /** This project's list is in bulk-selection mode: the row acts as a checkbox and hides its options. */
@@ -96,6 +97,7 @@ function SidebarSessionItem({
   onDeleteSession,
   onForkSession,
   onMarkSessionUnread,
+  onSetSessionStarred,
   onArchiveSessionNow,
   isSelecting,
   isChecked,
@@ -124,6 +126,12 @@ function SidebarSessionItem({
       ? t('tooltips.backgroundWorkIndicator', { defaultValue: 'Background work running' })
       : t('tooltips.unreadOutputIndicator', { defaultValue: 'New output since you last opened it' });
   const providerLabel = PROVIDER_LABELS[session.__provider];
+  const isStarred = Boolean(session.isStarred);
+  const toggleStar = onSetSessionStarred ? () => onSetSessionStarred(session.id, !isStarred) : undefined;
+  const starLabel = isStarred ? t('tooltips.removeFromFavorites') : t('tooltips.addToFavorites');
+  const starMarker = isStarred && (
+    <Star aria-label={t('projects.starred')} className="h-3 w-3 flex-shrink-0 fill-current text-yellow-600 dark:text-yellow-400" />
+  );
 
   // The desktop controls live in SessionOptions, which owns the rename panel and
   // its outside-click dismissal. The mobile rename sits inside the bottom sheet,
@@ -273,6 +281,7 @@ function SidebarSessionItem({
 
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
+                {starMarker}
                 <div
                   className="min-w-0 flex-1 truncate text-sm font-normal text-foreground"
                   title={sessionView.sessionName}
@@ -394,6 +403,20 @@ function SidebarSessionItem({
                   <span className="text-sm font-medium">Rename session</span>
                 </button>
 
+                {toggleStar && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileOptionsOpen(false);
+                      toggleStar();
+                    }}
+                    className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-border bg-muted/35 px-4 py-3 text-left text-foreground transition-colors active:bg-muted"
+                  >
+                    <Star className={cn('h-5 w-5 flex-shrink-0', isStarred && 'fill-current text-yellow-600 dark:text-yellow-400')} />
+                    <span className="text-sm font-medium">{starLabel}</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={handleCopyAction}
@@ -499,6 +522,7 @@ function SidebarSessionItem({
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
+                {starMarker}
                 <div
                   className="min-w-0 flex-1 truncate text-sm font-normal text-foreground"
                   title={sessionView.sessionName}
@@ -570,6 +594,8 @@ function SidebarSessionItem({
             onDeleteSession={onDeleteSession}
             onFork={onForkSession ? () => onForkSession(session) : undefined}
             onMarkUnread={onMarkSessionUnread ? () => onMarkSessionUnread(session.id) : undefined}
+            isStarred={isStarred}
+            onToggleStar={toggleStar}
             t={t}
           />
         )}

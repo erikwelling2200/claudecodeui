@@ -21,6 +21,8 @@ type SessionRow = {
   parent_session_id: string | null;
   /** 1 while the user wants Remote Control on for this chat. */
   remote_control: number;
+  /** 1 for a chat the user starred. */
+  isStarred: number;
   isArchived: number;
   created_at: string;
   updated_at: string;
@@ -32,7 +34,7 @@ type RecentSessionsPage = {
 };
 
 const SESSION_ROW_COLUMNS =
-  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, permission_mode, forked_from_session_id, parent_session_id, remote_control, isArchived, created_at, updated_at';
+  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, permission_mode, forked_from_session_id, parent_session_id, remote_control, isStarred, isArchived, created_at, updated_at';
 
 const SQLITE_UTC_TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
@@ -465,6 +467,15 @@ export const sessionsDb = {
     ).run(enabled ? 1 : 0, sessionId);
   },
 
+  setSessionIsStarred(sessionId: string, isStarred: boolean): void {
+    const db = getConnection();
+    db.prepare(
+      `UPDATE sessions
+       SET isStarred = ?
+       WHERE session_id = ?`
+    ).run(isStarred ? 1 : 0, sessionId);
+  },
+
   updateSessionCustomName(sessionId: string, customName: string): void {
     const db = getConnection();
     db.prepare(
@@ -653,10 +664,10 @@ export const sessionsDb = {
   },
 
   /**
-   * One page of a project's sessions, most recent activity first. A parent
-   * counts its threads' activity as its own and sorts before them on a tie, so
-   * it is never on a later page than its threads and the sidebar can fold
-   * them under it.
+   * One page of a project's sessions: starred chats first, then most recent
+   * activity first. A thread takes its loaded parent's star, and a parent counts
+   * its threads' activity as its own and sorts before them on a tie, so it is
+   * never on a later page than its threads and the sidebar can fold them under it.
    */
   getSessionsByProjectPathPage(projectPath: string, limit: number, offset: number): SessionRow[] {
     const db = getConnection();
@@ -667,7 +678,12 @@ export const sessionsDb = {
          FROM sessions s
          WHERE project_path = ?
            AND isArchived = 0
-         ORDER BY MAX(
+         ORDER BY COALESCE((
+             SELECT p.isStarred
+             FROM sessions p
+             WHERE p.session_id = s.parent_session_id AND p.isArchived = 0 AND p.project_path = s.project_path
+           ), s.isStarred) DESC,
+           MAX(
              datetime(COALESCE(updated_at, created_at)),
              COALESCE((
                SELECT MAX(datetime(COALESCE(c.updated_at, c.created_at)))

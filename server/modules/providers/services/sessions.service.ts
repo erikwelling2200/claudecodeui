@@ -918,4 +918,17 @@ export const sessionsService = {
     sessionsDb.updateSessionCustomName(sessionId, summary);
     return { sessionId, summary };
   },
+
+  /** Stars or unstars one chat. Leaves `updated_at` alone, so starring is not activity. */
+  setSessionStarred(sessionId: string, isStarred: boolean): { sessionId: string; isStarred: boolean } {
+    if (!sessionsDb.getSessionById(sessionId)) {
+      throw new AppError(`Session "${sessionId}" was not found.`, {
+        code: 'SESSION_NOT_FOUND',
+        statusCode: 404,
+      });
+    }
+
+    sessionsDb.setSessionIsStarred(sessionId, isStarred);
+    return { sessionId, isStarred };
+  },
 };
