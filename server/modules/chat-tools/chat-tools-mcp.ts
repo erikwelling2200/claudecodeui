@@ -88,6 +88,41 @@ const tools = [
     },
   },
   {
+    name: 'task_create',
+    description: 'Add a task to the task list of the chat this agent runs in: the same list the TaskCreate/TaskUpdate tools keep and the CloudCLI sidebar shows beside the chat. '
+      + 'Use it when those tools are not available to you (a background subagent has none), so the parent chat and the user can follow your progress. '
+      + 'One task per call; it starts as pending. Returns the task id for task_update.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        subject: { type: 'string', description: 'A brief, specific title in imperative form, e.g. "Fix the login redirect".' },
+        description: { type: 'string', description: 'What needs to be done, in enough detail to check it off.' },
+        activeForm: { type: 'string', description: 'Optional present-continuous label shown while the task is in progress, e.g. "Fixing the login redirect".' },
+      },
+      required: ['subject', 'description'],
+    },
+  },
+  {
+    name: 'task_update',
+    description: 'Change a task in the task list of the chat this agent runs in (see task_create): set it to in_progress when you start it and to completed once it is done and verified, or reword it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: 'The task id, as task_create or task_list reports it.' },
+        status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: 'The new status.' },
+        subject: { type: 'string', description: 'New title.' },
+        description: { type: 'string', description: 'New description.' },
+        activeForm: { type: 'string', description: 'New present-continuous label.' },
+      },
+      required: ['taskId'],
+    },
+  },
+  {
+    name: 'task_list',
+    description: 'List the tasks of the chat this agent runs in, with their id and status (see task_create).',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'list_mcp_servers',
     description: 'List the MCP servers of this chat with their connection state (connected, failed, pending, needs-auth, disabled), error and tool count. '
       + 'Use it when an MCP tool fails with a closed or lost connection, to see whether its server dropped.',
@@ -164,6 +199,13 @@ function formatReleased(released: ReleasedLock[]): string {
   return `Released ${worktrees.size} worktree(s):\n${lines.join('\n')}`;
 }
 
+type ChatTask = { id: string; subject: string; status: string; activeForm: string | null; blockedBy: string[] };
+
+function describeTask(task: ChatTask): string {
+  const blocked = task.blockedBy.length ? ` (blocked by ${task.blockedBy.map((id) => `#${id}`).join(', ')})` : '';
+  return `#${task.id} [${task.status}] ${task.subject}${blocked}`;
+}
+
 async function callChatToolsApi(toolName: string, input: Record<string, unknown>, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
   if (!apiToken) {
     throw new Error('CLOUDCLI_CHAT_TOOLS_MCP_TOKEN is not configured.');
@@ -214,6 +256,19 @@ async function callTool(name: string, args: Record<string, unknown>) {
       case 'release_worktree_locks': {
         const result = await callChatToolsApi(name, { unit: args.unit, suffix: args.suffix, all: args.all }) as { released: ReleasedLock[] };
         return { content: [{ type: 'text', text: formatReleased(result.released) }] };
+      }
+      case 'task_create': {
+        const result = await callChatToolsApi(name, { subject: args.subject, description: args.description, activeForm: args.activeForm }) as { task: ChatTask };
+        return { content: [{ type: 'text', text: `Task #${result.task.id} created: ${result.task.subject}` }] };
+      }
+      case 'task_update': {
+        const input = { taskId: args.taskId, status: args.status, subject: args.subject, description: args.description, activeForm: args.activeForm };
+        const result = await callChatToolsApi(name, input) as { task: ChatTask };
+        return { content: [{ type: 'text', text: `Updated: ${describeTask(result.task)}` }] };
+      }
+      case 'task_list': {
+        const result = await callChatToolsApi(name, {}) as { tasks: ChatTask[] };
+        return { content: [{ type: 'text', text: result.tasks.length ? result.tasks.map(describeTask).join('\n') : 'This chat has no tasks.' }] };
       }
       case 'list_mcp_servers': {
         const result = await callChatToolsApi(name, {}) as { servers: McpServerStatus[] };

@@ -1,8 +1,9 @@
 import express from 'express';
 
 import { chatToolsService } from '@/modules/chat-tools/chat-tools.service.js';
+import { sessionTasksServices } from '@/modules/session-tasks/index.js';
 import { chatWorktreeLocks, readSuffix, readUnitKey, recordSessionWorktreeClaim } from '@/modules/worktree-claims/index.js';
-import type { SessionWorktreeCheckout } from '@/shared/types.js';
+import type { SessionTaskStatus, SessionWorktreeCheckout } from '@/shared/types.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
 
 function readRequiredString(value: unknown, name: string): string {
@@ -114,4 +115,42 @@ chatToolsMcpRoutes.post('/tools/reconnect_mcp_server', asyncHandler(async (req, 
   const body = (req.body ?? {}) as Record<string, unknown>;
   const result = await chatToolsService.reconnectMcpServer(readRequiredString(body.sessionId, 'sessionId'), readRequiredString(body.name, 'name'));
   res.json(createApiSuccessResponse(result));
+}));
+
+const TASK_STATUSES: SessionTaskStatus[] = ['pending', 'in_progress', 'completed'];
+
+function readOptionalStatus(value: unknown): SessionTaskStatus | undefined {
+  if (value === undefined) return undefined;
+  if (!TASK_STATUSES.includes(value as SessionTaskStatus)) {
+    throw new AppError(`status must be one of ${TASK_STATUSES.join(', ')}`, { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
+  }
+  return value as SessionTaskStatus;
+}
+
+// The chat's task list, kept in the CLI's own files: the same list TaskCreate/TaskUpdate keep and the sidebar shows.
+// Agents the CLI gives no task tools (background subagents) keep it through these.
+chatToolsMcpRoutes.post('/tools/task_list', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  res.json(createApiSuccessResponse({ tasks: await sessionTasksServices.listTasks(readRequiredString(body.sessionId, 'sessionId')) }));
+}));
+
+chatToolsMcpRoutes.post('/tools/task_create', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const task = await sessionTasksServices.createTask(readRequiredString(body.sessionId, 'sessionId'), {
+    subject: readRequiredString(body.subject, 'subject'),
+    description: readRequiredString(body.description, 'description'),
+    activeForm: readOptionalString(body.activeForm),
+  });
+  res.json(createApiSuccessResponse({ task }));
+}));
+
+chatToolsMcpRoutes.post('/tools/task_update', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const task = await sessionTasksServices.updateTask(readRequiredString(body.sessionId, 'sessionId'), readRequiredString(body.taskId, 'taskId'), {
+    status: readOptionalStatus(body.status),
+    subject: readOptionalString(body.subject),
+    description: readOptionalString(body.description),
+    activeForm: readOptionalString(body.activeForm),
+  });
+  res.json(createApiSuccessResponse({ task }));
 }));

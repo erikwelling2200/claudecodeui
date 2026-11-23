@@ -14,8 +14,10 @@ function toPrompt(message: ChatMessage): SessionPrompt {
   return { text: String(message.content), timestamp: String(message.timestamp) };
 }
 
+// A subagent's hand-back or another chat's message also arrives as a user turn, marked by its sender.
 function userPrompts(messages: ChatMessage[]): ChatMessage[] {
-  return messages.filter((message) => message.type === 'user' && typeof message.content === 'string' && message.content.trim());
+  return messages.filter((message) =>
+    message.type === 'user' && !message.agentMessageFrom && typeof message.content === 'string' && message.content.trim());
 }
 
 async function readHistoryPage(sessionId: string, limit: number, offset: number): Promise<HistoryPage> {
