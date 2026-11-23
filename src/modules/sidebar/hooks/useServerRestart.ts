@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 
 import { api, readApiJson } from '@/shared/api';
 
-export type ServerRestartStatus = 'idle' | 'restarting' | 'failed';
+export type ServerRestartStatus = 'idle' | 'updating' | 'updateFailed' | 'restarting' | 'failed';
 
 const HEALTH_POLL_INTERVAL_MS = 1000;
 // Startup after a restart includes a database open and plugin starts; well under this on every machine seen so far.
@@ -36,12 +36,14 @@ async function waitForReplacementServer(previousStartedAt: string | null): Promi
 }
 
 /**
- * Used by ServerRestartButton: asks the server to restart itself, waits for the new process to answer, then reloads
- * the page so every websocket and cached state starts fresh against it.
+ * Used by ServerRestartButton: asks the server to restart itself (optionally after updating its checkout), waits for
+ * the new process to answer, then reloads the page so every websocket and cached state starts fresh against it.
  */
 export function useServerRestart() {
-  // Drives the button's look while the server is down and after a restart that never came back.
+  // Drives the button's look while updating, while the server is down and after a restart that never came back.
   const [status, setStatus] = useState<ServerRestartStatus>('idle');
+  // The failed update step's output, shown while status is 'updateFailed'.
+  const [updateError, setUpdateError] = useState<string | null>(null);
 
   const restart = useCallback(async () => {
     setStatus('restarting');
@@ -58,5 +60,31 @@ export function useServerRestart() {
     setStatus('failed');
   }, []);
 
-  return { status, restart };
+  const update = useCallback(async () => {
+    setStatus('updating');
+    setUpdateError(null);
+    let previousStartedAt: string | null;
+    try {
+      previousStartedAt = await readServerStartedAt();
+      await readApiJson(await api.system.updateAndRestart());
+    } catch (error) {
+      console.error('Server update failed:', error);
+      setUpdateError(error instanceof Error ? error.message : String(error));
+      setStatus('updateFailed');
+      return;
+    }
+    setStatus('restarting');
+    if (await waitForReplacementServer(previousStartedAt)) {
+      window.location.reload();
+      return;
+    }
+    setStatus('failed');
+  }, []);
+
+  const dismissUpdateError = useCallback(() => {
+    setUpdateError(null);
+    setStatus('idle');
+  }, []);
+
+  return { status, restart, update, updateError, dismissUpdateError };
 }

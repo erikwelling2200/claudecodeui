@@ -8,6 +8,8 @@ import { afterEach, beforeEach, test, vi } from 'vitest';
 // reloads once /health answers from a process with a different start stamp.
 
 const restartCalls: number[] = [];
+const updateCalls: number[] = [];
+let updateFails = false;
 let healthStartedAt = '2026-11-19T10:00:00.000Z';
 let healthDown = false;
 
@@ -24,6 +26,16 @@ vi.mock('@/shared/api', async (importOriginal) => {
             headers: { 'Content-Type': 'application/json' },
           });
         },
+        updateAndRestart: async () => {
+          updateCalls.push(Date.now());
+          const body = updateFails
+            ? { success: false, step: 'merge', error: 'fatal: Not possible to fast-forward, aborting.' }
+            : { success: true, previousHead: 'a', head: 'b', commits: 1, installed: false, built: true };
+          return new Response(JSON.stringify(body), {
+            status: updateFails ? 500 : 202,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        },
       },
     },
   };
@@ -35,6 +47,8 @@ const t = ((key: string) => key) as never;
 beforeEach(() => {
   vi.useFakeTimers();
   restartCalls.length = 0;
+  updateCalls.length = 0;
+  updateFails = false;
   healthDown = false;
   vi.stubGlobal('fetch', async (url: string) => {
     if (url !== '/health') throw new Error(`unexpected fetch ${url}`);
@@ -94,4 +108,29 @@ test('a server that never comes back leaves the button in its failed state', asy
   healthDown = true;
   await act(async () => { await vi.advanceTimersByTimeAsync(121_000); });
   getByLabelText('server.failed');
+});
+
+test('right-click offers the update, which restarts once the new server answers', async () => {
+  const reload = vi.fn();
+  Object.defineProperty(window, 'location', { value: { ...window.location, reload }, writable: true });
+  const { getByLabelText, getByText } = render(React.createElement(ServerRestartButton, { t }));
+  fireEvent.contextMenu(getByLabelText('server.restart'));
+  fireEvent.click(getByText('server.update'));
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  assert.equal(updateCalls.length, 1);
+  assert.equal(restartCalls.length, 0);
+
+  healthStartedAt = '2026-11-19T10:10:00.000Z';
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  assert.equal(reload.mock.calls.length, 1);
+});
+
+test('a failed update keeps the server up and shows a dismissable warning', async () => {
+  updateFails = true;
+  const { getByLabelText, getByText } = render(React.createElement(ServerRestartButton, { t }));
+  fireEvent.contextMenu(getByLabelText('server.restart'));
+  fireEvent.click(getByText('server.update'));
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  fireEvent.click(getByLabelText('server.updateFailedLabel'));
+  getByLabelText('server.restart');
 });
