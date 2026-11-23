@@ -1,12 +1,14 @@
 import express from 'express';
 
 import type { createServerRestartService } from './server-restart.service.js';
+import type { createServerUpdateService } from './server-update.service.js';
 import type { createSystemUpdateService } from './system.service.js';
 
 /** Creates thin system routes that delegate update and restart execution to the services. */
 export function createSystemRouter(
   systemUpdateService: ReturnType<typeof createSystemUpdateService>,
   serverRestartService: ReturnType<typeof createServerRestartService>,
+  serverUpdateService: ReturnType<typeof createServerUpdateService>,
 ): express.Router {
   const router = express.Router();
 
@@ -27,6 +29,24 @@ export function createSystemRouter(
       });
     });
     response.status(202).json({ success: true, data: serverRestartService.describe() });
+  });
+
+  router.post('/update-and-restart', async (_request, response, next) => {
+    try {
+      const result = await serverUpdateService.update();
+      if (!result.success) {
+        response.status(500).json(result);
+        return;
+      }
+      response.once('finish', () => {
+        serverRestartService.restart().catch((error: unknown) => {
+          console.error('[System] Restart after update failed:', error instanceof Error ? error.message : String(error));
+        });
+      });
+      response.status(202).json({ ...result, restart: serverRestartService.describe() });
+    } catch (error) {
+      next(error);
+    }
   });
 
   return router;

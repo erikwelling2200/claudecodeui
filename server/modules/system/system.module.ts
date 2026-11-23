@@ -7,6 +7,7 @@ import spawn from 'cross-spawn';
 import type { Router } from 'express';
 
 import { createServerRestartService } from './server-restart.service.js';
+import { createServerUpdateService, type CommandResult } from './server-update.service.js';
 import { createSystemRouter } from './system.routes.js';
 import { createSystemUpdateService } from './system.service.js';
 
@@ -57,6 +58,19 @@ function runShellCommand(
   });
 }
 
+/** Runs one program without a shell (cross-spawn resolves npm.cmd on Windows), collecting stdout and stderr together. */
+function runCommand(program: string, args: string[], workingDirectory: string): Promise<CommandResult> {
+  return new Promise((resolve, reject) => {
+    const childProcess = spawn(program, args, { cwd: workingDirectory, env: process.env, windowsHide: true });
+    let output = '';
+    const collect = (data: Buffer) => { output += data.toString(); };
+    childProcess.stdout?.on('data', collect);
+    childProcess.stderr?.on('data', collect);
+    childProcess.once('error', reject);
+    childProcess.once('close', (exitCode) => resolve({ exitCode, output }));
+  });
+}
+
 /**
  * Starts a detached copy of this very process: same node binary, loader flags (tsx or plain) and entry file, same
  * working directory. CLOUDCLI_REPLACES_PID tells the copy to wait for the port instead of failing on it.
@@ -100,5 +114,11 @@ export function createSystemModule(options: SystemModuleOptions): Router {
     logInfo: (message) => console.log('[System]', message),
   });
 
-  return createSystemRouter(systemUpdateService, serverRestartService);
+  const serverUpdateService = createServerUpdateService({
+    runCommand: (program, args) => runCommand(program, args, options.appRoot),
+    hasClientBuild: () => fs.existsSync(path.join(options.appRoot, 'dist', 'index.html')),
+    logInfo: (message) => console.log('[System]', message),
+  });
+
+  return createSystemRouter(systemUpdateService, serverRestartService, serverUpdateService);
 }

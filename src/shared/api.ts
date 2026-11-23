@@ -731,6 +731,9 @@ export const api = {
     update: () => post('/api/system/update'),
     // Answers 202 and then exits; the process comes back under its supervisor or as a self-spawned replacement.
     restart: () => post('/api/system/restart'),
+    // Fast-forwards the checkout, installs and builds when needed, then restarts like `restart`. Answers 500 with the
+    // failed step when an update step fails, and the server keeps running.
+    updateAndRestart: () => post('/api/system/update-and-restart'),
   },
 
   // Claude plan limits shown at the bottom of the sidebar

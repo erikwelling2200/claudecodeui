@@ -159,7 +159,11 @@
     "confirm": "Restart?",
     "confirmHint": "Ends the chats running in this server",
     "restarting": "Restarting the server",
-    "failed": "The server did not come back. Click to reload."
+    "failed": "The server did not come back. Click to reload.",
+    "update": "Update and restart",
+    "updating": "Updating the server",
+    "updateFailed": "Update failed, server still running:\n{{message}}",
+    "updateFailedLabel": "Update failed. Click to dismiss."
   },
   "search": {
     "modeProjects": "Projects",
