@@ -59,4 +59,15 @@ describe('useSessionPromptBookends', () => {
     expect(result.current).toEqual({ first: { text: 'hello', timestamp: 't1' }, last: { text: 'bye', timestamp: 't3' } });
     expect(sessionMessages).not.toHaveBeenCalled();
   });
+
+  it('skips messages another agent sent', () => {
+    const all: ChatMessage[] = [
+      { type: 'user', content: 'from a chat', timestamp: 't0', agentMessageFrom: 'other-chat' },
+      { type: 'user', content: 'hello', timestamp: 't1' },
+      { type: 'user', content: 'Tooling probe results', timestamp: 't2', agentMessageFrom: 'a5bf' },
+    ];
+    const { result } = renderHook(() => useSessionPromptBookends({ sessionId: 's1', chatMessages: all, hasMoreMessages: false }));
+
+    expect(result.current).toEqual({ first: { text: 'hello', timestamp: 't1' }, last: { text: 'hello', timestamp: 't1' } });
+  });
 });
