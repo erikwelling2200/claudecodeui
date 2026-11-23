@@ -101,6 +101,8 @@ export type ProjectSession = {
   // The chat this session is a thread of, or null for an ordinary chat. Threads
   // are one level deep; the sidebar folds a thread under its loaded parent.
   parentSessionId?: string | null;
+  // Starred chats sort above the rest of their project.
+  isStarred?: boolean;
   // Tags the session with the owning project's DB `projectId` so UI handlers
   // (session switching, sidebar focus, etc.) can match against selectedProject.
   __projectId?: string;
@@ -1787,6 +1789,8 @@ export type SessionRowActions = {
   onForkSession?: (session: SessionWithProvider) => void;
   /** Shows the session's unread dot until it is opened again. */
   onMarkSessionUnread?: (sessionId: string) => void;
+  /** Stars or unstars a chat; a starred chat sorts above the rest of its project. */
+  onSetSessionStarred?: (sessionId: string, isStarred: boolean) => void;
   /** Archives a session at once, stopping every CLI process attached to it. Rows bind it to a middle-click. */
   onArchiveSessionNow: (sessionId: string) => void;
 };

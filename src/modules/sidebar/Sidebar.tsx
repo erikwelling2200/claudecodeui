@@ -24,6 +24,7 @@ type SidebarProps = {
   onNewSession: (project: Project) => void;
   onSessionDelete?: (sessionId: string) => void;
   onMarkSessionUnread?: (sessionId: string) => void;
+  onSetSessionStarred?: (sessionId: string, isStarred: boolean) => void;
   onLoadMoreSessions?: (projectId: string) => Promise<void> | void;
   // `projectId` is the DB identifier; the sidebar hands it back to the parent
   // when the delete flow completes.
@@ -55,6 +56,7 @@ function Sidebar({
   onNewSession,
   onSessionDelete,
   onMarkSessionUnread,
+  onSetSessionStarred,
   onLoadMoreSessions,
   onProjectDelete,
   isLoading,
@@ -245,6 +247,7 @@ function Sidebar({
     onDeleteSession: showDeleteSessionConfirmation,
     onForkSession: forkSession,
     onMarkSessionUnread,
+    onSetSessionStarred,
     onArchiveSessionNow: archiveSessionNow,
     onLoadMoreSessions: loadMoreSessionsForProject,
     onNewSession,

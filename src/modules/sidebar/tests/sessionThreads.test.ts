@@ -53,6 +53,18 @@ test('a parent sorts by its own or its newest thread activity, whichever is late
   );
 });
 
+test('starred rows come first, each part newest first', () => {
+  assert.deepEqual(
+    shape([
+      makeSession('new', '2026-10-29T12:00:00.000Z'),
+      { ...makeSession('starred-old', '2026-10-29T08:00:00.000Z'), isStarred: true },
+      { ...makeSession('starred-new', '2026-10-29T10:00:00.000Z'), isStarred: true },
+      makeSession('old', '2026-10-29T09:00:00.000Z'),
+    ]).map(([id]) => id),
+    ['starred-new', 'starred-old', 'new', 'old'],
+  );
+});
+
 test('threads are ordered newest activity first', () => {
   assert.deepEqual(
     shape([

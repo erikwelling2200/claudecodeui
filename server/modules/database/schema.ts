@@ -171,6 +171,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- 1 while the user wants Remote Control on for this chat. Its threads follow
     -- it, including threads started after it was turned on.
     remote_control INTEGER NOT NULL DEFAULT 0,
+    -- 1 for a chat the user starred; it sorts above the rest of its project.
+    isStarred INTEGER NOT NULL DEFAULT 0,
     isArchived BOOLEAN DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,

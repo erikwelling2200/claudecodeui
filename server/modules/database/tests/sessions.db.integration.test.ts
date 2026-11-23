@@ -184,6 +184,28 @@ test('a project page sorts a parent by its latest thread and before its threads'
   });
 });
 
+test('a project page puts starred chats first, their threads with them', async () => {
+  await withIsolatedDatabase(() => {
+    const fixtures: Array<Parameters<typeof sessionsDb.createSession>> = [
+      ['session-starred', 'claude', '/workspace/stars', 'Starred', '2026-07-18T08:00:00.000Z', '2026-07-18T08:00:00.000Z'],
+      ['session-thread', 'claude', '/workspace/stars', 'Thread', '2026-07-18T09:00:00.000Z', '2026-07-18T09:00:00.000Z'],
+      ['session-newest', 'claude', '/workspace/stars', 'Newest', '2026-07-18T12:00:00.000Z', '2026-07-18T12:00:00.000Z'],
+      ['session-older', 'claude', '/workspace/stars', 'Older', '2026-07-18T10:00:00.000Z', '2026-07-18T10:00:00.000Z'],
+    ];
+    for (const fixture of fixtures) sessionsDb.createSession(...fixture);
+    getConnection().prepare('UPDATE sessions SET parent_session_id = ? WHERE session_id = ?').run('session-starred', 'session-thread');
+    sessionsDb.setSessionIsStarred('session-starred', true);
+
+    const firstPage = sessionsDb.getSessionsByProjectPathPage('/workspace/stars', 2, 0);
+    assert.deepEqual(firstPage.map((row) => row.session_id), ['session-starred', 'session-thread']);
+    assert.equal(firstPage[0].isStarred, 1);
+
+    sessionsDb.setSessionIsStarred('session-starred', false);
+    const unstarred = sessionsDb.getSessionsByProjectPathPage('/workspace/stars', 10, 0);
+    assert.deepEqual(unstarred.map((row) => row.session_id), ['session-newest', 'session-older', 'session-starred', 'session-thread']);
+  });
+});
+
 test('getThreadSessionIds lists the archived or the active threads of one session', async () => {
   await withIsolatedDatabase(() => {
     sessionsDb.createAppSession('parent', 'claude', '/workspace/threads');

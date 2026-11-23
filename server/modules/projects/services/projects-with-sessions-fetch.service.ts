@@ -14,6 +14,7 @@ type SessionSummary = {
   messageCount: number;
   lastActivity: string;
   parentSessionId: string | null;
+  isStarred: boolean;
 };
 
 type SessionRepositoryRow = {
@@ -21,6 +22,7 @@ type SessionRepositoryRow = {
   session_id: string;
   custom_name?: string | null;
   parent_session_id?: string | null;
+  isStarred?: number | null;
   updated_at?: string | null;
   created_at?: string | null;
 };
@@ -129,6 +131,7 @@ function mapSessionRowToSummary(row: SessionRepositoryRow): SessionSummary {
     messageCount: 0,
     lastActivity: row.updated_at ?? row.created_at ?? new Date().toISOString(),
     parentSessionId: row.parent_session_id ?? null,
+    isStarred: Boolean(row.isStarred),
   };
 }
 

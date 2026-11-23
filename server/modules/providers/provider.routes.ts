@@ -364,6 +364,17 @@ const parseSessionForkPayload = (
   };
 };
 
+const parseSessionStarred = (payload: unknown): boolean => {
+  const isStarred = payload && typeof payload === 'object' ? (payload as Record<string, unknown>).isStarred : undefined;
+  if (typeof isStarred !== 'boolean') {
+    throw new AppError('isStarred must be a boolean.', {
+      code: 'INVALID_SESSION_STAR',
+      statusCode: 400,
+    });
+  }
+  return isStarred;
+};
+
 const parseSessionRenameSummary = (payload: unknown): string => {
   if (!payload || typeof payload !== 'object') {
     throw new AppError('Request body must be an object.', {
@@ -1143,6 +1154,15 @@ router.put(
     const sessionId = parseSessionId(req.params.sessionId);
     const summary = parseSessionRenameSummary(req.body);
     const result = sessionsService.renameSessionById(sessionId, summary);
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
+router.put(
+  '/sessions/:sessionId/star',
+  asyncHandler(async (req: Request, res: Response) => {
+    const sessionId = parseSessionId(req.params.sessionId);
+    const result = sessionsService.setSessionStarred(sessionId, parseSessionStarred(req.body));
     res.json(createApiSuccessResponse(result));
   }),
 );
