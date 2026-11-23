@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, test } from 'node:test';
 
-import { readSessionTasks } from '@/modules/session-tasks/services/session-tasks.service.js';
+import { createSessionTask, readSessionTasks, updateSessionTask } from '@/modules/session-tasks/services/session-tasks.service.js';
 
 const listIds: string[] = [];
 
@@ -62,5 +62,60 @@ describe('readSessionTasks', () => {
     });
 
     assert.equal((await readSessionTasks('test-status'))[0].status, 'pending');
+  });
+});
+
+describe('createSessionTask', () => {
+  test('writes the task the way the CLI does, one past the highest id, and raises the high-water mark', async () => {
+    await writeTaskList('test-create', {
+      '3.json': JSON.stringify({ id: '3', subject: 'Third', status: 'completed', blocks: [], blockedBy: [] }),
+    });
+
+    const task = await createSessionTask('test-create', { subject: 'Fourth', description: 'Do the fourth thing', activeForm: 'Doing the fourth thing' });
+
+    assert.equal(task.id, '4');
+    assert.equal(task.status, 'pending');
+    const directory = path.join(os.homedir(), '.claude', 'tasks', 'test-create');
+    const written = JSON.parse(await fs.readFile(path.join(directory, '4.json'), 'utf8'));
+    assert.deepEqual(written, { id: '4', subject: 'Fourth', description: 'Do the fourth thing', activeForm: 'Doing the fourth thing', status: 'pending', blocks: [], blockedBy: [] });
+    assert.equal(await fs.readFile(path.join(directory, '.highwatermark'), 'utf8'), '4');
+  });
+
+  test('never reuses an id below the high-water mark, even when that task file is gone', async () => {
+    await writeTaskList('test-highwater', { '.highwatermark': '7' });
+
+    const task = await createSessionTask('test-highwater', { subject: 'Eighth', description: 'After a deleted task' });
+
+    assert.equal(task.id, '8');
+  });
+
+  test('a chat without a list yet gets one, starting at 1', async () => {
+    listIds.push('test-first');
+
+    const task = await createSessionTask('test-first', { subject: 'First', description: 'The first task' });
+
+    assert.equal(task.id, '1');
+    assert.deepEqual((await readSessionTasks('test-first')).map((entry) => entry.subject), ['First']);
+  });
+});
+
+describe('updateSessionTask', () => {
+  test('changes the given fields and keeps the rest of the file', async () => {
+    await writeTaskList('test-update', {
+      '1.json': JSON.stringify({ id: '1', subject: 'Work', description: 'Do it', status: 'pending', blocks: ['2'], blockedBy: [], metadata: { kept: true } }),
+    });
+
+    const task = await updateSessionTask('test-update', '1', { status: 'in_progress', activeForm: 'Working' });
+
+    assert.equal(task.status, 'in_progress');
+    assert.equal(task.activeForm, 'Working');
+    const written = JSON.parse(await fs.readFile(path.join(os.homedir(), '.claude', 'tasks', 'test-update', '1.json'), 'utf8'));
+    assert.deepEqual(written, { id: '1', subject: 'Work', description: 'Do it', status: 'in_progress', blocks: ['2'], blockedBy: [], metadata: { kept: true }, activeForm: 'Working' });
+  });
+
+  test('an unknown task id is a not-found error', async () => {
+    listIds.push('test-update-missing');
+
+    await assert.rejects(updateSessionTask('test-update-missing', '9', { status: 'completed' }), (error: { statusCode?: number }) => error.statusCode === 404);
   });
 });

@@ -1526,6 +1526,8 @@ export type SessionTask = {
 
 export type SessionTasksServices = {
   listTasks(sessionId: string): Promise<SessionTask[]>;
+  createTask(sessionId: string, input: { subject: string; description: string; activeForm?: string }): Promise<SessionTask>;
+  updateTask(sessionId: string, taskId: string, update: { subject?: string; description?: string; activeForm?: string; status?: SessionTaskStatus }): Promise<SessionTask>;
 };
 
 // ---------------------------
