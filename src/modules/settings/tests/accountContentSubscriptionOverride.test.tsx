@@ -20,7 +20,11 @@ vi.mock('@/shared/api', async (importOriginal) => {
     ...actual,
     api: {
       providers: { cliStatus: () => new Promise<Response>(() => {}) },
-      usage: { claudeApiKey: () => new Promise<Response>(() => {}) },
+      usage: {
+        claudeApiKey: () => new Promise<Response>(() => {}),
+        claudeCredit: () => new Promise<Response>(() => {}),
+        workdayPing: () => new Promise<Response>(() => {}),
+      },
     },
   };
 });

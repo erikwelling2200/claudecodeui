@@ -564,7 +564,7 @@ test('the workflow agent route reads an agent\'s timeline and status from its ru
     assert.deepEqual(finished.activity.map((entry) => entry.kind), ['tool', 'text']);
     assert.equal(finished.activity[0]?.toolName, 'Grep');
     assert.deepEqual(finished.activity[0]?.toolInput, { pattern: 'useSidebar' });
-    assert.deepEqual(finished.activity[0]?.toolResult, { content: 'src/modules/sidebar/useSidebar.ts', isError: false });
+    assert.deepEqual(finished.activity[0]?.toolResult, { content: 'src/modules/sidebar/useSidebar.ts', isError: false, timestamp: '2026-08-21T10:32:26.000Z' });
     assert.equal(finished.activity[1]?.content, 'One hook owns the sidebar.');
 
     // A `started` with no `result` or `failed`, and no live run of the session

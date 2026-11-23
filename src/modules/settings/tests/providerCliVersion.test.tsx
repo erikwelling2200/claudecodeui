@@ -45,7 +45,11 @@ vi.mock('@/shared/api', async (importOriginal) => {
         },
       },
       // The account view's fallback-key section; not what these tests are about.
-      usage: { claudeApiKey: () => new Promise<Response>(() => {}) },
+      usage: {
+        claudeApiKey: () => new Promise<Response>(() => {}),
+        claudeCredit: () => new Promise<Response>(() => {}),
+        workdayPing: () => new Promise<Response>(() => {}),
+      },
     },
   };
 });

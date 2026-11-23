@@ -26,6 +26,10 @@ export default defineConfig({
     // transforming that module graph, which takes well over the 5 s default while
     // the suite shares the machine with other work.
     testTimeout: 30_000,
+    // One worker per core starves the main process while every worker transforms the same
+    // module graph: the run is slower and a worker's report can time out ("Timeout calling
+    // onTaskUpdate"), which fails the run although every test passed.
+    maxWorkers: '50%',
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     restoreMocks: true,
