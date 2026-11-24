@@ -6,8 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { appConfigDb, sessionsDb, userDb } from '@/modules/database/index.js';
-import { providerMcpService, providerRuntimeService, sessionsService } from '@/modules/providers/index.js';
+import { appConfigDb, sessionDraftsDb, sessionsDb, userDb } from '@/modules/database/index.js';
+import { providerMcpService, providerRuntimeService, sessionPermissionModeService, sessionsService } from '@/modules/providers/index.js';
 import { broadcastRemoteControl, broadcastSessionUpserted, chatRunRegistry, runDetachedChatTurn } from '@/modules/websocket/index.js';
 import type { ProviderRuntimeGateway } from '@/modules/websocket/index.js';
 import type { ChatToolsAppendMode, ChatToolsSettings, LiveMcpServerStatus, LLMProvider, ProviderMcpServer } from '@/shared/types.js';
@@ -452,5 +452,39 @@ export const chatToolsService = {
       });
 
     return { sessionId: target.session_id, projectPath: target.project_path };
+  },
+
+  /**
+   * Queues `/compact` as the calling chat's next turn, the way the composer
+   * queues a message: it runs once the current turn has finished. `continueWith` is
+   * queued as the turn after it, in the chat's permission mode, so the agent
+   * resumes its work on the compacted context. Refused while the user has a
+   * message queued, which a slash command cannot share a turn with.
+   */
+  async compactChat(sessionId: string, input: { instructions?: string; continueWith?: string }): Promise<{ queued: string; continueWith: boolean }> {
+    const session = sessionsDb.getSessionById(sessionId);
+    if (!session) {
+      throw new AppError(`Session "${sessionId}" was not found.`, { code: 'SESSION_NOT_FOUND', statusCode: 404 });
+    }
+    if (session.provider !== 'claude') {
+      throw new AppError(`Compacting is only supported for Claude chats, not ${session.provider}.`, { code: 'UNSUPPORTED_PROVIDER', statusCode: 400 });
+    }
+    const userId = userDb.getFirstUser()?.id;
+    if (userId === undefined) {
+      throw new AppError('CloudCLI has no user to queue the message for.', { code: 'NO_USER', statusCode: 409 });
+    }
+
+    const options = { ...(session.model ? { model: session.model } : {}), ...(session.effort ? { effort: session.effort } : {}) };
+    const command = `/compact${input.instructions ? ` ${input.instructions}` : ''}`;
+    const permissionMode = await sessionPermissionModeService.resolve('claude', sessionId);
+    const then = input.continueWith
+      ? { content: input.continueWith, options: { ...options, ...(permissionMode ? { permissionMode } : {}) }, attachments: [] }
+      : undefined;
+
+    const result = sessionDraftsDb.appendQueuedMessage(userId, sessionId, { content: command, options, attachments: [], ...(then ? { then } : {}) });
+    if (!result) {
+      throw new AppError('The user has a message queued for this chat, and /compact cannot share a turn with it.', { code: 'QUEUE_OCCUPIED', statusCode: 409 });
+    }
+    return { queued: command, continueWith: Boolean(then) };
   },
 };

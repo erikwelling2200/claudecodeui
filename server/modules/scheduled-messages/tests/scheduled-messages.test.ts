@@ -410,6 +410,31 @@ test('follow-ups queued during one turn are all sent, once, in order, as the nex
   });
 });
 
+test('an agent-queued /compact runs as its own turn, then its continueWith message in the chat\'s permission mode', async () => {
+  await withIsolatedDatabase(async () => {
+    sessionsDb.setSessionPermissionMode(SESSION_ID, 'auto');
+    await chatToolsService.compactChat(SESSION_ID, { instructions: 'keep the failing tests', continueWith: 'carry on with the plan' });
+
+    const runs: RunCall[] = [];
+    assert.equal(await dispatchQueuedMessages(createRuntime(runs)), 1);
+    for (let attempt = 0; attempt < 50 && runs.length < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    assert.deepEqual(runs.map((run) => run.command), ['/compact keep the failing tests', 'carry on with the plan']);
+    assert.equal(runs[1].options.permissionMode, 'auto');
+    assert.equal(sessionDraftsDb.listQueuedMessages().length, 0);
+  });
+});
+
+test('an agent cannot queue /compact behind a message the user queued', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    sessionDraftsDb.appendQueuedMessage(userId, SESSION_ID, { content: 'the user\'s follow-up', attachments: [] });
+    await assert.rejects(chatToolsService.compactChat(SESSION_ID, {}), /message queued/);
+    assert.deepEqual(sessionDraftsDb.listQueuedMessages().map((queued) => queued.queuedMessage), [{ content: 'the user\'s follow-up', attachments: [] }]);
+  });
+});
+
 test('a draft-text save after the queued message was sent does not send it again', async () => {
   await withIsolatedDatabase(async (userId) => {
     sessionDraftsDb.appendQueuedMessage(userId, SESSION_ID, { content: 'send me once', attachments: [] });

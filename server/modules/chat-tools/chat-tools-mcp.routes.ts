@@ -61,6 +61,15 @@ chatToolsMcpRoutes.post('/tools/resume_chat', asyncHandler(async (req, res) => {
   res.json(createApiSuccessResponse(result));
 }));
 
+chatToolsMcpRoutes.post('/tools/compact_chat', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const result = await chatToolsService.compactChat(readRequiredString(body.sessionId, 'sessionId'), {
+    instructions: readOptionalString(body.instructions),
+    continueWith: readOptionalString(body.continueWith),
+  });
+  res.json(createApiSuccessResponse(result));
+}));
+
 chatToolsMcpRoutes.post('/tools/get_chat_threads', asyncHandler(async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   res.json(createApiSuccessResponse(chatToolsService.getChatThreads(readRequiredString(body.sessionId, 'sessionId'))));

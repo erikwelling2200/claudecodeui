@@ -61,6 +61,23 @@ const tools = [
     },
   },
   {
+    name: 'compact_chat',
+    description: 'Compact the conversation of this chat, as the user would with /compact, to free up context during long work. '
+      + 'It runs as the next turn, once your current turn has ended, so end your turn right after calling this. '
+      + 'Pass continueWith to have a turn after the compaction that resumes the work; without it the chat waits for the user. '
+      + 'Refused while the user has a message queued for this chat.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instructions: { type: 'string', description: 'Optional instructions for the summary, as /compact takes them, e.g. "keep the list of failing tests".' },
+        continueWith: {
+          type: 'string',
+          description: 'Optional message sent after the compaction. The compacted chat keeps only a summary, so say what to carry on with and where the state lives (plan file, branch).',
+        },
+      },
+    },
+  },
+  {
     name: 'get_chat_threads',
     description: 'Show how this chat relates to other CloudCLI chats: its own session id and name, the chat it is a thread of (if any), '
       + 'and the threads of the top-level chat (for a thread: its sibling threads and itself), each with whether it is running. '
@@ -244,6 +261,11 @@ async function callTool(name: string, args: Record<string, unknown>) {
       case 'resume_chat': {
         const result = await callChatToolsApi(name, { targetSessionId: args.sessionId, message: args.message }) as { sessionId: string };
         return { content: [{ type: 'text', text: `Resumed chat ${result.sessionId} with the message.` }] };
+      }
+      case 'compact_chat': {
+        const result = await callChatToolsApi(name, { instructions: args.instructions, continueWith: args.continueWith }) as { queued: string; continueWith: boolean };
+        const after = result.continueWith ? ', followed by your continueWith message' : '';
+        return { content: [{ type: 'text', text: `Queued "${result.queued}"${after}. It runs once this turn ends, so end your turn now.` }] };
       }
       case 'get_chat_threads': {
         const result = await callChatToolsApi(name, {}) as { chat: RelatedChat; parent: RelatedChat | null; threads: RelatedChat[] };

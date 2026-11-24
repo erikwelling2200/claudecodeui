@@ -1075,12 +1075,15 @@ export type CreateCredentialResult = {
  * has at most one: a message queued while another is waiting is merged into it
  * by the drafts repository. The User module accepts it, the Database module
  * stores and merges it, and the Scheduled Messages dispatcher sends it (read
- * through `readQueuedChatMessage`).
+ * through `readQueuedChatMessage`). `then` is queued once this message's turn
+ * has finished, so a slash command such as `/compact` can be followed by a
+ * turn of its own.
  */
 export type QueuedChatMessage = {
   content: string;
   options?: Record<string, unknown>;
   attachments: unknown[];
+  then?: QueuedChatMessage;
 };
 
 // ---------------------------
