@@ -5,14 +5,26 @@ import type { ClaudeApiUsageRow } from '@/modules/database/index.js';
 
 type UsageLimitReading = { kind: string; percent: number; resetsAt: number };
 
+/** The subscriptions runs can be billed to, in the user's order; the CLI's own login has the id `login`. */
+type ClaudeAccountSource = {
+  order(): string[];
+  /** The OAuth token a run on this account is launched with; null for the CLI login, and for an account that cannot be used now. */
+  token(id: string): string | null;
+  label(id: string): string;
+  /** The account's own limit bars; the CLI login's come from `readUsageLimits`. */
+  limits(id: string): UsageLimitReading[];
+};
+
 type ClaudeBillingDependencies = {
   homeDirectory: string;
   hostEnv: NodeJS.ProcessEnv;
   config: { get(key: string): string | null; set(key: string, value: string): void };
   spend: { record(costUsd: number, sessionId: string | null, at: number): void; sumSince(since: number): number };
   usage: { record(messageId: string, sessionId: string | null, usage: ClaudeApiUsageRow, at: number): void };
-  /** The latest plan-usage reading, the same one the sidebar's bars show. */
+  /** The latest plan-usage reading of the CLI login, the same one the sidebar's bars show. */
   readUsageLimits: () => UsageLimitReading[];
+  /** Extra subscriptions; without them the CLI login is the only one. */
+  accounts?: ClaudeAccountSource;
   /** When the current API credit cycle began, in epoch milliseconds; spend is totalled from there. */
   creditCycleStart: () => number;
   now?: () => number;
@@ -20,14 +32,17 @@ type ClaudeBillingDependencies = {
 
 type ApiKeyVariable = 'ANTHROPIC_API_KEY' | 'ANTHROPIC_AUTH_TOKEN';
 
+/** The subscription a run is billed to. `token` is null for the CLI's own login. */
+export type ClaudeBillingAccount = { id: string; label: string; token: string | null };
+
 /**
  * Which credential a run is launched with.
- * - `subscription`: the `claude /login` plan; every API-key variable is kept from the CLI.
- * - `api_key`: the plan is at a limit (or there is none), so the run is billed to `key`.
+ * - `subscription`: a plan; every API-key variable is kept from the CLI, and an extra account's token is passed in.
+ * - `api_key`: every plan is at a limit (or there is none), so the run is billed to `key`.
  * - `none`: no plan and no key; the env is passed through untouched.
  */
 export type ClaudeBilling =
-  | { mode: 'subscription' }
+  | { mode: 'subscription'; account: ClaudeBillingAccount }
   | { mode: 'api_key'; variable: ApiKeyVariable; key: string; limit: ClaudeBillingLimit | null }
   | { mode: 'none' };
 
@@ -39,25 +54,35 @@ export type ClaudeBillingStatus = {
   keySource: 'settings' | 'environment' | null;
   keyHint: string | null;
   mode: ClaudeBilling['mode'];
+  /** The subscription the next run goes to, when it goes to one. */
+  account: { id: string; label: string } | null;
   /** A subscription login was there and has ended, as opposed to never having been set up. */
   loginExpired: boolean;
+  /** On the key: the soonest reset among the plans. On a plan: that plan's limit, when it is at one. */
   limit: ClaudeBillingLimit | null;
-  /** The user allowed runs to move to the key at a plan limit, until the limit they were near resets. */
+  /** Every subscription in order, with the limit it is at. */
+  accounts: { id: string; label: string; limit: ClaudeBillingLimit | null }[];
+  /** The user allowed runs to move to the key once every plan is at a limit, until those limits reset. */
   armed: boolean;
-  /** A plan limit is hit or close enough that the sidebar offers the switch to the key. */
+  /** Every plan is at a limit or close enough that the sidebar offers the switch to the key. */
   canSwitch: boolean;
   spend: { today: number; cycle: number };
 };
 
 /**
  * What the runtime reports for the chat that should move:
- * - `limit-hit`: a subscription turn ended on the plan's limit message.
- * - `subscription-back`: a turn billed to the key is at a point where it can stop, and the plan has room again.
+ * - `limit-hit`: a turn on subscription `accountId` ended on the plan's limit message.
+ * - `subscription-back`: a turn billed to `accountId` (`api` for the key) is at a point where it can stop, and a
+ *   subscription earlier in the order has room again.
  */
-export type ClaudeBillingSwitchEvent = { type: 'limit-hit' | 'subscription-back'; sessionId: string };
+export type ClaudeBillingSwitchEvent = { type: 'limit-hit' | 'subscription-back'; sessionId: string; accountId: string };
+
+/** The account id a process billed to the key runs under. */
+export const API_KEY_ACCOUNT_ID = 'api';
+const LOGIN_ACCOUNT_ID = 'login';
 
 const STORED_KEY = 'claude_fallback_api_key';
-const LIMIT_KEY = 'claude_subscription_limit';
+const LIMITS_KEY = 'claude_subscription_limits';
 const ARMED_KEY = 'claude_api_fallback_armed';
 const API_KEY_VARIABLES: ApiKeyVariable[] = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'];
 
@@ -77,14 +102,17 @@ function readJson(file: string): any {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
 }
 
+const LOGIN_ONLY: ClaudeAccountSource = { order: () => [LOGIN_ACCOUNT_ID], token: () => null, label: () => 'Claude login', limits: () => [] };
+
 /**
- * Decides per run whether Claude is billed to the subscription or to an API key. The subscription always
- * goes first; at a plan limit the key is used only once the user armed the switch, and only until that
- * limit's reset. Without a subscription login the key is used outright.
+ * Decides per run which credential Claude is billed to. The subscriptions go first, in the user's order: a run
+ * takes the first one at no limit. Once every one is at a limit, the key is used only if the user armed the
+ * switch, and only until the first of those limits resets. Without any subscription the key is used outright.
  */
 export function createClaudeBillingService(dependencies: ClaudeBillingDependencies) {
   const now = dependencies.now ?? Date.now;
   const { config, hostEnv } = dependencies;
+  const accounts = dependencies.accounts ?? LOGIN_ONLY;
 
   function storedKey(): string | null {
     return config.get(STORED_KEY)?.trim() || null;
@@ -108,37 +136,70 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     return readJson(path.join(dependencies.homeDirectory, '.claude', '.credentials.json'))?.claudeAiOauth ?? null;
   }
 
-  function hasSubscription(): boolean {
+  function hasLogin(): boolean {
     if (hostEnv.CLAUDE_CODE_OAUTH_TOKEN?.trim()) return true;
     const login = storedLogin();
     return Boolean(login?.accessToken || login?.refreshToken);
   }
 
-  /** The CLI keeps the login entry and empties its tokens when a login ends, so an entry without tokens is one that ran out. */
-  function loginExpired(): boolean {
-    return !hasSubscription() && storedLogin() !== null;
+  /** Whether the account can be launched at all, at a limit or not. */
+  function signedIn(id: string): boolean {
+    return id === LOGIN_ACCOUNT_ID ? hasLogin() : accounts.token(id) !== null;
   }
 
-  /** The limit the plan is at right now, from a live rejection or a full bar, whichever resets last. */
-  function currentLimit(): ClaudeBillingLimit | null {
+  function signedInAccounts(): string[] {
+    return accounts.order().filter(signedIn);
+  }
+
+  /** The CLI keeps the login entry and empties its tokens when a login ends, so an entry without tokens is one that ran out. */
+  function loginExpired(): boolean {
+    return !hasLogin() && storedLogin() !== null;
+  }
+
+  function usageLimits(id: string): UsageLimitReading[] {
+    return id === LOGIN_ACCOUNT_ID ? dependencies.readUsageLimits() : accounts.limits(id);
+  }
+
+  function storedLimits(): Record<string, ClaudeBillingLimit> {
+    try {
+      const parsed = JSON.parse(config.get(LIMITS_KEY) || '{}');
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** The limit the account is at right now, from a live rejection or a full bar, whichever resets last. */
+  function currentLimit(id: string): ClaudeBillingLimit | null {
     const at = now();
     const candidates: ClaudeBillingLimit[] = [];
-    const rejected = parseLimit(config.get(LIMIT_KEY));
-    if (rejected && rejected.resetsAt > at) candidates.push(rejected);
-    for (const limit of dependencies.readUsageLimits()) {
+    const rejected = storedLimits()[id];
+    if (Number.isFinite(rejected?.resetsAt) && rejected.resetsAt > at) candidates.push({ kind: String(rejected.kind || 'session'), resetsAt: rejected.resetsAt });
+    for (const limit of usageLimits(id)) {
       if (BLOCKING_KINDS.has(limit.kind) && limit.percent >= 100 && limit.resetsAt > at) candidates.push({ kind: limit.kind, resetsAt: limit.resetsAt });
     }
     if (!candidates.length) return null;
     return candidates.reduce((latest, limit) => (limit.resetsAt > latest.resetsAt ? limit : latest));
   }
 
-  /** The latest reset among the blocking bars at or past the offer threshold, or null when none is that full. */
-  function nearLimitReset(): number | null {
+  /** The latest reset among the account's blocking bars at or past the offer threshold, or null when none is that full. */
+  function nearLimitReset(id: string): number | null {
     const at = now();
-    const resets = dependencies.readUsageLimits()
+    const resets = usageLimits(id)
       .filter((limit) => BLOCKING_KINDS.has(limit.kind) && limit.percent >= SWITCH_OFFER_PERCENT && limit.resetsAt > at)
       .map((limit) => limit.resetsAt);
     return resets.length ? Math.max(...resets) : null;
+  }
+
+  function available(id: string): boolean {
+    return signedIn(id) && !currentLimit(id);
+  }
+
+  /** The soonest any plan is back, which is how long a run on the key waits. */
+  function soonestReset(): ClaudeBillingLimit | null {
+    const limits = signedInAccounts().map(currentLimit).filter((limit): limit is ClaudeBillingLimit => limit !== null);
+    if (!limits.length) return null;
+    return limits.reduce((soonest, limit) => (limit.resetsAt < soonest.resetsAt ? limit : soonest));
   }
 
   function armedUntil(): number | null {
@@ -146,13 +207,14 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     return until > now() ? until : null;
   }
 
-  /** Arming lasts until the limit the plan is at or near resets, so the next window asks again. */
+  /** Arming lasts until the limits the plans are at or near reset, so the next window asks again. */
   function setArmed(armed: boolean): void {
     if (!armed) {
       config.set(ARMED_KEY, '');
       return;
     }
-    const until = Math.max(currentLimit()?.resetsAt ?? 0, nearLimitReset() ?? 0) || now() + SESSION_WINDOW_MS;
+    const resets = signedInAccounts().map((id) => Math.max(currentLimit(id)?.resetsAt ?? 0, nearLimitReset(id) ?? 0));
+    const until = (resets.length ? Math.max(...resets) : 0) || now() + SESSION_WINDOW_MS;
     config.set(ARMED_KEY, String(until));
   }
 
@@ -162,9 +224,16 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     if (until && resetsAt > until) config.set(ARMED_KEY, String(resetsAt));
   }
 
-  /** True when the plan can take a run again: logged in and at no limit. */
-  function subscriptionAvailable(): boolean {
-    return hasSubscription() && !currentLimit();
+  /** True when an account earlier in the order than `accountId` has room; for the key, when any account has. */
+  function betterAccountAvailable(accountId: string): boolean {
+    const order = accounts.order();
+    const position = accountId === API_KEY_ACCOUNT_ID ? order.length : order.indexOf(accountId);
+    return order.slice(0, position < 0 ? order.length : position).some(available);
+  }
+
+  /** True when the account is at a limit, so a process on it cannot reach the model. The key never is. */
+  function accountBlocked(accountId: string): boolean {
+    return accountId !== API_KEY_ACCOUNT_ID && !available(accountId);
   }
 
   const switchListeners = new Set<(event: ClaudeBillingSwitchEvent) => void>();
@@ -184,52 +253,49 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     }
   }
 
-  function parseLimit(value: string | null): ClaudeBillingLimit | null {
-    if (!value) return null;
-    try {
-      const parsed = JSON.parse(value);
-      return Number.isFinite(parsed?.resetsAt) ? { kind: String(parsed.kind || 'session'), resetsAt: parsed.resetsAt } : null;
-    } catch {
-      return null;
-    }
+  function toAccount(id: string): ClaudeBillingAccount {
+    return { id, label: accounts.label(id), token: id === LOGIN_ACCOUNT_ID ? null : accounts.token(id) };
   }
 
   function resolve(): ClaudeBilling {
     const key = fallbackKey();
-    if (!hasSubscription()) return key ? { mode: 'api_key', ...key, limit: null } : { mode: 'none' };
-    const limit = currentLimit();
-    if (limit && key && armedUntil()) return { mode: 'api_key', ...key, limit };
-    return { mode: 'subscription' };
+    const signed = signedInAccounts();
+    if (!signed.length) return key ? { mode: 'api_key', ...key, limit: null } : { mode: 'none' };
+    const free = signed.find((id) => !currentLimit(id));
+    if (free) return { mode: 'subscription', account: toAccount(free) };
+    if (key && armedUntil()) return { mode: 'api_key', ...key, limit: soonestReset() };
+    // Every plan is at a limit and the key is not allowed: the first one in the order answers with its limit.
+    return { mode: 'subscription', account: toAccount(signed[0]) };
   }
 
   /**
-   * Feeds a `rate_limit_event` from a subscription run. A rejection is remembered until its reset, so the
-   * next run goes to the key at once instead of failing against the plan first.
+   * Feeds a `rate_limit_event` from a run on subscription `accountId`. A rejection is remembered until its reset,
+   * so the next run goes to the next subscription at once instead of failing against this one first.
    */
-  function noteRateLimit(info: RateLimitInfo | null | undefined): void {
+  function noteRateLimit(info: RateLimitInfo | null | undefined, accountId: string = LOGIN_ACCOUNT_ID): void {
     if (info?.status !== 'rejected' || info.rateLimitType === 'overage' || !info.resetsAt) return;
-    rememberLimit(info.rateLimitType || 'five_hour', toMilliseconds(info.resetsAt));
+    rememberLimit(accountId, info.rateLimitType || 'five_hour', toMilliseconds(info.resetsAt));
   }
 
   /**
-   * Feeds the plan's limit message ("You've hit your limit") that ended a subscription turn of `sessionId`. The
+   * Feeds the plan's limit message ("You've hit your limit") that ended a turn of `sessionId` on `accountId`. The
    * CLI does not always send a rejected `rate_limit_event` first, so the reset comes from the last event the run
-   * saw, else from the fullest blocking bar, else an hour out so the plan is tried again soon.
+   * saw, else from the account's fullest blocking bar, else an hour out so the plan is tried again soon.
    */
-  function noteLimitHit(lastInfo: RateLimitInfo | null | undefined, sessionId: string | null): void {
+  function noteLimitHit(lastInfo: RateLimitInfo | null | undefined, sessionId: string | null, accountId: string = LOGIN_ACCOUNT_ID): void {
     const fromEvent = lastInfo?.resetsAt && lastInfo.rateLimitType !== 'overage' ? toMilliseconds(lastInfo.resetsAt) : 0;
-    const resetsAt = fromEvent > now() ? fromEvent : nearLimitReset() ?? now() + 3_600_000;
-    rememberLimit(lastInfo?.rateLimitType && lastInfo.rateLimitType !== 'overage' ? lastInfo.rateLimitType : 'five_hour', resetsAt);
-    if (sessionId) emitSwitch({ type: 'limit-hit', sessionId });
+    const resetsAt = fromEvent > now() ? fromEvent : nearLimitReset(accountId) ?? now() + 3_600_000;
+    rememberLimit(accountId, lastInfo?.rateLimitType && lastInfo.rateLimitType !== 'overage' ? lastInfo.rateLimitType : 'five_hour', resetsAt);
+    if (sessionId) emitSwitch({ type: 'limit-hit', sessionId, accountId });
   }
 
-  /** Called by a run billed to the key once it can stop for the plan, which `subscriptionAvailable` must say is back. */
-  function noteSubscriptionBack(sessionId: string): void {
-    emitSwitch({ type: 'subscription-back', sessionId });
+  /** Called by a run on `accountId` once it can stop, which `betterAccountAvailable` must say is worth it. */
+  function noteSubscriptionBack(sessionId: string, accountId: string): void {
+    emitSwitch({ type: 'subscription-back', sessionId, accountId });
   }
 
-  function rememberLimit(kind: string, resetsAt: number): void {
-    config.set(LIMIT_KEY, JSON.stringify({ kind, resetsAt }));
+  function rememberLimit(accountId: string, kind: string, resetsAt: number): void {
+    config.set(LIMITS_KEY, JSON.stringify({ ...storedLimits(), [accountId]: { kind, resetsAt } }));
     extendArming(resetsAt);
   }
 
@@ -270,17 +336,19 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     const stored = storedKey();
     const key = stored ?? hostKey()?.key ?? null;
     const billing = resolve();
-    const limit = billing.mode === 'api_key' ? billing.limit : currentLimit();
+    const signed = signedInAccounts();
     const today = new Date(now());
     today.setHours(0, 0, 0, 0);
     return {
       keySource: stored ? 'settings' : key ? 'environment' : null,
       keyHint: key ? key.slice(-4) : null,
       mode: billing.mode,
+      account: billing.mode === 'subscription' ? { id: billing.account.id, label: billing.account.label } : null,
       loginExpired: loginExpired(),
-      limit,
+      limit: billing.mode === 'api_key' ? billing.limit : billing.mode === 'subscription' ? currentLimit(billing.account.id) : null,
+      accounts: accounts.order().map((id) => ({ id, label: accounts.label(id), limit: currentLimit(id) })),
       armed: armedUntil() !== null,
-      canSwitch: Boolean(key) && hasSubscription() && Boolean(limit || nearLimitReset()),
+      canSwitch: Boolean(key) && signed.length > 0 && signed.every((id) => currentLimit(id) || nearLimitReset(id)),
       spend: { today: dependencies.spend.sumSince(today.getTime()), cycle: dependencies.spend.sumSince(dependencies.creditCycleStart()) },
     };
   }
@@ -299,19 +367,27 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
   }
 
   return {
-    resolve, noteRateLimit, noteLimitHit, noteSubscriptionBack, subscriptionAvailable, onSwitch, setArmed,
+    resolve, noteRateLimit, noteLimitHit, noteSubscriptionBack, betterAccountAvailable, accountBlocked, onSwitch, setArmed,
     recordSpend, recordUsage, restoredCostTotal, setKey, clearKey, getStatus,
   };
 }
 
+/** The account id a process launched as `billing` runs under, or null when it runs on neither a plan nor the key. */
+export function claudeBillingAccountId(billing: ClaudeBilling): string | null {
+  if (billing.mode === 'subscription') return billing.account.id;
+  return billing.mode === 'api_key' ? API_KEY_ACCOUNT_ID : null;
+}
+
 /**
  * The CLI's environment for a run billed as `billing` says. Claude Code prefers an API-key variable over the
- * subscription login whenever one is set, so a subscription run must not see any.
+ * subscription login whenever one is set, so a subscription run must not see any; an extra subscription is
+ * passed as `CLAUDE_CODE_OAUTH_TOKEN`, which the CLI prefers over its own login.
  */
 export function applyClaudeBillingEnv(env: NodeJS.ProcessEnv, billing: ClaudeBilling): NodeJS.ProcessEnv {
   if (billing.mode === 'none') return env;
   const result = { ...env };
   for (const variable of API_KEY_VARIABLES) delete result[variable];
   if (billing.mode === 'api_key') result[billing.variable] = billing.key;
+  if (billing.mode === 'subscription' && billing.account.token) result.CLAUDE_CODE_OAUTH_TOKEN = billing.account.token;
   return result;
 }

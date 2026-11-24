@@ -15,6 +15,9 @@ type Options = {
   hostEnv?: NodeJS.ProcessEnv;
   limits?: { kind: string; percent: number; resetsAt: number }[];
   cycleStart?: number;
+  /** Extra subscriptions after the CLI login, each with its token and bars. */
+  extra?: { id: string; token: string | null; limits?: { kind: string; percent: number; resetsAt: number }[] }[];
+  order?: string[];
 };
 
 function createBilling(options: Options = {}) {
@@ -37,6 +40,12 @@ function createBilling(options: Options = {}) {
     },
     usage: { record: (messageId, _sessionId, row, at) => { usage.set(messageId, { ...row, at }); } },
     readUsageLimits: () => options.limits ?? [],
+    accounts: {
+      order: () => options.order ?? ['login', ...(options.extra ?? []).map((account) => account.id)],
+      token: (id) => options.extra?.find((account) => account.id === id)?.token ?? null,
+      label: (id) => id,
+      limits: (id) => options.extra?.find((account) => account.id === id)?.limits ?? [],
+    },
     creditCycleStart: () => options.cycleStart ?? Date.parse('2026-10-20T00:00:00Z'),
     now: () => clock,
   });
@@ -67,7 +76,7 @@ test("a response's usage is recorded in the usage report's dimensions, its conte
 
 test('the subscription is used while it has room, even with a key stored', () => {
   const { billing } = createBilling({ storedKey: 'sk-stored' });
-  assert.deepEqual(billing.resolve(), { mode: 'subscription' });
+  assert.equal(billing.resolve().mode, 'subscription');
 });
 
 test('an armed switch moves runs to the stored key at a rejected limit, until it resets', () => {
@@ -76,7 +85,7 @@ test('an armed switch moves runs to the stored key at a rejected limit, until it
   billing.noteRateLimit({ status: 'rejected', rateLimitType: 'five_hour', resetsAt: (NOW + HOUR) / 1000 });
   assert.deepEqual(billing.resolve(), { mode: 'api_key', variable: 'ANTHROPIC_API_KEY', key: 'sk-stored', limit: { kind: 'five_hour', resetsAt: NOW + HOUR } });
   advance(HOUR);
-  assert.deepEqual(billing.resolve(), { mode: 'subscription' });
+  assert.equal(billing.resolve().mode, 'subscription');
 });
 
 test('a full session bar moves runs to the key before any run has been rejected, once armed', () => {
@@ -127,8 +136,8 @@ test("the plan's limit message records the limit from the run's last rate-limit 
   billing.noteLimitHit({ status: 'allowed_warning', rateLimitType: 'five_hour', resetsAt: (NOW + 3 * HOUR) / 1000 }, 'chat-1');
   assert.deepEqual(billing.getStatus().limit, { kind: 'five_hour', resetsAt: NOW + 3 * HOUR });
   assert.equal(billing.resolve().mode, 'api_key');
-  assert.equal(billing.subscriptionAvailable(), false);
-  assert.deepEqual(events, [{ type: 'limit-hit', sessionId: 'chat-1' }]);
+  assert.equal(billing.betterAccountAvailable('api'), false);
+  assert.deepEqual(events, [{ type: 'limit-hit', sessionId: 'chat-1', accountId: 'login' }]);
 });
 
 test('a limit message without an event falls back to the fullest bar, and the plan is available again after it', () => {
@@ -136,7 +145,7 @@ test('a limit message without an event falls back to the fullest bar, and the pl
   billing.noteLimitHit(null, null);
   assert.deepEqual(billing.getStatus().limit, { kind: 'five_hour', resetsAt: NOW + 2 * HOUR });
   advance(2 * HOUR);
-  assert.equal(billing.subscriptionAvailable(), true);
+  assert.equal(billing.betterAccountAvailable('api'), true);
 });
 
 test('without a key a limit hit stays on the subscription', () => {
@@ -177,7 +186,8 @@ test('a resumed session starts from the cost the CLI saved for it, any other ses
 
 test('the env for a subscription run carries no key; for a key run only the chosen one', () => {
   const env = { PATH: 'x', ANTHROPIC_API_KEY: 'env-key', ANTHROPIC_AUTH_TOKEN: 'env-token' };
-  assert.deepEqual(applyClaudeBillingEnv(env, { mode: 'subscription' }), { PATH: 'x' });
+  assert.deepEqual(applyClaudeBillingEnv(env, { mode: 'subscription', account: { id: 'login', label: 'me', token: null } }), { PATH: 'x' });
+  assert.deepEqual(applyClaudeBillingEnv(env, { mode: 'subscription', account: { id: 'b', label: 'b', token: 'oauth-b' } }), { PATH: 'x', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-b' });
   assert.deepEqual(applyClaudeBillingEnv(env, { mode: 'api_key', variable: 'ANTHROPIC_API_KEY', key: 'sk-stored', limit: null }), { PATH: 'x', ANTHROPIC_API_KEY: 'sk-stored' });
   assert.equal(applyClaudeBillingEnv(env, { mode: 'none' }), env);
 });
@@ -194,4 +204,36 @@ test('spend is totalled for today and since the credit cycle began', () => {
   assert.deepEqual(billing.getStatus().spend, { today: 1.25, cycle: 3.25 });
   assert.equal(billing.getStatus().keyHint, 'ored');
   assert.equal(billing.getStatus().keySource, 'settings');
+});
+
+test('a run takes the first subscription in the order with room, and the key only once every one is full and armed', () => {
+  const full = [{ kind: 'session', percent: 100, resetsAt: NOW + HOUR }];
+  const { billing } = createBilling({ storedKey: 'sk-stored', limits: full, extra: [{ id: 'b', token: 'oauth-b' }, { id: 'c', token: 'oauth-c' }] });
+  assert.deepEqual(billing.resolve(), { mode: 'subscription', account: { id: 'b', label: 'b', token: 'oauth-b' } });
+  billing.noteLimitHit({ status: 'rejected', rateLimitType: 'five_hour', resetsAt: (NOW + 2 * HOUR) / 1000 }, 'chat', 'b');
+  assert.equal((billing.resolve() as { account: { id: string } }).account.id, 'c');
+  billing.noteRateLimit({ status: 'rejected', rateLimitType: 'five_hour', resetsAt: (NOW + 3 * HOUR) / 1000 }, 'c');
+  assert.equal(billing.getStatus().canSwitch, true);
+  assert.deepEqual(billing.resolve(), { mode: 'subscription', account: { id: 'login', label: 'login', token: null } });
+  billing.setArmed(true);
+  assert.deepEqual(billing.resolve(), { mode: 'api_key', variable: 'ANTHROPIC_API_KEY', key: 'sk-stored', limit: { kind: 'session', resetsAt: NOW + HOUR } });
+});
+
+test('the order decides, and an account without a usable token is skipped', () => {
+  const { billing } = createBilling({ order: ['b', 'login', 'c'], extra: [{ id: 'b', token: null }, { id: 'c', token: 'oauth-c' }] });
+  assert.equal((billing.resolve() as { account: { id: string } }).account.id, 'login');
+});
+
+test('a better subscription is one earlier in the order with room; for the key any one with room', () => {
+  const { billing, advance } = createBilling({ storedKey: 'sk-stored', extra: [{ id: 'b', token: 'oauth-b' }] });
+  billing.noteRateLimit({ status: 'rejected', rateLimitType: 'five_hour', resetsAt: (NOW + HOUR) / 1000 }, 'login');
+  assert.deepEqual([billing.betterAccountAvailable('b'), billing.betterAccountAvailable('api'), billing.accountBlocked('login')], [false, true, true]);
+  advance(HOUR);
+  assert.deepEqual([billing.betterAccountAvailable('b'), billing.accountBlocked('login'), billing.accountBlocked('api')], [true, false, false]);
+});
+
+test("an extra account's own full bar counts as its limit", () => {
+  const { billing } = createBilling({ order: ['b', 'login'], extra: [{ id: 'b', token: 'oauth-b', limits: [{ kind: 'weekly_all', percent: 100, resetsAt: NOW + HOUR }] }] });
+  assert.equal((billing.resolve() as { account: { id: string } }).account.id, 'login');
+  assert.deepEqual(billing.getStatus().accounts.map((account) => [account.id, account.limit?.kind ?? null]), [['b', 'weekly_all'], ['login', null]]);
 });

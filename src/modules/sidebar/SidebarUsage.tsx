@@ -3,7 +3,7 @@ import type { TFunction } from 'i18next';
 
 import { api } from '@/shared/api';
 import { Button, Input } from '@/shared/ui';
-import type { ClaudeBillingStatus, ClaudeCreditStatus } from '@/shared/types';
+import type { ClaudeAccountSummary, ClaudeBillingStatus, ClaudeCreditStatus } from '@/shared/types';
 import { formatCreditCycleDay } from '@/shared/utils';
 
 type UsageLimit = {
@@ -21,6 +21,8 @@ type UsageSnapshot = {
   loginRequired?: boolean;
   billing?: ClaudeBillingStatus;
   credit?: ClaudeCreditStatus;
+  /** Every subscription in order; the CLI login's bars are `limits` above, the others carry their own. */
+  accounts?: ClaudeAccountSummary[];
 };
 
 const POLL_INTERVAL_MS = 60_000;
@@ -173,7 +175,16 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
   if (usage.loginRequired) status = t('usage.signInNeeded');
   else if (stale && usage.fetchedAt) status += `, ${t('usage.clickToRefresh')}`;
   if (refreshing) status = t('usage.refreshing');
-  const tooltip = usage.limits.map((limit) => `${limit.label}: ${limit.percent}% used${limit.resetsAt ? `, ${windowElapsed(limit, now)}% elapsed, resets in ${formatUntil(limit.resetsAt - now)}` : ''}`).join('\n');
+  // With extra subscriptions, each one's bars sit under its name; the one runs go to now is in bold.
+  const accounts = usage.accounts ?? [];
+  const groups = (accounts.length > 1 ? accounts : [{ id: 'login', label: '', limits: usage.limits } as ClaudeAccountSummary])
+    .map((account) => ({
+      id: account.id,
+      label: account.label,
+      limits: account.id === 'login' ? usage.limits : account.limits,
+      inUse: billing?.mode === 'subscription' && billing.account?.id === account.id,
+    }));
+  const tooltip = groups.flatMap((group) => group.limits.map((limit) => ({ ...limit, label: groups.length > 1 ? `${group.label} ${limit.label}` : limit.label }))).map((limit) => `${limit.label}: ${limit.percent}% used${limit.resetsAt ? `, ${windowElapsed(limit, now)}% elapsed, resets in ${formatUntil(limit.resetsAt - now)}` : ''}`).join('\n');
 
   return (
     <div>
@@ -189,18 +200,25 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
             {billing.limit && <div>{t('usage.subscriptionBackIn', { time: formatUntil(billing.limit.resetsAt - now) })}</div>}
           </div>
         )}
-        {usage.limits.map((limit) => (
-          <div key={limit.kind} className="mt-1 flex items-center gap-2 first:mt-0">
-            <span className={`w-12 flex-none truncate text-[11px] ${limit.active ? 'font-bold text-foreground' : 'text-muted-foreground'}`}>
-              {limit.label}
-            </span>
-            <span className="relative block h-[5px] flex-1 overflow-hidden rounded-full bg-muted">
-              <span className="absolute inset-y-0 left-0 rounded-full bg-muted-foreground/20" style={{ width: `${windowElapsed(limit, now)}%` }} />
-              <span className={`absolute inset-y-0 left-0 rounded-full ${FILL_BY_SEVERITY[limit.severity]}`} style={{ width: `${limit.percent}%` }} />
-            </span>
-            <span className={`w-8 flex-none text-right text-[11px] ${limit.active ? 'font-bold text-foreground' : 'text-muted-foreground'}`}>
-              {limit.percent}%
-            </span>
+        {groups.map((group) => (
+          <div key={group.id} className="mt-1.5 first:mt-0">
+            {groups.length > 1 && (
+              <div className={`truncate text-[10px] ${group.inUse ? 'font-bold text-foreground' : 'text-muted-foreground'}`}>{group.label}</div>
+            )}
+            {group.limits.map((limit) => (
+              <div key={limit.kind} className="mt-1 flex items-center gap-2 first:mt-0">
+                <span className={`w-12 flex-none truncate text-[11px] ${limit.active ? 'font-bold text-foreground' : 'text-muted-foreground'}`}>
+                  {limit.label}
+                </span>
+                <span className="relative block h-[5px] flex-1 overflow-hidden rounded-full bg-muted">
+                  <span className="absolute inset-y-0 left-0 rounded-full bg-muted-foreground/20" style={{ width: `${windowElapsed(limit, now)}%` }} />
+                  <span className={`absolute inset-y-0 left-0 rounded-full ${FILL_BY_SEVERITY[limit.severity]}`} style={{ width: `${limit.percent}%` }} />
+                </span>
+                <span className={`w-8 flex-none text-right text-[11px] ${limit.active ? 'font-bold text-foreground' : 'text-muted-foreground'}`}>
+                  {limit.percent}%
+                </span>
+              </div>
+            ))}
           </div>
         ))}
         <div className="mt-1.5 flex items-baseline justify-between gap-2 text-[10px] text-muted-foreground">

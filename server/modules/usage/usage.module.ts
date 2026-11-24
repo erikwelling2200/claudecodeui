@@ -6,6 +6,7 @@ import path from 'node:path';
 import { appConfigDb, claudeApiSpendDb, claudeApiUsageDb } from '@/modules/database/index.js';
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 
+import { createClaudeAccountsService } from './claude-accounts.service.js';
 import { createClaudeBillingService } from './claude-billing.service.js';
 import { createClaudeCreditService } from './claude-credit.service.js';
 import { createClaudeListPrices } from './claude-list-prices.service.js';
@@ -31,6 +32,19 @@ const claudeCredit = createClaudeCreditService({
   recentUsage: (since) => claudeApiUsageDb.listSince(since),
 });
 
+/** Used by the server entrypoint to keep the extra subscriptions' tokens and usage fresh, and by the usage routes to manage them. */
+export const claudeAccounts = createClaudeAccountsService({
+  config: appConfigDb,
+  fetch: globalThis.fetch,
+  loginEmail: () => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'))?.oauthAccount?.emailAddress ?? null;
+    } catch {
+      return null;
+    }
+  },
+});
+
 /** Used by the Claude runtime to pick each run's credential and to record what API-key turns cost. */
 export const claudeBilling = createClaudeBillingService({
   homeDirectory: os.homedir(),
@@ -39,6 +53,7 @@ export const claudeBilling = createClaudeBillingService({
   spend: claudeApiSpendDb,
   usage: claudeApiUsageDb,
   readUsageLimits: () => usageService.getUsage().limits,
+  accounts: claudeAccounts,
   creditCycleStart: () => claudeCredit.cycleStart(),
 });
 
@@ -65,4 +80,4 @@ function sendContextlessPing(prompt: string): Promise<string> {
 export const workdayPing = createWorkdayPingService({ config: appConfigDb, sendPing: sendContextlessPing });
 
 /** Used by the server entrypoint to mount the authenticated plan-usage endpoints. */
-export const usageRoutes = createUsageRouter(usageService, usageLogin, claudeBilling, claudeCredit, workdayPing);
+export const usageRoutes = createUsageRouter(usageService, usageLogin, claudeBilling, claudeCredit, workdayPing, claudeAccounts);

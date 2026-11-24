@@ -1,28 +1,77 @@
 import express from 'express';
 
+import type { createClaudeAccountsService } from './claude-accounts.service.js';
 import type { createClaudeBillingService } from './claude-billing.service.js';
 import type { createClaudeCreditService } from './claude-credit.service.js';
 import type { createUsageLoginService } from './usage-login.service.js';
 import type { createUsageService } from './usage.service.js';
 import type { createWorkdayPingService } from './workday-ping.service.js';
 
-/** Creates the plan-usage routes the sidebar polls for its limit bars, the sign-in that renews their token, and the settings routes for the fallback API key and the API credit cycle. */
+/**
+ * Creates the plan-usage routes the sidebar polls for its limit bars, the sign-in that renews their token, and the settings routes for the
+ * extra subscriptions, the fallback API key and the API credit cycle.
+ */
 export function createUsageRouter(
   usageService: ReturnType<typeof createUsageService>,
   usageLogin: ReturnType<typeof createUsageLoginService>,
   billing: ReturnType<typeof createClaudeBillingService>,
   credit: ReturnType<typeof createClaudeCreditService>,
   workdayPing: ReturnType<typeof createWorkdayPingService>,
+  accounts: ReturnType<typeof createClaudeAccountsService>,
 ): express.Router {
   const router = express.Router();
 
+  const accountsResponse = () => ({ accounts: accounts.list(), billing: billing.getStatus() });
+
+  router.get('/claude-accounts', (_request, response) => {
+    response.json(accountsResponse());
+  });
+
+  router.post('/claude-accounts/login', (_request, response) => {
+    response.json(accounts.startSignIn());
+  });
+
+  router.post('/claude-accounts/login/complete', async (request, response) => {
+    const code = typeof request.body?.code === 'string' ? request.body.code : '';
+    try {
+      await accounts.completeSignIn(code);
+      response.json(accountsResponse());
+    } catch (error) {
+      response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.put('/claude-accounts/order', (request, response) => {
+    const ids = request.body?.ids;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string')) {
+      response.status(400).json({ error: 'ids (string[]) is required' });
+      return;
+    }
+    try {
+      accounts.setOrder(ids);
+      response.json(accountsResponse());
+    } catch (error) {
+      response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.delete('/claude-accounts/:id', (request, response) => {
+    try {
+      accounts.remove(request.params.id);
+      response.json(accountsResponse());
+    } catch (error) {
+      response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   router.get('/', async (_request, response) => {
-    response.json({ ...usageService.getUsage(), billing: billing.getStatus(), credit: await credit.getStatus() });
+    response.json({ ...usageService.getUsage(), billing: billing.getStatus(), credit: await credit.getStatus(), accounts: accounts.list() });
   });
 
   router.post('/refresh', async (_request, response) => {
     try {
-      response.json({ ...(await usageService.refreshUsage()), billing: billing.getStatus(), credit: await credit.getStatus() });
+      const [usage] = await Promise.all([usageService.refreshUsage(), accounts.refreshAllUsage()]);
+      response.json({ ...usage, billing: billing.getStatus(), credit: await credit.getStatus(), accounts: accounts.list() });
     } catch (error) {
       response.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }
