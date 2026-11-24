@@ -1542,13 +1542,29 @@ export type ClaudeBillingStatus = {
   keySource: 'settings' | 'environment' | null;
   keyHint: string | null;
   mode: 'subscription' | 'api_key' | 'none';
+  /** The subscription the next run goes to, when it goes to one. */
+  account: { id: string; label: string } | null;
   loginExpired: boolean;
   limit: { kind: string; resetsAt: number } | null;
+  /** Every subscription in the order runs try them, with the limit each is at. */
+  accounts: { id: string; label: string; limit: { kind: string; resetsAt: number } | null }[];
   /** The user allowed the move to the key at a plan limit, until that limit resets. */
   armed: boolean;
-  /** A blocking limit is hit or at least 90% used, with a key and a subscription to switch between. */
+  /** Every subscription is at a blocking limit or at least 90% used, with a key to switch to. */
   canSwitch: boolean;
   spend: { today: number; cycle: number };
+};
+
+/** One subscription in the order runs try them; `login` is the CLI's own `claude /login`, the others were signed in from Settings. */
+export type ClaudeAccountSummary = {
+  id: string;
+  label: string;
+  kind: 'login' | 'oauth';
+  /** The account's token could not be renewed; it is skipped until it is signed in again. */
+  signInRequired: boolean;
+  /** The account's own limit bars; empty for the CLI login, whose bars the sidebar shows from `/api/usage`. */
+  limits: { kind: string; label: string; percent: number; severity: 'normal' | 'warning' | 'critical'; resetsAt: number; active: boolean }[];
+  usageFetchedAt: number;
 };
 
 /** The scheduled workday "hi" to Haiku. `time` is "HH:MM" in the server's local time; `lastDate` is the local date it last went; `lastResult.at` is epoch milliseconds and `detail` the reply or the error. */

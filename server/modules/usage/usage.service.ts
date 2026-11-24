@@ -3,7 +3,7 @@ import path from 'node:path';
 
 type UsageSeverity = 'normal' | 'warning' | 'critical';
 
-type UsageLimit = {
+export type UsageLimit = {
   kind: string;
   label: string;
   percent: number;
@@ -60,7 +60,7 @@ function severityFor(given: unknown, percent: number): UsageSeverity {
 }
 
 /* The body the session-usage skill stores from /api/oauth/usage, keyed by window name. */
-function parseUsageCache(entry: any): UsageSnapshot {
+export function parseUsageCache(entry: any): UsageSnapshot {
   const body = entry?.body;
   if (!body) return EMPTY;
   const limits: UsageLimit[] = [];

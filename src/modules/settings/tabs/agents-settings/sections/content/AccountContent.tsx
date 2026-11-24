@@ -1,6 +1,7 @@
 import { AlertTriangle, LogIn } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import ClaudeAccounts from '@/modules/settings/tabs/agents-settings/sections/content/ClaudeAccounts';
 import ClaudeApiCredit from '@/modules/settings/tabs/agents-settings/sections/content/ClaudeApiCredit';
 import ClaudeFallbackKey from '@/modules/settings/tabs/agents-settings/sections/content/ClaudeFallbackKey';
 import ClaudeWorkdayPing from '@/modules/settings/tabs/agents-settings/sections/content/ClaudeWorkdayPing';
@@ -189,6 +190,7 @@ export default function AccountContent({ agent, authStatus, onLogin }: AccountCo
             </div>
           )}
 
+          {agent === 'claude' && <ClaudeAccounts textClass={config.textClass} subtextClass={config.subtextClass} />}
           {agent === 'claude' && <ClaudeFallbackKey textClass={config.textClass} subtextClass={config.subtextClass} />}
           {agent === 'claude' && <ClaudeApiCredit textClass={config.textClass} subtextClass={config.subtextClass} />}
           {agent === 'claude' && <ClaudeWorkdayPing textClass={config.textClass} subtextClass={config.subtextClass} />}

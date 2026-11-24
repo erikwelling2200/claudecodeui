@@ -44,7 +44,7 @@ import {
 } from './modules/plugins/index.js';
 import providerRoutes from './modules/providers/provider.routes.js';
 import { voiceRoutes } from './modules/voice/index.js';
-import { usageRoutes, workdayPing } from './modules/usage/index.js';
+import { claudeAccounts, usageRoutes, workdayPing } from './modules/usage/index.js';
 import {
     closeLimitContinue,
     closeScheduledMessageDispatcher,
@@ -404,6 +404,7 @@ async function shutdownServer(): Promise<void> {
     await closeSessionsWatcher();
     closeScheduledMessageDispatcher();
     closeLimitContinue();
+    claudeAccounts.stop();
     workdayPing.stop();
     // Session CLI processes (and their MCP servers) live as long as their
     // chat is open, so they would outlive the server without this.
@@ -482,6 +483,7 @@ async function startServer() {
         // then keeps polling.
         initializeScheduledMessageDispatcher(providerRuntimeService);
         initializeLimitContinue(providerRuntimeService);
+        claudeAccounts.start();
         workdayPing.start();
 
         // Start server-side plugin processes for enabled plugins

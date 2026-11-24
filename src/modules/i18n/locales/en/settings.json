@@ -437,9 +437,24 @@
         "unconfirmed": "No answer came back from the server ({{error}}). The update may have run anyway; the version above is the last one the server reported."
       }
     },
+    "accounts": {
+      "title": "Subscriptions",
+      "inUse": "In use",
+      "signInRequired": "Sign in again",
+      "limitBackIn": "Limit, back in {{time}}",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "remove": "Remove",
+      "addAccount": "Add subscription",
+      "signInHint": "Sign in as the other account on claude.ai first, or use a private window.",
+      "openSignIn": "Open Claude sign-in",
+      "pasteCode": "Paste code",
+      "add": "Add",
+      "cancel": "Cancel"
+    },
     "fallbackKey": {
       "title": "Fallback API key",
-      "description": "Used only while the subscription is at a usage limit. Billed per token.",
+      "description": "Used only once every subscription is at a usage limit and the sidebar switch is on. Billed per token.",
       "saved": "Saved key ending in {{hint}}",
       "fromEnvironment": "Using the key in the server environment, ending in {{hint}}. A key saved here replaces it.",
       "none": "No key saved. Chats stop at the limit.",
