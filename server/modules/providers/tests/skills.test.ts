@@ -706,3 +706,31 @@ test('providerSkillsService rejects managed skill creation for opencode', { conc
     /does not support managed global skills/i,
   );
 });
+
+/**
+ * Only the provider's own user skill folder is writable, so only skills there
+ * are flagged `managed` and resolve as editable paths.
+ */
+test('providerSkillsService flags and resolves skills in the managed user folder only', { concurrency: false }, async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-skills-managed-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    const userSkillPath = await writeSkill(path.join(tempRoot, '.claude', 'skills'), 'mine', 'mine', 'User skill');
+    const projectSkillPath = await writeSkill(path.join(workspacePath, '.claude', 'skills'), 'theirs', 'theirs', 'Project skill');
+
+    const skills = await providerSkillsService.listProviderSkills('claude', { workspacePath });
+    assert.equal(skills.find((skill) => skill.sourcePath === userSkillPath)?.managed, true);
+    assert.equal(skills.find((skill) => skill.sourcePath === projectSkillPath)?.managed, false);
+
+    assert.equal(
+      await providerSkillsService.resolveManagedSkillPath(userSkillPath),
+      await fs.realpath(userSkillPath),
+    );
+    assert.equal(await providerSkillsService.resolveManagedSkillPath(projectSkillPath), null);
+  } finally {
+    restoreHomeDir();
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});

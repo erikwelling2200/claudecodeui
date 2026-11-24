@@ -9,6 +9,7 @@ import SidebarFooter from '@/modules/sidebar/SidebarFooter';
 import SidebarHeader from '@/modules/sidebar/SidebarHeader';
 import SidebarProjectList from '@/modules/sidebar/SidebarProjectList';
 import SidebarRecentConversations from '@/modules/sidebar/SidebarRecentConversations';
+import { SidebarSkillsList } from '@/modules/skills';
 
 type ArchivedSessionGroup = {
   key: string;
@@ -352,6 +353,8 @@ export default function SidebarContent({
               )}
             </div>
           ) : null
+        ) : searchMode === 'skills' ? (
+          <SidebarSkillsList selectedProject={projectListProps.selectedProject} searchQuery={searchFilter} />
         ) : searchMode === 'conversations' ? (
           <SidebarRecentConversations
             conversations={recentConversations}

@@ -95,6 +95,7 @@ export abstract class SkillsProvider implements IProviderSkills {
   async listSkills(options?: ProviderSkillListOptions): Promise<ProviderSkill[]> {
     const workspacePath = resolveWorkspacePath(options?.workspacePath);
     const sources = await this.getSkillSources(workspacePath);
+    const managedRoot = await this.getManagedSkillRoot();
     const skills: ProviderSkill[] = [];
 
     for (const source of sources) {
@@ -117,6 +118,7 @@ export abstract class SkillsProvider implements IProviderSkills {
             sourcePath: skillPath,
             pluginName: source.pluginName,
             pluginId: source.pluginId,
+            managed: managedRoot !== null && path.resolve(source.rootDir) === path.resolve(managedRoot),
           });
         } catch {
           // A malformed or unreadable skill markdown file should not hide other valid skills.
@@ -219,6 +221,7 @@ export abstract class SkillsProvider implements IProviderSkills {
           sourcePath: skillPath,
           pluginName: globalSkillSource.pluginName,
           pluginId: globalSkillSource.pluginId,
+          managed: true,
         },
       });
     }
@@ -277,6 +280,10 @@ export abstract class SkillsProvider implements IProviderSkills {
     }
 
     return { removed, provider: this.provider, directoryName };
+  }
+
+  async getManagedSkillRoot(): Promise<string | null> {
+    return (await this.getGlobalSkillSource())?.rootDir ?? null;
   }
 
   protected abstract getSkillSources(workspacePath: string): Promise<ProviderSkillSource[]>;

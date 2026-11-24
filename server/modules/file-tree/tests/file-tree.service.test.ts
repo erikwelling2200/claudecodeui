@@ -386,7 +386,18 @@ function createRealFileSystemService(
   revealInFileManager: FileTreeServiceDependencies['revealInFileManager'] = () => undefined,
 ): FileTreeServices {
   return createFileTreeService({
+    ...createRealFileSystemDependencies(projectRoot, workspaceRoot, additionalFolders, revealInFileManager),
     ...(sessionFolders ? { sessionFolders } : {}),
+  });
+}
+
+function createRealFileSystemDependencies(
+  projectRoot: string,
+  workspaceRoot = projectRoot,
+  additionalFolders: string[] = [],
+  revealInFileManager: FileTreeServiceDependencies['revealInFileManager'] = () => undefined,
+): FileTreeServiceDependencies {
+  return {
     fileSystem: {
       access: (candidatePath) => fsPromises.access(candidatePath),
       stat: (candidatePath) => fsPromises.stat(candidatePath),
@@ -420,8 +431,39 @@ function createRealFileSystemService(
     contentSearch: unusedContentSearch,
     logger: { error: () => undefined },
     revealInFileManager,
-  });
+  };
 }
+
+test('a skill file outside the project is saved when the skill-file policy allows it', async () => {
+  const projectRoot = await fsPromises.mkdtemp(path.join(testDirectory, 'file-tree-project-'));
+  const skillsRoot = await fsPromises.mkdtemp(path.join(testDirectory, 'file-tree-skills-'));
+
+  try {
+    const skillPath = path.join(skillsRoot, 'mine', 'SKILL.md');
+    const otherPath = path.join(skillsRoot, 'other.md');
+    await fsPromises.mkdir(path.dirname(skillPath));
+    await fsPromises.writeFile(skillPath, 'old', 'utf8');
+    await fsPromises.writeFile(otherPath, 'untouched', 'utf8');
+
+    const service = createFileTreeService({
+      ...createRealFileSystemDependencies(projectRoot),
+      skillFiles: { resolveEditablePath: async (targetPath) => (targetPath === skillPath ? skillPath : null) },
+    });
+
+    await service.saveTextFile('project-1', skillPath, 'new');
+    assert.equal(await fsPromises.readFile(skillPath, 'utf8'), 'new');
+    assert.equal((await service.readTextFile('project-1', skillPath)).content, 'new');
+
+    await assert.rejects(
+      service.saveTextFile('project-1', otherPath, 'overwritten'),
+      (error: unknown) => (error as AppError).code === 'PATH_OUTSIDE_PROJECT',
+    );
+    assert.equal(await fsPromises.readFile(otherPath, 'utf8'), 'untouched');
+  } finally {
+    await fsPromises.rm(projectRoot, { recursive: true, force: true });
+    await fsPromises.rm(skillsRoot, { recursive: true, force: true });
+  }
+});
 
 test('the temp directory can be browsed and read, but never written to', async () => {
   const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'file-tree-tmp-'));

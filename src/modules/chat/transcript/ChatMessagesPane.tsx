@@ -12,6 +12,7 @@ import type { BackgroundTaskSummary,
 import { getIntrinsicMessageKey } from '@/modules/chat/utils/messageKeys';
 import { groupConsecutiveTools, isToolGroupItem } from '@/modules/chat/utils/toolGrouping';
 import { useLazyRowObserver } from '@/modules/chat/hooks/useLazyRowObserver';
+import { useSkillReferenceClick } from '@/modules/chat/hooks/useSkillReferenceClick';
 import LazyMessageRow from '@/modules/chat/transcript/LazyMessageRow';
 import MessageComponent from '@/modules/chat/transcript/MessageComponent';
 import ProviderSelectionEmptyState from '@/modules/chat/transcript/ProviderSelectionEmptyState';
@@ -202,11 +203,14 @@ function ChatMessagesPane({
     [messageKeyMap],
   );
 
+  const handleSkillReferenceClick = useSkillReferenceClick(provider, selectedProject);
+
   return (
     <div
       ref={scrollContainerRef}
       onWheel={onWheel}
       onTouchMove={onTouchMove}
+      onClickCapture={handleSkillReferenceClick}
       className={`chat-messages-pane relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden pt-3 [overflow-anchor:none] sm:pt-4 ${
         hasActivityIndicator ? 'pb-12 sm:pb-14' : 'pb-3 sm:pb-4'
       }`}
