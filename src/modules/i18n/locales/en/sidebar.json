@@ -178,7 +178,9 @@
     "matches_one": "{{count}} match",
     "matches_other": "{{count}} matches",
     "projectsScanned_one": "{{count}} project scanned",
-    "projectsScanned_other": "{{count}} projects scanned"
+    "projectsScanned_other": "{{count}} projects scanned",
+    "modeSkills": "Skills",
+    "skillsPlaceholder": "Search skills..."
   },
   "recent": {
     "title": "Recent conversations",
@@ -212,5 +214,24 @@
     "archiveSessions_other": "Archive {{count}} sessions",
     "archiveSessionsNotice_one": "Archive keeps the session out of the active list while preserving its history.",
     "archiveSessionsNotice_other": "Archive keeps the sessions out of the active list while preserving their history."
+  },
+  "skills": {
+    "new": "New skill",
+    "refresh": "Reload skills",
+    "namePlaceholder": "skill-name",
+    "invalidName": "Use letters, digits, - and _ only, starting with a letter or digit.",
+    "nameTaken": "A skill named {{name}} already exists.",
+    "confirmRemove": "Delete {{name}} and everything in its folder?",
+    "remove": "Delete {{name}}",
+    "empty": "No skills found.",
+    "noMatch": "No skills match this search.",
+    "scopes": {
+      "user": "User",
+      "project": "Project",
+      "repo": "Repo",
+      "plugin": "Plugin",
+      "admin": "Admin",
+      "system": "System"
+    }
   }
 }

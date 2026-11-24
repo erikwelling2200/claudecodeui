@@ -130,6 +130,7 @@ const normalizeSkill = (
     sourcePath: String(skill.sourcePath ?? ''),
     pluginName: typeof skill.pluginName === 'string' ? skill.pluginName : undefined,
     pluginId: typeof skill.pluginId === 'string' ? skill.pluginId : undefined,
+    managed: skill.managed === true,
     projectDisplayName: shouldAttachProject
       ? project?.displayName ?? skill.projectDisplayName
       : skill.projectDisplayName,
@@ -332,6 +333,18 @@ export function useProviderSkills({ selectedProvider, currentProjects }: UseProv
     }
   }, [refreshSkills, selectedProvider]);
 
+  // Deletes the skill's whole folder; only a `managed` skill has one the server will remove.
+  const removeSkill = useCallback(async (skill: ProviderSkill) => {
+    const directoryName = skill.sourcePath.replace(/\\/g, '/').split('/').slice(-2, -1)[0] ?? '';
+    const response = await api.providers.removeSkill(selectedProvider, directoryName);
+    const data = await toResponseJson<ApiResponse<unknown>>(response);
+    if (!response.ok || !data.success) {
+      throw new Error(getApiErrorMessage(data, 'Failed to remove skill'));
+    }
+    clearProviderSkillCache(selectedProvider);
+    await refreshSkills({ force: true });
+  }, [refreshSkills, selectedProvider]);
+
   useEffect(() => {
     void refreshSkills();
 
@@ -360,6 +373,7 @@ export function useProviderSkills({ selectedProvider, currentProjects }: UseProv
     loadError,
     saveStatus,
     addSkills,
+    removeSkill,
     refreshSkills,
   };
 }

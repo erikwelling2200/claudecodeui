@@ -1,4 +1,5 @@
 import { providerRegistry } from '@/modules/providers/provider.registry.js';
+import { resolvePathUnderRoots } from '@/shared/utils.js';
 import type {
   ProviderSkill,
   ProviderSkillCreateInput,
@@ -35,5 +36,18 @@ export const providerSkillsService = {
   ): Promise<{ removed: boolean; provider: string; directoryName: string }> {
     const provider = providerRegistry.resolveProvider(providerName);
     return provider.skills.removeSkill(input);
+  },
+
+  /**
+   * Resolves `targetPath` when it lies inside any provider's writable user
+   * skill folder, or `null` otherwise. Symlinks are resolved first, so a link
+   * there cannot reach elsewhere. Used by the file tree to let the editor save
+   * skill files that live outside every project.
+   */
+  async resolveManagedSkillPath(targetPath: string): Promise<string | null> {
+    const roots = await Promise.all(
+      providerRegistry.listProviders().map((provider) => provider.skills.getManagedSkillRoot()),
+    );
+    return resolvePathUnderRoots(targetPath, roots.filter((root): root is string => root !== null));
   },
 };

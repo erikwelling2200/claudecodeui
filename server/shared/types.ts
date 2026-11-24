@@ -860,7 +860,9 @@ export type ProviderSkillRemoveInput = {
  * for this skill. Claude plugin skills use a namespaced command such as
  * `/plugin-name:skill-name`, while Codex skills use the `$skill-name` form.
  * `sourcePath` points to the skill markdown file that produced the record so
- * callers can distinguish duplicate skill names across scopes.
+ * callers can distinguish duplicate skill names across scopes. `managed` is set
+ * when the skill lives in the provider's writable user skill folder, the only
+ * place `removeSkill` and the editor's save can reach.
  */
 export type ProviderSkill = {
   provider: LLMProvider;
@@ -871,6 +873,7 @@ export type ProviderSkill = {
   sourcePath: string;
   pluginName?: string;
   pluginId?: string;
+  managed?: boolean;
 };
 
 /**
@@ -1815,6 +1818,15 @@ export type FileTreeServiceDependencies = {
   /** Maps project folders onto the worktrees a chat works in; absent in deployments without worktree tracking. */
   sessionFolders?: {
     mapFolders(folders: string[], sessionId: string): SessionFolder[];
+  };
+  /**
+   * Resolves an absolute path inside a provider's user skill folder, or `null`
+   * when it is not in one. Those files are readable and writable from every
+   * project, so skills can be edited in the editor; absent in tests that do
+   * not need it.
+   */
+  skillFiles?: {
+    resolveEditablePath(targetPath: string): Promise<string | null>;
   };
 };
 

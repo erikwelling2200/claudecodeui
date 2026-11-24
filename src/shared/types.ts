@@ -1856,8 +1856,8 @@ export type ThemeMode = 'light' | 'dark' | 'system';
 /** The ordering applied to the project list, either alphabetically by name or by most recent activity, persisted alongside the user's appearance settings. */
 export type ProjectSortOrder = 'name' | 'date';
 
-/** Which list the sidebar is currently showing: projects, conversation search results, running sessions or archived items. */
-export type SidebarSearchMode = 'projects' | 'conversations' | 'running' | 'archived';
+/** Which list the sidebar is currently showing: projects, conversation search results, running sessions, archived items or skills. */
+export type SidebarSearchMode = 'projects' | 'conversations' | 'running' | 'archived' | 'skills';
 
 /** A Project narrowed to the archived state so archived entries can be listed and restored without being mistaken for active projects. */
 export type ArchivedProjectListItem = Project & { isArchived: true };
@@ -2019,7 +2019,7 @@ export type SkillsProject = {
   path?: string;
 };
 
-/** One skill available to a provider, carrying its slash command, description, originating scope and source path plus the owning plugin or project when it came from one. */
+/** One skill available to a provider, carrying its slash command, description, originating scope and source path plus the owning plugin or project when it came from one. `managed` marks a skill in the provider's own user skill folder, the only kind that can be deleted. */
 export type ProviderSkill = {
   provider: SkillsProvider;
   name: string;
@@ -2031,6 +2031,7 @@ export type ProviderSkill = {
   pluginId?: string;
   projectDisplayName?: string;
   projectPath?: string;
+  managed?: boolean;
 };
 
 /** One skill to upload, holding its SKILL.md content, the directory and file names to write it under, and any accompanying base64-encoded support files. */

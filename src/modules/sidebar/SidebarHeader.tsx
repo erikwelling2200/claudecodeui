@@ -89,7 +89,9 @@ export default function SidebarHeader({
       ? t('search.archivedPlaceholder', 'Search archived sessions...')
       : searchMode === 'running'
         ? t('search.runningPlaceholder', 'Search running sessions...')
-        : t('projects.searchPlaceholder');
+        : searchMode === 'skills'
+          ? t('search.skillsPlaceholder')
+          : t('projects.searchPlaceholder');
 
   return (
     <div className="flex-shrink-0">

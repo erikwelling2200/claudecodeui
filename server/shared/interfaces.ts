@@ -271,6 +271,12 @@ export interface IProviderSkills {
   removeSkill(
     input: ProviderSkillRemoveInput,
   ): Promise<{ removed: boolean; provider: LLMProvider; directoryName: string }>;
+
+  /**
+   * The provider's writable user skill folder, or `null` when it has none.
+   * Files below it may be edited in place.
+   */
+  getManagedSkillRoot(): Promise<string | null>;
 }
 
 // ---------------------------

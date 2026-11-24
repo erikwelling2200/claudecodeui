@@ -526,6 +526,11 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
    */
   async function resolveReadablePath(folders: ProjectFolders, targetPath: string): Promise<string> {
     if (path.isAbsolute(targetPath)) {
+      const skillPath = await dependencies.skillFiles?.resolveEditablePath(targetPath);
+      if (skillPath) {
+        return skillPath;
+      }
+
       const readOnlyPath = await dependencies.workspace.resolveReadOnlyRootPath(targetPath);
       if (readOnlyPath) {
         return readOnlyPath;
@@ -710,7 +715,8 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     async saveTextFile(projectId, filePath, content, sessionId) {
       const folders = await resolveProjectFolders(projectId, sessionId);
       // A relative path saves over the file it was read from; a new one lands in the primary folder.
-      const resolvedPath = await resolveExistingPathInsideProjectFolders(folders, filePath);
+      const skillPath = path.isAbsolute(filePath) ? await dependencies.skillFiles?.resolveEditablePath(filePath) : null;
+      const resolvedPath = skillPath ?? await resolveExistingPathInsideProjectFolders(folders, filePath);
       try {
         await fileSystem.writeTextFile(resolvedPath, content);
       } catch (error) {

@@ -582,6 +582,8 @@ export const api = {
       get(`/api/providers/${encodeURIComponent(provider)}/skills${query({ workspacePath })}`),
     saveSkills: (provider: string, payload: unknown) =>
       post(`/api/providers/${provider}/skills`, payload),
+    removeSkill: (provider: string, directoryName: string) =>
+      del(`/api/providers/${encodeURIComponent(provider)}/skills/${encodeURIComponent(directoryName)}`),
   },
 
   // Slash commands
