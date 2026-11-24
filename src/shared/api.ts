@@ -747,6 +747,7 @@ export const api = {
     claudeApiKey: () => get('/api/usage/claude-api-key'),
     saveClaudeApiKey: (key: string) => put('/api/usage/claude-api-key', { key }),
     removeClaudeApiKey: () => del('/api/usage/claude-api-key'),
+    setClaudeApiFallback: (armed: boolean) => put('/api/usage/claude-api-fallback', { armed }),
     workdayPing: () => get('/api/usage/workday-ping'),
     saveWorkdayPing: (config: { enabled: boolean; time: string }) => put('/api/usage/workday-ping', config),
     claudeCredit: () => get('/api/usage/claude-credit'),

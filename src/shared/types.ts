@@ -1544,6 +1544,10 @@ export type ClaudeBillingStatus = {
   mode: 'subscription' | 'api_key' | 'none';
   loginExpired: boolean;
   limit: { kind: string; resetsAt: number } | null;
+  /** The user allowed the move to the key at a plan limit, until that limit resets. */
+  armed: boolean;
+  /** A blocking limit is hit or at least 90% used, with a key and a subscription to switch between. */
+  canSwitch: boolean;
   spend: { today: number; cycle: number };
 };
 

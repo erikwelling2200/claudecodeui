@@ -3,4 +3,4 @@
 // workdayPing: used by the server entrypoint to start and stop the scheduled workday "hi" to Haiku.
 export { claudeBilling, usageRoutes, workdayPing } from './usage.module.js';
 export { applyClaudeBillingEnv } from './claude-billing.service.js';
-export type { ClaudeBilling } from './claude-billing.service.js';
+export type { ClaudeBilling, ClaudeBillingSwitchEvent } from './claude-billing.service.js';

@@ -93,6 +93,7 @@ type LiveTurnDelivery = {
   sdkOptions: AnyRecord;
   mcpServers: AnyRecord | null;
   providerSessionId: string | null;
+  billing: ClaudeBilling;
 };
 
 /**
@@ -1533,6 +1534,8 @@ async function queryClaudeSDK(
   // Hoisted above the try so the catch's cleanup can tell whether this run
   // still owns the activeSessions entry (or was superseded by a newer run).
   let queryInstance: ClaudeQuery | null = null;
+  // Fires at the reset of the plan limit a run on the key waits out.
+  let subscriptionBackTimer: ReturnType<typeof setTimeout> | null = null;
 
   try {
     const resolvedModel = await context.resolveResumeModel(sessionId, options.model);
@@ -1587,6 +1590,7 @@ async function queryClaudeSDK(
         sdkOptions,
         mcpServers,
         providerSessionId,
+        billing,
       });
       if (delivery) {
         await delivery.settled;
@@ -1997,6 +2001,39 @@ async function queryClaudeSDK(
     let billedToKey = billing.mode === 'api_key';
     // The CLI's running cost total for this process, so each `result` records only what its turn added.
     let lastCostTotal = providerSessionId && launchCwd ? claudeBilling.restoredCostTotal(launchCwd, providerSessionId) : 0;
+    // The plan's last word on its limits in this process; the limit message itself carries no reset time.
+    let lastRateLimitInfo: AnyRecord | null = null;
+    // Main-thread tool calls without a result yet. A process on the key waits for none to be running before it
+    // stops for the plan, so a build or a test run is never cut off.
+    const runningToolUses = new Set<string>();
+    // Set once the limit this process waits out has reset; from then on every main-thread message checks again.
+    let subscriptionBackDue = false;
+    let subscriptionBackSent = false;
+    // Reports the plan back once its limit has reset and this process's turn is between tool calls. Between turns
+    // nothing is spent, and the next turn starts a subscription process by itself.
+    const checkSubscriptionBack = () => {
+      if (!subscriptionBackDue || subscriptionBackSent || !billedToKey || betweenTurns || turnCompleteSent || runningToolUses.size > 0) return;
+      const key = sessionKey();
+      if (!key || !claudeBilling.subscriptionAvailable() || backgroundWork.hasOutstanding(key)) return;
+      subscriptionBackSent = true;
+      claudeBilling.noteSubscriptionBack(key);
+    };
+    const scheduleSubscriptionBack = (resetsAt: number) => {
+      // A few seconds past the reset, so the plan's own clock has turned over too.
+      subscriptionBackTimer = setTimeout(() => {
+        const limit = claudeBilling.resolve();
+        if (limit.mode === 'api_key' && limit.limit && limit.limit.resetsAt > Date.now()) {
+          scheduleSubscriptionBack(limit.limit.resetsAt);
+          return;
+        }
+        subscriptionBackDue = true;
+        checkSubscriptionBack();
+      }, Math.max(0, resetsAt - Date.now()) + 5_000);
+      subscriptionBackTimer.unref?.();
+    };
+    if (billing.mode === 'api_key' && billing.limit) {
+      scheduleSubscriptionBack(billing.limit.resetsAt);
+    }
 
     // True while the process is between turns, or winding down an interrupted
     // one that a delivered turn may wait out.
@@ -2029,8 +2066,10 @@ async function queryClaudeSDK(
           && JSON.stringify(next.settings ?? null) === launchSettings
           && JSON.stringify(turn.mcpServers ?? null) === launchMcpServers
           && (!turn.providerSessionId || turn.providerSessionId === capturedSessionId)
-          // A billing switch needs a new process, unless that would end background work still running in this one.
-          && (readCredentialEnv(next.env) === launchCredential || backgroundWork.hasOutstanding(sessionKey()!));
+          // A billing switch needs a new process, unless that would end background work still running in this one. A
+          // subscription process at a plan limit cannot reach the model at all, so a switch to the key replaces it anyway.
+          && (readCredentialEnv(next.env) === launchCredential
+            || (backgroundWork.hasOutstanding(sessionKey()!) && !(turn.billing.mode === 'api_key' && turn.billing.limit && !billedToKey)));
         if (!sameLaunch) {
           return null;
         }
@@ -2431,7 +2470,23 @@ async function queryClaudeSDK(
         steerHiddenPrompt(followUpInstruction);
       }
       if (message.type === 'rate_limit_event' && !billedToKey) {
+        lastRateLimitInfo = message.rate_limit_info ?? lastRateLimitInfo;
         claudeBilling.noteRateLimit(message.rate_limit_info);
+      }
+      // The plan's limit reaches the stream as a synthetic assistant message ("You've hit your 5-hour limit").
+      if (message.type === 'assistant' && message.error === 'rate_limit' && !message.parent_tool_use_id && !billedToKey) {
+        claudeBilling.noteLimitHit(lastRateLimitInfo, sessionKey());
+      }
+      if (!message.parent_tool_use_id && Array.isArray(message.message?.content)) {
+        for (const block of message.message.content) {
+          if (message.type === 'assistant' && block?.type === 'tool_use') runningToolUses.add(block.id);
+          if (message.type === 'user' && block?.type === 'tool_result') runningToolUses.delete(block.tool_use_id);
+        }
+      }
+      if (message.type === 'result') {
+        runningToolUses.clear();
+      } else if (!message.parent_tool_use_id && (message.type === 'assistant' || message.type === 'user')) {
+        checkSubscriptionBack();
       }
       if (message.type === 'assistant' && billedToKey) {
         claudeBilling.recordUsage(message.message, sessionId || capturedSessionId || null);
@@ -2558,6 +2613,9 @@ async function queryClaudeSDK(
   } finally {
     if (steerPickupTimer) {
       clearTimeout(steerPickupTimer);
+    }
+    if (subscriptionBackTimer) {
+      clearTimeout(subscriptionBackTimer);
     }
     // Always close stdin — otherwise an aborted or failed run leaves the CLI
     // process (and its MCP servers) alive until the server exits.

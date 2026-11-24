@@ -70,29 +70,73 @@ test('the subscription is used while it has room, even with a key stored', () =>
   assert.deepEqual(billing.resolve(), { mode: 'subscription' });
 });
 
-test('a rejected session limit moves runs to the stored key until it resets', () => {
+test('an armed switch moves runs to the stored key at a rejected limit, until it resets', () => {
   const { billing, advance } = createBilling({ storedKey: 'sk-stored' });
+  billing.setArmed(true);
   billing.noteRateLimit({ status: 'rejected', rateLimitType: 'five_hour', resetsAt: (NOW + HOUR) / 1000 });
   assert.deepEqual(billing.resolve(), { mode: 'api_key', variable: 'ANTHROPIC_API_KEY', key: 'sk-stored', limit: { kind: 'five_hour', resetsAt: NOW + HOUR } });
   advance(HOUR);
   assert.deepEqual(billing.resolve(), { mode: 'subscription' });
 });
 
-test('a full session bar moves runs to the key before any run has been rejected', () => {
+test('a full session bar moves runs to the key before any run has been rejected, once armed', () => {
   const { billing } = createBilling({ storedKey: 'sk-stored', limits: [{ kind: 'session', percent: 100, resetsAt: NOW + HOUR }] });
+  billing.setArmed(true);
   assert.equal(billing.resolve().mode, 'api_key');
 });
 
 test('a full model-scoped weekly bar does not, since other models still run on the plan', () => {
   const { billing } = createBilling({ storedKey: 'sk-stored', limits: [{ kind: 'weekly_opus', percent: 100, resetsAt: NOW + HOUR }] });
+  billing.setArmed(true);
   assert.equal(billing.resolve().mode, 'subscription');
 });
 
 test('warnings and overage events do not count as a limit hit', () => {
   const { billing } = createBilling({ storedKey: 'sk-stored' });
+  billing.setArmed(true);
   billing.noteRateLimit({ status: 'allowed_warning', rateLimitType: 'five_hour', resetsAt: (NOW + HOUR) / 1000 });
   billing.noteRateLimit({ status: 'rejected', rateLimitType: 'overage', resetsAt: (NOW + HOUR) / 1000 });
   assert.equal(billing.resolve().mode, 'subscription');
+});
+
+test('a limit hit stays on the subscription until the switch is armed', () => {
+  const { billing } = createBilling({ storedKey: 'sk-stored', limits: [{ kind: 'session', percent: 100, resetsAt: NOW + HOUR }] });
+  assert.equal(billing.resolve().mode, 'subscription');
+  assert.deepEqual([billing.getStatus().canSwitch, billing.getStatus().armed], [true, false]);
+  billing.setArmed(true);
+  assert.deepEqual([billing.resolve().mode, billing.getStatus().armed], ['api_key', true]);
+  billing.setArmed(false);
+  assert.equal(billing.resolve().mode, 'subscription');
+});
+
+test('the switch is offered from 90% of a blocking bar, and arming it lasts until that bar resets', () => {
+  const near = createBilling({ storedKey: 'sk-stored', limits: [{ kind: 'session', percent: 90, resetsAt: NOW + 2 * HOUR }] });
+  assert.equal(near.billing.getStatus().canSwitch, true);
+  near.billing.setArmed(true);
+  near.advance(2 * HOUR);
+  assert.equal(near.billing.getStatus().armed, false);
+  assert.equal(createBilling({ storedKey: 'sk-stored', limits: [{ kind: 'session', percent: 89, resetsAt: NOW + HOUR }] }).billing.getStatus().canSwitch, false);
+  assert.equal(createBilling({ limits: [{ kind: 'session', percent: 95, resetsAt: NOW + HOUR }] }).billing.getStatus().canSwitch, false);
+});
+
+test("the plan's limit message records the limit from the run's last rate-limit event and reports the chat", () => {
+  const { billing } = createBilling({ storedKey: 'sk-stored' });
+  const events: unknown[] = [];
+  billing.onSwitch((event) => { events.push(event); });
+  billing.setArmed(true);
+  billing.noteLimitHit({ status: 'allowed_warning', rateLimitType: 'five_hour', resetsAt: (NOW + 3 * HOUR) / 1000 }, 'chat-1');
+  assert.deepEqual(billing.getStatus().limit, { kind: 'five_hour', resetsAt: NOW + 3 * HOUR });
+  assert.equal(billing.resolve().mode, 'api_key');
+  assert.equal(billing.subscriptionAvailable(), false);
+  assert.deepEqual(events, [{ type: 'limit-hit', sessionId: 'chat-1' }]);
+});
+
+test('a limit message without an event falls back to the fullest bar, and the plan is available again after it', () => {
+  const { billing, advance } = createBilling({ storedKey: 'sk-stored', limits: [{ kind: 'session', percent: 97, resetsAt: NOW + 2 * HOUR }] });
+  billing.noteLimitHit(null, null);
+  assert.deepEqual(billing.getStatus().limit, { kind: 'five_hour', resetsAt: NOW + 2 * HOUR });
+  advance(2 * HOUR);
+  assert.equal(billing.subscriptionAvailable(), true);
 });
 
 test('without a key a limit hit stays on the subscription', () => {
@@ -105,8 +149,9 @@ test('without a key a limit hit stays on the subscription', () => {
 test('a key in the server env is the fallback when none is stored, and the stored one wins over it', () => {
   const hostEnv = { ANTHROPIC_AUTH_TOKEN: 'env-token' };
   const limits = [{ kind: 'session', percent: 100, resetsAt: NOW + HOUR }];
-  assert.deepEqual(createBilling({ hostEnv, limits }).billing.resolve(), { mode: 'api_key', variable: 'ANTHROPIC_AUTH_TOKEN', key: 'env-token', limit: { kind: 'session', resetsAt: NOW + HOUR } });
-  assert.equal((createBilling({ hostEnv, limits, storedKey: 'sk-stored' }).billing.resolve() as { key: string }).key, 'sk-stored');
+  const armed = (options: Options) => { const { billing } = createBilling(options); billing.setArmed(true); return billing; };
+  assert.deepEqual(armed({ hostEnv, limits }).resolve(), { mode: 'api_key', variable: 'ANTHROPIC_AUTH_TOKEN', key: 'env-token', limit: { kind: 'session', resetsAt: NOW + HOUR } });
+  assert.equal((armed({ hostEnv, limits, storedKey: 'sk-stored' }).resolve() as { key: string }).key, 'sk-stored');
 });
 
 test('with no subscription login a key is used outright, and with neither the env is left alone', () => {

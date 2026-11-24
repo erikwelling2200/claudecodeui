@@ -62,6 +62,15 @@ export function createUsageRouter(
     response.json(billing.getStatus());
   });
 
+  router.put('/claude-api-fallback', (request, response) => {
+    if (typeof request.body?.armed !== 'boolean') {
+      response.status(400).json({ error: 'armed (boolean) is required' });
+      return;
+    }
+    billing.setArmed(request.body.armed);
+    response.json(billing.getStatus());
+  });
+
   router.get('/claude-credit', async (_request, response) => {
     response.json(await credit.getStatus());
   });
