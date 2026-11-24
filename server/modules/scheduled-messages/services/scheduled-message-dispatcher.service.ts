@@ -3,6 +3,7 @@ import type { QueuedSessionMessageRecord, ScheduledMessageRow } from '@/modules/
 import { announceScheduledMessagesChanged } from '@/modules/scheduled-messages/services/scheduled-messages.service.js';
 import { chatRunRegistry, onRunSettled, runDetachedChatTurn } from '@/modules/websocket/index.js';
 import type { ProviderRuntimeGateway } from '@/modules/websocket/index.js';
+import type { QueuedChatMessage } from '@/shared/types.js';
 import { readQueuedChatMessage } from '@/shared/utils.js';
 
 /**
@@ -66,7 +67,23 @@ async function sendClaimedQueuedMessage(
     sessionDraftsDb.restoreQueuedMessage(candidate);
     return;
   }
+  if (message.then && result.started && !result.error) {
+    queueFollowUp(candidate, message.then, runtime);
+    return;
+  }
   sessionDraftsDb.deleteEmptyDraft(candidate.userId, candidate.sessionId);
+}
+
+/**
+ * Queues the turn a sent message asked to be followed by, and sends it at once:
+ * the run that would have triggered a dispatch has already settled.
+ */
+function queueFollowUp(candidate: QueuedSessionMessageRecord, followUp: QueuedChatMessage, runtime: ProviderRuntimeGateway): void {
+  if (!sessionDraftsDb.appendQueuedMessage(candidate.userId, candidate.sessionId, followUp)) {
+    console.warn(`[ScheduledMessages] Dropped the follow-up of session ${candidate.sessionId}: a slash command was queued meanwhile.`);
+    return;
+  }
+  void dispatchQueuedMessages(runtime, candidate.sessionId).catch(logPassFailure);
 }
 
 /**

@@ -123,7 +123,8 @@ export function readQueuedChatMessage(value: unknown): QueuedChatMessage | null 
   const options = record.options && typeof record.options === 'object' && !Array.isArray(record.options)
     ? record.options as Record<string, unknown>
     : undefined;
-  return { content, ...(options ? { options } : {}), attachments };
+  const then = readQueuedChatMessage(record.then);
+  return { content, ...(options ? { options } : {}), attachments, ...(then ? { then } : {}) };
 }
 
 // ---------------------------
