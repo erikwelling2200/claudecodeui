@@ -41,6 +41,7 @@
   "filePreview": {
     "loading": "Loading preview...",
     "error": "Unable to display this file.",
+    "notFound": "File not found.",
     "openInNewTab": "Open in new tab"
   },
   "unsavedChanges": {

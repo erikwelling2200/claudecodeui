@@ -293,6 +293,7 @@ export default function CodeEditor({
           labels={{
             loading: t('filePreview.loading', 'Loading preview...'),
             error: t('filePreview.error', 'Unable to display this file.'),
+            notFound: t('filePreview.notFound', 'File not found.'),
             openInNewTab: t('filePreview.openInNewTab', 'Open in new tab'),
           }}
         />

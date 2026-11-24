@@ -18,6 +18,7 @@ type CodeEditorMediaPreviewProps = {
   labels: {
     loading: string;
     error: string;
+    notFound: string;
     openInNewTab: string;
   };
 };
@@ -71,6 +72,10 @@ export default function CodeEditorMediaPreview({
         // Fetching a blob (rather than streaming) also lets <video>/<audio> seek.
         const response = await api.readFileBlob(projectId, file.path, { signal: controller.signal, sessionId: file.sessionId });
 
+        if (response.status === 404) {
+          setError(labels.notFound);
+          return;
+        }
         if (!response.ok) {
           throw new Error(`Request failed with status ${response.status}`);
         }
@@ -130,7 +135,7 @@ export default function CodeEditorMediaPreview({
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [file.path, file.name, file.sessionId, projectId, kind, sourceKey, labels.error]);
+  }, [file.path, file.name, file.sessionId, projectId, kind, sourceKey, labels.error, labels.notFound]);
 
   // Only expose the blob once it matches the file currently being shown, so a
   // stale URL from the previous file is never rendered during a switch.
