@@ -78,6 +78,8 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
   const [now, setNow] = useState(() => Date.now());
   // Open while the usage token has to be renewed by signing in; holds the pasted code and the last failure.
   const [login, setLogin] = useState<{ code: string; error: string | null; busy: boolean } | null>(null);
+  // True while a click on the API switch is saved, so a second click is ignored.
+  const [switching, setSwitching] = useState(false);
 
   const load = useCallback(async () => {
     const response = await api.usage.get();
@@ -137,6 +139,20 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
     setUsage(body);
     setNow(Date.now());
     setLogin(body.loginRequired ? { code: '', busy: false, error: null } : null);
+  };
+
+  const setApiFallback = async (armed: boolean) => {
+    if (switching) return;
+    setSwitching(true);
+    try {
+      const response = await api.usage.setClaudeApiFallback(armed);
+      if (response.ok) {
+        const nextBilling: ClaudeBillingStatus = await response.json();
+        setUsage((current) => current && { ...current, billing: nextBilling });
+      }
+    } finally {
+      setSwitching(false);
+    }
   };
 
   const billing = usage?.billing;
@@ -202,6 +218,24 @@ export default function SidebarUsage({ t }: { t: TFunction }) {
           </div>
         )}
       </button>
+      {billing?.canSwitch && (
+        <div className="px-4 pb-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="usage-api-switch"
+            aria-pressed={billing.armed}
+            disabled={switching}
+            onClick={() => void setApiFallback(!billing.armed)}
+            className={`h-7 w-full text-[11px] ${billing.armed ? 'border-amber-500/60 bg-amber-500/15 text-amber-700 dark:text-amber-300' : ''}`}
+          >
+            {billing.armed
+              ? t(billing.limit ? 'usage.stopApi' : 'usage.cancelApiSwitch')
+              : t(billing.limit ? 'usage.switchToApiNow' : 'usage.switchToApiAtLimit')}
+          </Button>
+        </div>
+      )}
       {login && (
         <div data-testid="usage-login" className="space-y-1.5 px-4 pb-2 text-[11px]">
           <Button type="button" size="sm" variant="outline" className="w-full" onClick={() => void openSignIn()}>

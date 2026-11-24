@@ -42,15 +42,36 @@ export type ClaudeBillingStatus = {
   /** A subscription login was there and has ended, as opposed to never having been set up. */
   loginExpired: boolean;
   limit: ClaudeBillingLimit | null;
+  /** The user allowed runs to move to the key at a plan limit, until the limit they were near resets. */
+  armed: boolean;
+  /** A plan limit is hit or close enough that the sidebar offers the switch to the key. */
+  canSwitch: boolean;
   spend: { today: number; cycle: number };
 };
 
+/**
+ * What the runtime reports for the chat that should move:
+ * - `limit-hit`: a subscription turn ended on the plan's limit message.
+ * - `subscription-back`: a turn billed to the key is at a point where it can stop, and the plan has room again.
+ */
+export type ClaudeBillingSwitchEvent = { type: 'limit-hit' | 'subscription-back'; sessionId: string };
+
 const STORED_KEY = 'claude_fallback_api_key';
 const LIMIT_KEY = 'claude_subscription_limit';
+const ARMED_KEY = 'claude_api_fallback_armed';
 const API_KEY_VARIABLES: ApiKeyVariable[] = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'];
 
 // The limit-bar kinds that stop the plan outright once full. Model-scoped weekly caps only block that model.
 const BLOCKING_KINDS = new Set(['session', 'weekly_all', 'five_hour', 'seven_day']);
+const SWITCH_OFFER_PERCENT = 90;
+const SESSION_WINDOW_MS = 5 * 3_600_000;
+
+type RateLimitInfo = { status?: string; rateLimitType?: string; resetsAt?: number };
+
+/** The CLI reports seconds. */
+function toMilliseconds(epoch: number): number {
+  return epoch < 1e12 ? epoch * 1000 : epoch;
+}
 
 function readJson(file: string): any {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
@@ -58,7 +79,8 @@ function readJson(file: string): any {
 
 /**
  * Decides per run whether Claude is billed to the subscription or to an API key. The subscription always
- * goes first; the key is used only while the plan reports a limit hit, until that limit's reset.
+ * goes first; at a plan limit the key is used only once the user armed the switch, and only until that
+ * limit's reset. Without a subscription login the key is used outright.
  */
 export function createClaudeBillingService(dependencies: ClaudeBillingDependencies) {
   const now = dependencies.now ?? Date.now;
@@ -110,6 +132,58 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     return candidates.reduce((latest, limit) => (limit.resetsAt > latest.resetsAt ? limit : latest));
   }
 
+  /** The latest reset among the blocking bars at or past the offer threshold, or null when none is that full. */
+  function nearLimitReset(): number | null {
+    const at = now();
+    const resets = dependencies.readUsageLimits()
+      .filter((limit) => BLOCKING_KINDS.has(limit.kind) && limit.percent >= SWITCH_OFFER_PERCENT && limit.resetsAt > at)
+      .map((limit) => limit.resetsAt);
+    return resets.length ? Math.max(...resets) : null;
+  }
+
+  function armedUntil(): number | null {
+    const until = Number(config.get(ARMED_KEY));
+    return until > now() ? until : null;
+  }
+
+  /** Arming lasts until the limit the plan is at or near resets, so the next window asks again. */
+  function setArmed(armed: boolean): void {
+    if (!armed) {
+      config.set(ARMED_KEY, '');
+      return;
+    }
+    const until = Math.max(currentLimit()?.resetsAt ?? 0, nearLimitReset() ?? 0) || now() + SESSION_WINDOW_MS;
+    config.set(ARMED_KEY, String(until));
+  }
+
+  /** A limit hit while armed keeps the arming for as long as that limit lasts. */
+  function extendArming(resetsAt: number): void {
+    const until = armedUntil();
+    if (until && resetsAt > until) config.set(ARMED_KEY, String(resetsAt));
+  }
+
+  /** True when the plan can take a run again: logged in and at no limit. */
+  function subscriptionAvailable(): boolean {
+    return hasSubscription() && !currentLimit();
+  }
+
+  const switchListeners = new Set<(event: ClaudeBillingSwitchEvent) => void>();
+
+  function onSwitch(listener: (event: ClaudeBillingSwitchEvent) => void): () => void {
+    switchListeners.add(listener);
+    return () => { switchListeners.delete(listener); };
+  }
+
+  function emitSwitch(event: ClaudeBillingSwitchEvent): void {
+    for (const listener of switchListeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        console.error('[ClaudeBilling] switch listener failed:', error instanceof Error ? error.message : error);
+      }
+    }
+  }
+
   function parseLimit(value: string | null): ClaudeBillingLimit | null {
     if (!value) return null;
     try {
@@ -124,7 +198,7 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     const key = fallbackKey();
     if (!hasSubscription()) return key ? { mode: 'api_key', ...key, limit: null } : { mode: 'none' };
     const limit = currentLimit();
-    if (limit && key) return { mode: 'api_key', ...key, limit };
+    if (limit && key && armedUntil()) return { mode: 'api_key', ...key, limit };
     return { mode: 'subscription' };
   }
 
@@ -132,11 +206,31 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
    * Feeds a `rate_limit_event` from a subscription run. A rejection is remembered until its reset, so the
    * next run goes to the key at once instead of failing against the plan first.
    */
-  function noteRateLimit(info: { status?: string; rateLimitType?: string; resetsAt?: number } | null | undefined): void {
+  function noteRateLimit(info: RateLimitInfo | null | undefined): void {
     if (info?.status !== 'rejected' || info.rateLimitType === 'overage' || !info.resetsAt) return;
-    // The CLI reports seconds.
-    const resetsAt = info.resetsAt < 1e12 ? info.resetsAt * 1000 : info.resetsAt;
-    config.set(LIMIT_KEY, JSON.stringify({ kind: info.rateLimitType || 'five_hour', resetsAt }));
+    rememberLimit(info.rateLimitType || 'five_hour', toMilliseconds(info.resetsAt));
+  }
+
+  /**
+   * Feeds the plan's limit message ("You've hit your limit") that ended a subscription turn of `sessionId`. The
+   * CLI does not always send a rejected `rate_limit_event` first, so the reset comes from the last event the run
+   * saw, else from the fullest blocking bar, else an hour out so the plan is tried again soon.
+   */
+  function noteLimitHit(lastInfo: RateLimitInfo | null | undefined, sessionId: string | null): void {
+    const fromEvent = lastInfo?.resetsAt && lastInfo.rateLimitType !== 'overage' ? toMilliseconds(lastInfo.resetsAt) : 0;
+    const resetsAt = fromEvent > now() ? fromEvent : nearLimitReset() ?? now() + 3_600_000;
+    rememberLimit(lastInfo?.rateLimitType && lastInfo.rateLimitType !== 'overage' ? lastInfo.rateLimitType : 'five_hour', resetsAt);
+    if (sessionId) emitSwitch({ type: 'limit-hit', sessionId });
+  }
+
+  /** Called by a run billed to the key once it can stop for the plan, which `subscriptionAvailable` must say is back. */
+  function noteSubscriptionBack(sessionId: string): void {
+    emitSwitch({ type: 'subscription-back', sessionId });
+  }
+
+  function rememberLimit(kind: string, resetsAt: number): void {
+    config.set(LIMIT_KEY, JSON.stringify({ kind, resetsAt }));
+    extendArming(resetsAt);
   }
 
   function recordSpend(costUsd: number, sessionId: string | null): void {
@@ -176,6 +270,7 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     const stored = storedKey();
     const key = stored ?? hostKey()?.key ?? null;
     const billing = resolve();
+    const limit = billing.mode === 'api_key' ? billing.limit : currentLimit();
     const today = new Date(now());
     today.setHours(0, 0, 0, 0);
     return {
@@ -183,7 +278,9 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
       keyHint: key ? key.slice(-4) : null,
       mode: billing.mode,
       loginExpired: loginExpired(),
-      limit: billing.mode === 'api_key' ? billing.limit : currentLimit(),
+      limit,
+      armed: armedUntil() !== null,
+      canSwitch: Boolean(key) && hasSubscription() && Boolean(limit || nearLimitReset()),
       spend: { today: dependencies.spend.sumSince(today.getTime()), cycle: dependencies.spend.sumSince(dependencies.creditCycleStart()) },
     };
   }
@@ -201,7 +298,10 @@ export function createClaudeBillingService(dependencies: ClaudeBillingDependenci
     return entry?.lastSessionId === sessionId && Number.isFinite(entry.lastCost) ? entry.lastCost! : 0;
   }
 
-  return { resolve, noteRateLimit, recordSpend, recordUsage, restoredCostTotal, setKey, clearKey, getStatus };
+  return {
+    resolve, noteRateLimit, noteLimitHit, noteSubscriptionBack, subscriptionAvailable, onSwitch, setArmed,
+    recordSpend, recordUsage, restoredCostTotal, setKey, clearKey, getStatus,
+  };
 }
 
 /**
