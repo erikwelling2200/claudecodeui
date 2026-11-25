@@ -11,6 +11,7 @@ type ActivityIndicatorProps = {
   onAbort?: () => void;
   isInputFocused?: boolean;
   isStopping?: boolean;
+  showEscapeHint?: boolean;
 };
 
 const ACTION_KEYS = [
@@ -46,7 +47,7 @@ function describeBackgroundTasks(allTasks: BackgroundTaskSummary[], t: TFunction
  * Rendered by chat's ChatComposer above the input so the user can see and
  * interrupt the in-flight turn without leaving the composer.
  */
-export default function ActivityIndicator({ activity, onAbort, isInputFocused = false, isStopping = false }: ActivityIndicatorProps) {
+export default function ActivityIndicator({ activity, onAbort, isInputFocused = false, isStopping = false, showEscapeHint = false }: ActivityIndicatorProps) {
   const { t } = useTranslation('chat');
   const [renderedActivity, setRenderedActivity] = useState<SessionActivity | null>(activity);
   const [isExiting, setIsExiting] = useState(false);
@@ -138,9 +139,11 @@ export default function ActivityIndicator({ activity, onAbort, isInputFocused = 
               <rect x="5" y="5" width="14" height="14" rx="2" />
             </svg>
             <span>{t('claudeStatus.stop', { defaultValue: 'Stop' })}</span>
-            <kbd className="hidden rounded border border-border/60 px-1 text-[10px] text-muted-foreground/70 sm:inline-block">
-              esc
-            </kbd>
+            {showEscapeHint && (
+              <kbd className="hidden rounded border border-border/60 px-1 text-[10px] text-muted-foreground/70 sm:inline-block">
+                esc
+              </kbd>
+            )}
           </button>
         )}
       </div>

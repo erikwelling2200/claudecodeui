@@ -54,6 +54,7 @@ type ChatInterfaceProps = {
   expandThinking?: boolean;
   onToggleExpandThinking?: () => void;
   sendByCtrlEnter?: boolean;
+  stopByEscape?: boolean;
   externalMessageUpdate?: number;
   newSessionTrigger?: number;
   onTaskClick?: (...args: unknown[]) => void;
@@ -84,6 +85,7 @@ function ChatInterface({
   expandThinking = false,
   onToggleExpandThinking,
   sendByCtrlEnter,
+  stopByEscape,
   externalMessageUpdate,
   newSessionTrigger,
   onShowAllTasks,
@@ -305,6 +307,7 @@ function ChatInterface({
     tokenBudget,
     sendMessage,
     sendByCtrlEnter,
+    stopByEscape,
     onSessionProcessing,
     onSessionEstablished: handleSessionEstablished,
     onFileOpen,
@@ -625,6 +628,7 @@ function ChatInterface({
           canAbortSession={canAbortSession}
           onAbortSession={handleAbortSession}
           isStoppingSession={isStoppingSession}
+          stopByEscape={stopByEscape}
           permissionMode={permissionMode}
           availablePermissionModes={availablePermissionModes}
           onSelectPermissionMode={selectPermissionMode}

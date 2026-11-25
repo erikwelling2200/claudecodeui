@@ -75,9 +75,7 @@
     "darkMode": "Dark Mode",
     "showRawParameters": "Show raw parameters",
     "showThinking": "Show thinking",
-    "sendByCtrlEnter": "Send by Ctrl+Enter",
     "voiceEnabled": "Voice (mic + read aloud)",
-    "sendByCtrlEnterDescription": "When enabled, pressing Ctrl+Enter will send the message instead of just Enter. This is useful for IME users to avoid accidental sends.",
     "dragHandle": {
       "dragging": "Dragging handle",
       "closePanel": "Close settings panel",
@@ -930,6 +928,11 @@
     "proCta": "Available with CloudCLI Pro"
   },
   "messagesSettings": {
+    "composerTitle": "Composer keys",
+    "sendByCtrlEnterLabel": "Send by Ctrl+Enter",
+    "sendByCtrlEnterDescription": "Ctrl+Enter sends the message and Enter adds a new line. Useful with an IME, where Enter confirms a candidate.",
+    "stopByEscapeLabel": "Stop by Escape",
+    "stopByEscapeDescription": "Escape in the composer stops the running turn. An open slash or file menu takes the key first.",
     "sectionTitle": "Appended text",
     "appendModeLabel": "Append to",
     "appendModes": {

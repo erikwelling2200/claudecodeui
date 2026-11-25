@@ -64,10 +64,8 @@ function QuickSettingsPanelView({ selectedProject, onInsertCommand }: QuickSetti
   const quickSettingsPreferences = useMemo<QuickSettingsPreferences>(() => ({
     showRawParameters: preferences.showRawParameters,
     showThinking: preferences.showThinking,
-    sendByCtrlEnter: preferences.sendByCtrlEnter,
     voiceEnabled: preferences.voiceEnabled,
   }), [
-    preferences.sendByCtrlEnter,
     preferences.showRawParameters,
     preferences.showThinking,
     preferences.voiceEnabled,

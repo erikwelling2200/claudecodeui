@@ -8,6 +8,7 @@ import SettingsCard from '@/modules/settings/SettingsCard';
 import SettingsRow from '@/modules/settings/SettingsRow';
 import SettingsSection from '@/modules/settings/SettingsSection';
 import SettingsToggle from '@/modules/settings/SettingsToggle';
+import { useUiPreferences, useSetUiPreference } from '@/shared/context/UiPreferencesContext';
 
 type AppendMode = 'off' | 'first' | 'every';
 
@@ -24,6 +25,8 @@ const APPEND_MODES: AppendMode[] = ['off', 'first', 'every'];
 /** Rendered by Settings for the "messages" tab: text the server appends to user messages, and the agent chat tools. */
 export default function MessagesSettingsTab() {
   const { t } = useTranslation('settings');
+  const preferences = useUiPreferences();
+  const setPreference = useSetUiPreference();
   const [settings, setSettings] = useState<ChatToolsSettings | null>(null);
   const [draftText, setDraftText] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -53,14 +56,43 @@ export default function MessagesSettingsTab() {
     }
   };
 
+  // The composer keys are stored locally, so they render whether or not the chat-tools fetch has landed.
+  const composerSection = (
+      <SettingsSection title={t('messagesSettings.composerTitle')}>
+        <SettingsCard divided>
+          <SettingsRow label={t('messagesSettings.sendByCtrlEnterLabel')} description={t('messagesSettings.sendByCtrlEnterDescription')}>
+            <SettingsToggle
+              checked={preferences.sendByCtrlEnter}
+              onChange={(value) => setPreference('sendByCtrlEnter', value)}
+              ariaLabel={t('messagesSettings.sendByCtrlEnterLabel')}
+            />
+          </SettingsRow>
+          <SettingsRow label={t('messagesSettings.stopByEscapeLabel')} description={t('messagesSettings.stopByEscapeDescription')}>
+            <SettingsToggle
+              checked={preferences.stopByEscape}
+              onChange={(value) => setPreference('stopByEscape', value)}
+              ariaLabel={t('messagesSettings.stopByEscapeLabel')}
+            />
+          </SettingsRow>
+        </SettingsCard>
+      </SettingsSection>
+  );
+
   if (!settings) {
-    return error
-      ? <div className="text-sm text-red-600 dark:text-red-300">{error}</div>
-      : <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />;
+    return (
+      <div className="space-y-8">
+        {composerSection}
+        {error
+          ? <div className="text-sm text-red-600 dark:text-red-300">{error}</div>
+          : <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+      </div>
+    );
   }
 
   return (
     <div className="space-y-8">
+      {composerSection}
+
       <SettingsSection title={t('messagesSettings.sectionTitle')}>
         <SettingsCard divided>
           <SettingsRow label={t('messagesSettings.appendModeLabel')}>

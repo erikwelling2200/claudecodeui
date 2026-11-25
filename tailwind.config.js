@@ -17,6 +17,7 @@ export default {
       fontFamily: {
         sans: ['"Open Sans"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', 'sans-serif'],
         serif: ['Merriweather', 'Georgia', 'Cambria', '"Times New Roman"', 'serif'],
+        chat: ['"Atkinson Hyperlegible Next"', '"Open Sans"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'Arial', 'sans-serif'],
       },
       colors: {
         border: "hsl(var(--border))",

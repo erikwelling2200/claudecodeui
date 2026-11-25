@@ -36,6 +36,7 @@ test('a fresh install gets the documented defaults', () => {
     showThinking: true,
     expandThinking: false,
     sendByCtrlEnter: false,
+    stopByEscape: false,
     sidebarVisible: true,
     keepProjectsExpanded: false,
     voiceEnabled: false,

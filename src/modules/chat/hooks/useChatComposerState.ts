@@ -65,6 +65,7 @@ type UseChatComposerStateArgs = {
   tokenBudget: Record<string, unknown> | null;
   sendMessage: (message: unknown) => void;
   sendByCtrlEnter?: boolean;
+  stopByEscape?: boolean;
   onSessionProcessing?: MarkSessionProcessing;
   /**
    * Invoked with the freshly allocated session id when the user sends the
@@ -237,6 +238,7 @@ export function useChatComposerState({
   tokenBudget,
   sendMessage,
   sendByCtrlEnter,
+  stopByEscape,
   onSessionProcessing,
   onSessionEstablished,
   onFileOpen,
@@ -1545,10 +1547,10 @@ export function useChatComposerState({
         return;
       }
 
-      // Escape interrupts the running turn, the way it does in the CLI. The
-      // dropdown handlers above consume it first, so an open menu closes
-      // instead.
-      if (event.key === 'Escape' && canAbortSession) {
+      // Escape interrupts the running turn, the way it does in the CLI, for
+      // those who turn the preference on. The dropdown handlers above consume
+      // it first, so an open menu closes instead.
+      if (event.key === 'Escape' && stopByEscape && canAbortSession) {
         event.preventDefault();
         // A held key repeats; one press is one interrupt.
         if (!event.repeat) {
@@ -1597,6 +1599,7 @@ export function useChatComposerState({
       handleHistoryKeyDown,
       handleSubmit,
       sendByCtrlEnter,
+      stopByEscape,
       showCommandMenu,
       showFileDropdown,
     ],

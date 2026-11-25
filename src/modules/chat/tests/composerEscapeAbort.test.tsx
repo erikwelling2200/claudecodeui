@@ -63,7 +63,7 @@ const escapeEvent = (overrides: { repeat?: boolean } = {}) => {
 };
 
 /** Mounts the composer hook against an open session and a recording sendMessage. */
-const renderComposer = (sendMessage: ReturnType<typeof vi.fn>, canAbortSession: boolean) => renderHook(
+const renderComposer = (sendMessage: ReturnType<typeof vi.fn>, canAbortSession: boolean, stopByEscape = true) => renderHook(
   () => useChatComposerState({
     selectedProject: PROJECT,
     selectedSession: SESSION,
@@ -76,6 +76,7 @@ const renderComposer = (sendMessage: ReturnType<typeof vi.fn>, canAbortSession: 
     currentProviderEffort: 'medium',
     isLoading: canAbortSession,
     canAbortSession,
+    stopByEscape,
     tokenBudget: null,
     sendMessage,
     scrollToBottom: () => undefined,
@@ -143,4 +144,17 @@ test('a held Escape is one interrupt, not one per repeat', async () => {
   });
 
   assert.equal(sendMessage.mock.calls.length, 0);
+});
+
+test('Escape does nothing while the preference is off', async () => {
+  const sendMessage = vi.fn();
+  const view = renderComposer(sendMessage, true, false);
+  const escape = escapeEvent();
+
+  await act(async () => {
+    view.result.current.handleKeyDown(escape.event);
+  });
+
+  assert.equal(sendMessage.mock.calls.length, 0);
+  assert.equal(escape.wasPrevented(), false);
 });
