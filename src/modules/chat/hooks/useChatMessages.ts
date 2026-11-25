@@ -65,6 +65,11 @@ function parseTaskNotification(content: string): ParsedTaskNotification | null {
         : afterOpen.slice(0, closeIndex).trim();
   }
 
+  // The harness's pointer to a report it already delivered as a separate message; it carries nothing.
+  if (/^This agent.s report was delivered to you as a message\b[\s\S]*is not repeated here\.?$/.test(result)) {
+    result = '';
+  }
+
   return {
     status: statusMatch?.[1]?.trim() || 'completed',
     summary: summaryMatch?.[1]?.trim() || 'Background task finished',
