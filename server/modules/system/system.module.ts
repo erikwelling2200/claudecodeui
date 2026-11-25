@@ -116,7 +116,12 @@ export function createSystemModule(options: SystemModuleOptions): Router {
 
   const serverUpdateService = createServerUpdateService({
     runCommand: (program, args) => runCommand(program, args, options.appRoot),
-    hasClientBuild: () => fs.existsSync(path.join(options.appRoot, 'dist', 'index.html')),
+    readClientBuildCommit: () => {
+      const distPath = path.join(options.appRoot, 'dist');
+      const stampPath = path.join(distPath, 'build-commit.txt');
+      if (!fs.existsSync(path.join(distPath, 'index.html')) || !fs.existsSync(stampPath)) return null;
+      return fs.readFileSync(stampPath, 'utf8').trim() || null;
+    },
     logInfo: (message) => console.log('[System]', message),
   });
 

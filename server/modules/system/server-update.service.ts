@@ -6,8 +6,8 @@ export type CommandResult = {
 type ServerUpdateDependencies = {
   // Runs one program without a shell, in the checkout the server runs from, and resolves with its combined stdout and stderr.
   runCommand(program: string, args: string[]): Promise<CommandResult>;
-  // True when the served frontend build (dist/index.html) exists.
-  hasClientBuild(): boolean;
+  // The commit the served frontend (dist/) was built from, or null when there is no build or it carries no stamp.
+  readClientBuildCommit(): string | null;
   logInfo(message: string): void;
 };
 
@@ -35,7 +35,7 @@ export function needsClientBuild(changedPath: string): boolean {
 /**
  * Creates the "Update" workflow behind POST /api/system/update-and-restart: fast-forwards the checkout's current
  * branch to its upstream, reinstalls dependencies when the manifest changed and rebuilds the client when its sources
- * did. The restart itself is left to the caller, so a failed step never takes the server down.
+ * changed since dist/ was built. The restart itself is left to the caller, so a failed step never takes the server down.
  */
 export function createServerUpdateService(dependencies: ServerUpdateDependencies) {
   // Guards against a second request while the first update is still running.
@@ -46,6 +46,16 @@ export function createServerUpdateService(dependencies: ServerUpdateDependencies
     const result = await dependencies.runCommand(program, args);
     if (result.exitCode !== 0) throw new StepFailure(step, result.output.trim() || `${program} exited with code ${result.exitCode}`);
     return result.output.trim();
+  }
+
+  // Compares against the commit dist/ was built from rather than the pre-update HEAD, so a pull made by hand still rebuilds.
+  async function isClientBuildStale(head: string): Promise<boolean> {
+    const builtFrom = dependencies.readClientBuildCommit();
+    if (!builtFrom) return true;
+    if (builtFrom === head) return false;
+    const diff = await dependencies.runCommand('git', ['diff', '--name-only', builtFrom, head]);
+    if (diff.exitCode !== 0) return true;
+    return diff.output.split('\n').filter(Boolean).some(needsClientBuild);
   }
 
   async function update(): Promise<ServerUpdateResult> {
@@ -70,7 +80,7 @@ export function createServerUpdateService(dependencies: ServerUpdateDependencies
     const installed = changedPaths.some((changedPath) => DEPENDENCY_MANIFEST.test(changedPath));
     if (installed) await run('install', 'npm', ['install']);
 
-    const built = installed || changedPaths.some(needsClientBuild) || !dependencies.hasClientBuild();
+    const built = installed || await isClientBuildStale(head);
     if (built) await run('build', 'npm', ['run', 'build:client']);
 
     return { success: true, previousHead, head, commits, installed, built };

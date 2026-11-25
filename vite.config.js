@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
@@ -8,6 +10,20 @@ import { getConnectableHost, normalizeLoopbackHost } from './shared/networkHosts
 // version the server process is actually running. Reading package.json here and
 // injecting it keeps the frontend free of imports that reach outside src/.
 const pkg = createRequire(import.meta.url)('./package.json')
+
+// The server's "Update" compares this stamp with HEAD to see whether dist/ is older than the client sources.
+const CLIENT_BUILD_COMMIT_FILE = 'build-commit.txt'
+
+function stampBuildCommit() {
+  return {
+    name: 'stamp-build-commit',
+    apply: 'build',
+    writeBundle(outputOptions) {
+      const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+      writeFileSync(`${outputOptions.dir}/${CLIENT_BUILD_COMMIT_FILE}`, `${commit}\n`)
+    }
+  }
+}
 
 export default defineConfig(({ mode }) => {
   // Load env file based on `mode` in the current working directory.
@@ -25,7 +41,7 @@ export default defineConfig(({ mode }) => {
   const serverPort = env.SERVER_PORT || env.PORT || 3001
 
   return {
-    plugins: [react()],
+    plugins: [react(), stampBuildCommit()],
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version)
     },
