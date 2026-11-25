@@ -198,6 +198,11 @@ const remoteControlUrls = new Map<string, string>();
 // terminal `complete` (aborted: true) to the client, so the run loop must not
 // emit a second one when its generator winds down.
 const abortedSessionIds = new Set<string>();
+// Sessions whose abort is still running. Interrupting takes seconds, and the
+// stop can be asked for again in that window — from a second client, or from
+// Escape pressed again — so the first request owns the interrupt and the rest
+// report the stop that is already under way.
+const abortsInFlight = new Set<string>();
 // Query instances interrupted because a newer run took over their session id
 // (see addSession). Their run loops must stay silent on wind-down: the map
 // entry, the abort flag, and all client-facing events belong to the new run.
@@ -2634,6 +2639,10 @@ async function abortClaudeSDKSession(sessionId: string) {
   // before launching one.
   lastStopBySession.set(sessionId, ++stopCount);
 
+  if (abortsInFlight.has(sessionId)) {
+    return true;
+  }
+
   const session = getSession(sessionId);
 
   if (!session) {
@@ -2641,33 +2650,38 @@ async function abortClaudeSDKSession(sessionId: string) {
     return false;
   }
 
-  // A turn delivered into a live process is interrupted in place and settles
-  // on its own `result`; see LiveProcess.interruptTurn.
-  if (await session.liveProcess?.interruptTurn()) {
+  abortsInFlight.add(sessionId);
+  try {
+    // A turn delivered into a live process is interrupted in place and settles
+    // on its own `result`; see LiveProcess.interruptTurn.
+    if (await session.liveProcess?.interruptTurn()) {
+      return true;
+    }
+
+    console.log(`Aborting SDK session: ${sessionId}`);
+
+    // Mark before interrupting so the run loop knows not to emit its own
+    // terminal complete (the abort handler sends the aborted one).
+    abortedSessionIds.add(sessionId);
+
+    const interrupted = await requestInterrupt(session.instance, sessionId);
+
+    // Release the held stdin stream; without this the CLI stays up for the rest
+    // of the post-turn hold even though the user cancelled.
+    session.releaseInput?.();
+    session.status = 'aborted';
+    removeSession(sessionId);
+
+    if (session.liveProcess) {
+      session.liveProcess.ensureStopped(interrupted);
+    } else if (!interrupted) {
+      killedInstances.add(session.instance);
+      session.instance.close?.();
+    }
     return true;
+  } finally {
+    abortsInFlight.delete(sessionId);
   }
-
-  console.log(`Aborting SDK session: ${sessionId}`);
-
-  // Mark before interrupting so the run loop knows not to emit its own
-  // terminal complete (the abort handler sends the aborted one).
-  abortedSessionIds.add(sessionId);
-
-  const interrupted = await requestInterrupt(session.instance, sessionId);
-
-  // Release the held stdin stream; without this the CLI stays up for the rest
-  // of the post-turn hold even though the user cancelled.
-  session.releaseInput?.();
-  session.status = 'aborted';
-  removeSession(sessionId);
-
-  if (session.liveProcess) {
-    session.liveProcess.ensureStopped(interrupted);
-  } else if (!interrupted) {
-    killedInstances.add(session.instance);
-    session.instance.close?.();
-  }
-  return true;
 }
 
 /**

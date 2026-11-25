@@ -63,7 +63,7 @@ function WorkspaceMain({
   onRenameSession,
 }: WorkspaceMainProps) {
   const preferences = useUiPreferences();
-  const { showRawParameters, showThinking, expandThinking, sendByCtrlEnter } = preferences;
+  const { showRawParameters, showThinking, expandThinking, sendByCtrlEnter, stopByEscape } = preferences;
   const setPreference = useSetUiPreference();
   const toggleExpandThinking = useCallback(() => setPreference('expandThinking', !expandThinking), [setPreference, expandThinking]);
 
@@ -227,6 +227,7 @@ function WorkspaceMain({
                   expandThinking={expandThinking}
                   onToggleExpandThinking={toggleExpandThinking}
                   sendByCtrlEnter={sendByCtrlEnter}
+                  stopByEscape={stopByEscape}
                   externalMessageUpdate={externalMessageUpdate}
                   newSessionTrigger={newSessionTrigger}
                   onShowAllTasks={tasksEnabled ? showAllTasks : null}

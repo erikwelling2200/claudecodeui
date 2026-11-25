@@ -14,6 +14,7 @@ export type UiPreferences = {
   showThinking: boolean;
   expandThinking: boolean;
   sendByCtrlEnter: boolean;
+  stopByEscape: boolean;
   sidebarVisible: boolean;
   keepProjectsExpanded: boolean;
   voiceEnabled: boolean;
@@ -30,6 +31,9 @@ const DEFAULTS: UiPreferences = {
   showThinking: true,
   expandThinking: false,
   sendByCtrlEnter: false,
+  // Off by default: Escape reaches the composer from a great many places, and
+  // stopping a turn by accident costs more than pressing the button.
+  stopByEscape: false,
   sidebarVisible: true,
   keepProjectsExpanded: false,
   voiceEnabled: false,

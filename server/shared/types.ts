@@ -1807,6 +1807,23 @@ export type FileTreeContentSearchDependencies = {
  * and logging are all explicit so service construction has no hidden process,
  * repository, or machine-wide defaults.
  */
+/** What the caller asks of the operating system's folder dialog. */
+export type NativeFolderPickerRequest = {
+  multiple?: boolean;
+  initialPath?: string;
+  title?: string;
+};
+
+/**
+ * The operating system's own folder dialog, opened on the machine the server
+ * runs on. `pick` resolves to the selected absolute paths, or to null when the
+ * user cancels.
+ */
+export type NativeFolderPicker = {
+  isAvailable(): boolean;
+  pick(request: NativeFolderPickerRequest): Promise<string[] | null>;
+};
+
 export type FileTreeServiceDependencies = {
   fileSystem: FileTreeFileSystem;
   projects: FileTreeProjectGateway;
@@ -1816,6 +1833,8 @@ export type FileTreeServiceDependencies = {
   fileIndex: FileTreeFileIndex;
   contentSearch: FileTreeContentSearch;
   logger: FileTreeLogger;
+  /** The OS folder dialog; absent in deployments where the server has no desktop session. */
+  nativeFolderPicker?: NativeFolderPicker;
   /** Shows the entry in the host's file manager (Explorer, Finder), selected. */
   revealInFileManager(targetPath: string): void;
   /** Maps project folders onto the worktrees a chat works in; absent in deployments without worktree tracking. */
@@ -1846,6 +1865,16 @@ export type FileTreeServices = {
     suggestions: Array<{ path: string; name: string; type: 'directory' }>;
   }>;
   createWorkspaceFolder(folderPath: string): Promise<{ success: true; path: string }>;
+  /**
+   * Opens the OS folder dialog on the server's machine. `available` is false
+   * where there is no dialog to open, which is the client's cue to fall back
+   * to the in-app folder browser.
+   */
+  pickFoldersNatively(request: NativeFolderPickerRequest): Promise<{
+    available: boolean;
+    cancelled: boolean;
+    paths: string[];
+  }>;
   /**
    * Every method takes an optional `sessionId`: the chat whose worktrees the
    * project's folders are read through (see `SessionFolder`). Without it the

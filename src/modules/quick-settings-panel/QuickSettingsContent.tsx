@@ -1,7 +1,6 @@
 import {
   Brain,
   Eye,
-  Languages,
   Mic,
   Moon,
   Sun,
@@ -37,11 +36,6 @@ const TOOL_DISPLAY_TOGGLES: PreferenceToggleItem[] = [
 ];
 
 const INPUT_SETTING_TOGGLES: PreferenceToggleItem[] = [
-  {
-    key: 'sendByCtrlEnter',
-    labelKey: 'quickSettings.sendByCtrlEnter',
-    icon: Languages,
-  },
   {
     key: 'voiceEnabled',
     labelKey: 'quickSettings.voiceEnabled',
@@ -101,9 +95,6 @@ export default function QuickSettingsContent({
 
       <QuickSettingsSection title={t('quickSettings.sections.inputSettings')}>
         {renderToggleRows(inputSettingToggles)}
-        <p className="ml-3 text-xs text-muted-foreground">
-          {t('quickSettings.sendByCtrlEnterDescription')}
-        </p>
       </QuickSettingsSection>
     </div>
   );

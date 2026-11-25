@@ -65,6 +65,7 @@ type UseChatComposerStateArgs = {
   tokenBudget: Record<string, unknown> | null;
   sendMessage: (message: unknown) => void;
   sendByCtrlEnter?: boolean;
+  stopByEscape?: boolean;
   onSessionProcessing?: MarkSessionProcessing;
   /**
    * Invoked with the freshly allocated session id when the user sends the
@@ -241,6 +242,7 @@ export function useChatComposerState({
   tokenBudget,
   sendMessage,
   sendByCtrlEnter,
+  stopByEscape,
   onSessionProcessing,
   onSessionEstablished,
   onFileOpen,
@@ -1517,6 +1519,42 @@ export function useChatComposerState({
     [handleCommandInputChange, resetCommandMenuState, setCursorPosition],
   );
 
+  // The session an abort has been asked for and not yet seen end. Interrupting
+  // takes seconds, and each extra request starts its own interrupt against the
+  // same run, so the one in flight is what the next press is measured against.
+  const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
+
+  const handleAbortSession = useCallback(() => {
+    if (!canAbortSession) {
+      return;
+    }
+
+    const targetSessionId = selectedSession?.id || currentSessionId || null;
+    if (!targetSessionId) {
+      console.warn('Abort requested but no session ID is available.');
+      return;
+    }
+
+    if (stoppingSessionId === targetSessionId) {
+      return;
+    }
+    setStoppingSessionId(targetSessionId);
+
+    // The backend resolves the provider from the session row, so no provider
+    // field is needed here.
+    sendMessage({
+      type: 'chat.abort',
+      sessionId: targetSessionId,
+    });
+  }, [canAbortSession, currentSessionId, selectedSession?.id, sendMessage, stoppingSessionId]);
+
+  // The run ending — aborted or finished on its own — is what reopens the stop.
+  useEffect(() => {
+    if (!canAbortSession) {
+      setStoppingSessionId(null);
+    }
+  }, [canAbortSession]);
+
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
       if (handleCommandMenuKeyDown(event)) {
@@ -1528,6 +1566,18 @@ export function useChatComposerState({
       }
 
       if (handleHistoryKeyDown(event)) {
+        return;
+      }
+
+      // Escape interrupts the running turn, the way it does in the CLI, for
+      // those who turn the preference on. The dropdown handlers above consume
+      // it first, so an open menu closes instead.
+      if (event.key === 'Escape' && stopByEscape && canAbortSession) {
+        event.preventDefault();
+        // A held key repeats; one press is one interrupt.
+        if (!event.repeat) {
+          handleAbortSession();
+        }
         return;
       }
 
@@ -1563,12 +1613,15 @@ export function useChatComposerState({
       }
     },
     [
+      canAbortSession,
       cyclePermissionMode,
+      handleAbortSession,
       handleCommandMenuKeyDown,
       handleFileMentionsKeyDown,
       handleHistoryKeyDown,
       handleSubmit,
       sendByCtrlEnter,
+      stopByEscape,
       showCommandMenu,
       showFileDropdown,
     ],
@@ -1590,25 +1643,6 @@ export function useChatComposerState({
     },
     [resizeTextarea, setCursorPosition, syncInputOverlayScroll],
   );
-
-  const handleAbortSession = useCallback(() => {
-    if (!canAbortSession) {
-      return;
-    }
-
-    const targetSessionId = selectedSession?.id || currentSessionId || null;
-    if (!targetSessionId) {
-      console.warn('Abort requested but no session ID is available.');
-      return;
-    }
-
-    // The backend resolves the provider from the session row, so no provider
-    // field is needed here.
-    sendMessage({
-      type: 'chat.abort',
-      sessionId: targetSessionId,
-    });
-  }, [canAbortSession, currentSessionId, selectedSession?.id, sendMessage]);
 
   const handleGrantToolPermission = useCallback(
     (suggestion: { entry: string; toolName: string }) => {
@@ -1764,6 +1798,8 @@ export function useChatComposerState({
     handleTextareaInput,
     syncInputOverlayScroll,
     handleAbortSession,
+    isStoppingSession: stoppingSessionId !== null
+      && stoppingSessionId === (selectedSession?.id || currentSessionId || null),
     handlePermissionDecision,
     handleGrantToolPermission,
     handleInputFocusChange,

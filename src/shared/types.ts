@@ -1643,7 +1643,6 @@ export type ProviderCliUpdateResult = {
 export type PreferenceToggleKey =
   | 'showRawParameters'
   | 'showThinking'
-  | 'sendByCtrlEnter'
   | 'voiceEnabled';
 
 /** The full set of quick settings booleans keyed by PreferenceToggleKey, held together so the panel can read every toggle from one object. */

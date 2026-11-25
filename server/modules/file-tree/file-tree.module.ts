@@ -14,6 +14,7 @@ import { createFileSearchIndex } from '@/modules/file-tree/file-search-index.js'
 import { listFilesWithRipgrep, watchFolderRecursively } from '@/modules/file-tree/file-search-index.adapters.js';
 import { createFileTreeRouter } from '@/modules/file-tree/file-tree.routes.js';
 import { createFileTreeService } from '@/modules/file-tree/file-tree.service.js';
+import { createNativeFolderPicker } from '@/modules/file-tree/native-folder-picker.adapters.js';
 import { providerSkillsService } from '@/modules/providers/index.js';
 import { mapFoldersToSessionWorktrees } from '@/modules/worktree-claims/index.js';
 import type {
@@ -116,6 +117,7 @@ const fileTreeServices = createFileTreeService({
   fileIndex: fileSearchIndex,
   contentSearch: createFileContentSearch({ runRipgrep: runRipgrepJson }),
   logger: fileTreeLogger,
+  nativeFolderPicker: createNativeFolderPicker(),
   revealInFileManager,
   sessionFolders: {
     mapFolders: (folders, sessionId) => mapFoldersToSessionWorktrees(folders, sessionWorktreesDb.listBySession(sessionId)),

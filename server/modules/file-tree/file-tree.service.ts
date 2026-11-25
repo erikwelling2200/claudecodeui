@@ -626,6 +626,20 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       return { path: resolvedPath, suggestions };
     },
 
+    async pickFoldersNatively(request) {
+      const picker = dependencies.nativeFolderPicker;
+      if (!picker?.isAvailable()) {
+        return { available: false, cancelled: false, paths: [] };
+      }
+
+      const selectedPaths = await picker.pick(request);
+      return {
+        available: true,
+        cancelled: selectedPaths === null,
+        paths: selectedPaths ?? [],
+      };
+    },
+
     async createWorkspaceFolder(folderPath) {
       const expandedPath = expandWorkspacePath(dependencies.workspace.rootPath, folderPath);
       const resolvedInput = path.resolve(expandedPath);
