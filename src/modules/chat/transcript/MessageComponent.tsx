@@ -126,8 +126,8 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
             </div>
           ))}
           <div className={`group min-w-0 max-w-full flex-1 rounded-2xl rounded-bl-md border border-border/60 bg-muted/60 px-3 py-2 text-foreground shadow-sm dark:bg-gray-800/60 sm:px-4 ${isGrouped ? 'sm:ml-11' : ''}`}>
-            <div dir="auto" className="break-words font-chat text-[15px] leading-relaxed">
-              <Markdown breaks className="prose prose-base max-w-none text-[15px] font-chat dark:prose-invert">
+            <div dir="auto" className="break-words font-chat text-[length:var(--chat-font-size)] leading-relaxed">
+              <Markdown breaks className="prose prose-base max-w-none text-[length:var(--chat-font-size)] font-chat dark:prose-invert">
                 {message.content}
               </Markdown>
             </div>
@@ -154,10 +154,10 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
             )}
             {userCopyContent.trim().length > 0 || (!message.images?.length && !message.files?.length) ? (
               <div className="group group/message max-w-full rounded-2xl rounded-br-md border border-border/60 bg-muted/60 px-3 py-2 text-foreground shadow-sm dark:bg-gray-800/60 sm:px-4">
-                <div dir="auto" className="break-words font-chat text-[15px] leading-relaxed">
+                <div dir="auto" className="break-words font-chat text-[length:var(--chat-font-size)] leading-relaxed">
                   <Markdown
                     breaks
-                    className="prose prose-base max-w-none text-[15px] font-chat dark:prose-invert"
+                    className="prose prose-base max-w-none text-[length:var(--chat-font-size)] font-chat dark:prose-invert"
                   >
                     {message.content}
                   </Markdown>
@@ -387,7 +387,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                 </ReasoningContent>
               </Reasoning>
             ) : (
-              <div dir="auto" className="text-[15px] leading-relaxed text-gray-700 dark:text-gray-300">
+              <div dir="auto" className="text-[length:var(--chat-font-size)] leading-relaxed text-gray-700 dark:text-gray-300">
                 {/* Reasoning accordion */}
                 {showThinking && message.reasoning && (
                   <Reasoning className="mb-3" defaultOpen={false}>
@@ -440,7 +440,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                     <StreamingMarkdown
                       content={content}
                       isStreaming={Boolean(message.isStreaming)}
-                      className="prose prose-base prose-gray max-w-none text-[15px] font-chat dark:prose-invert"
+                      className="prose prose-base prose-gray max-w-none text-[length:var(--chat-font-size)] font-chat dark:prose-invert"
                     />
                   ) : (
                     <div className="whitespace-pre-wrap">
