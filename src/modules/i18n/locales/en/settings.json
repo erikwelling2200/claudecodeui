@@ -177,7 +177,19 @@
       "description": "Choose a light or dark appearance, or follow your operating system",
       "light": "Light",
       "dark": "Dark",
-      "system": "Follow the system appearance"
+      "darkBlue": "Dark blue",
+      "system": "Follow the system appearance",
+      "systemDarkLabel": "Dark theme for System"
+    },
+    "fontAndColour": {
+      "section": "Font and background colour",
+      "uiFont": "Interface font",
+      "chatFont": "Chat font",
+      "chatFontSize": "Chat text size",
+      "systemFont": "System default",
+      "background": "Background colour",
+      "backgroundFor": "Applies to the {{theme}} theme",
+      "reset": "Reset"
     },
     "projectSorting": {
       "label": "Project Sorting",

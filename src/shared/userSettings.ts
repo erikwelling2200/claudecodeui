@@ -41,6 +41,8 @@ export type UserPreferences = {
   opencodePermissions: unknown;
   codeEditorSettings: unknown;
   uiPreferences: unknown;
+  /** Dark palette, fonts and background overrides; see `@/shared/appearance`. */
+  appearance: unknown;
   selectedProvider: string;
 };
 
@@ -85,6 +87,8 @@ const LEGACY_STORAGE_KEYS: Record<UserPreferenceKey, string> = {
   // read by readLegacyCodeEditorSettings instead.
   codeEditorSettings: '',
   uiPreferences: 'uiPreferences',
+  // Unused: postdates the move to the server.
+  appearance: '',
   selectedProvider: 'selected-provider',
 };
 

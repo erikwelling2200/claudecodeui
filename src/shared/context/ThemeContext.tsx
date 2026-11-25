@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react';
 
 import type { ThemeMode } from '@/shared/types';
+import { applyAppearance, readStoredAppearance, resolveBackground } from '@/shared/appearance';
+import type { AppearanceSettings, ThemeId } from '@/shared/appearance';
 import {
   readUserPreference,
   subscribeToUserPreferences,
@@ -13,6 +15,10 @@ type ThemeContextValue = {
   toggleDarkMode: () => void;
   themeMode: ThemeMode;
   setThemeMode: (mode: ThemeMode) => void;
+  /** The palette on screen right now; under `system` it follows the OS. */
+  themeId: ThemeId;
+  appearance: AppearanceSettings;
+  setAppearance: (changes: Partial<AppearanceSettings>) => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -45,7 +51,7 @@ export const useTheme = () => {
   return context;
 };
 
-/** Mounted once by App so every module can read and switch the colour theme through useTheme. */
+/** Mounted once by App so every module can read and switch the colour theme, fonts and background through useTheme. */
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   // The mode the user chose, not the colour it currently resolves to: only the
   // mode is persisted, and `system` has to keep tracking the OS afterwards.
@@ -55,6 +61,8 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   // The resolved colour. It is not derivable from `themeMode` alone, because
   // under `system` it changes when the OS does, with no state change here.
   const [isDarkMode, setIsDarkMode] = useState(() => resolveIsDarkMode(readStoredThemeMode()));
+  const [appearance, setAppearanceState] = useState<AppearanceSettings>(readStoredAppearance);
+  const themeId: ThemeId = isDarkMode ? appearance.darkTheme : 'light';
 
   // The theme now lives in auth.db, so a change made on another device (or in
   // another tab) arrives through the preference store rather than a re-render.
@@ -62,6 +70,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     const storedMode = readStoredThemeMode();
     setThemeModeState(storedMode);
     setIsDarkMode(resolveIsDarkMode(storedMode));
+    setAppearanceState(readStoredAppearance());
   }), []);
 
   // Applying the theme to the document and persisting it are deliberately
@@ -69,34 +78,21 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   // theme had been fetched — writing this device's system default over the
   // theme the user actually chose on another one.
   useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
+    const root = document.documentElement;
+    root.classList.toggle('dark', isDarkMode);
+    applyAppearance(root, appearance, themeId);
 
-      // Update iOS status bar style and theme color for dark mode
-      const statusBarMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
-      if (statusBarMeta) {
-        statusBarMeta.setAttribute('content', 'black-translucent');
-      }
-
-      const themeColorMeta = document.querySelector('meta[name="theme-color"]');
-      if (themeColorMeta) {
-        themeColorMeta.setAttribute('content', '#141414'); // Dark background color (hsl(0 0% 8%))
-      }
-    } else {
-      document.documentElement.classList.remove('dark');
-
-      // Update iOS status bar style and theme color for light mode
-      const statusBarMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
-      if (statusBarMeta) {
-        statusBarMeta.setAttribute('content', 'default');
-      }
-
-      const themeColorMeta = document.querySelector('meta[name="theme-color"]');
-      if (themeColorMeta) {
-        themeColorMeta.setAttribute('content', '#f6f4ef'); // Light background color (warm cream)
-      }
+    // iOS status bar and the browser chrome follow the background actually on screen.
+    const statusBarMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+    if (statusBarMeta) {
+      statusBarMeta.setAttribute('content', isDarkMode ? 'black-translucent' : 'default');
     }
-  }, [isDarkMode]);
+
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta) {
+      themeColorMeta.setAttribute('content', resolveBackground(appearance, themeId));
+    }
+  }, [isDarkMode, appearance, themeId]);
 
   // Listen for system theme changes
   useEffect(() => {
@@ -134,11 +130,19 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     });
   }, []);
 
+  const setAppearance = useCallback((changes: Partial<AppearanceSettings>) => {
+    setAppearanceState((previous) => {
+      const next = { ...previous, ...changes };
+      writeUserPreference('appearance', next);
+      return next;
+    });
+  }, []);
+
   // A fresh object here would re-render every consumer in the app on any
   // render of this provider, theme change or not.
   const value = useMemo<ThemeContextValue>(
-    () => ({ isDarkMode, toggleDarkMode, themeMode, setThemeMode }),
-    [isDarkMode, toggleDarkMode, themeMode, setThemeMode],
+    () => ({ isDarkMode, toggleDarkMode, themeMode, setThemeMode, themeId, appearance, setAppearance }),
+    [isDarkMode, toggleDarkMode, themeMode, setThemeMode, themeId, appearance, setAppearance],
   );
 
   return (
