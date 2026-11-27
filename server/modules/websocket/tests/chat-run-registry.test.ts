@@ -311,3 +311,35 @@ test('startRun rejects a second concurrent run for the same session', async () =
     assert.ok(third);
   });
 });
+
+test('a run the server starts reaches the sockets that watched the previous run', async () => {
+  await withIsolatedDatabase(() => {
+    sessionsDb.createAppSession('app-run-adopt', 'claude', '/workspace/demo');
+    const watching = new FakeConnection();
+    const closed = new FakeConnection();
+    const first = chatRunRegistry.startRun({
+      appSessionId: 'app-run-adopt',
+      provider: 'claude',
+      providerSessionId: null,
+      connection: watching,
+      userId: 'user-1',
+    });
+    assert.ok(first);
+    first.writer.updateWebSocket(closed);
+    first.writer.send({ kind: 'complete', provider: 'claude', sessionId: 'app-run-adopt', exitCode: 0 });
+    closed.readyState = 3;
+
+    const second = chatRunRegistry.startRun({
+      appSessionId: 'app-run-adopt',
+      provider: 'claude',
+      providerSessionId: null,
+      connection: null,
+      userId: 'user-1',
+    });
+    assert.ok(second);
+    second.writer.send({ kind: 'text', role: 'user', provider: 'claude', sessionId: 'app-run-adopt', content: 'queued' });
+
+    assert.equal(watching.frames.at(-1)?.content, 'queued');
+    assert.equal(closed.frames.length, 1);
+  });
+});
