@@ -493,12 +493,15 @@ export function useChatRealtimeHandlers({
           // A task's notification, or the patch that killed it, can leave a
           // session that was only doing background work with nothing left
           // to do. A turn in flight is left alone: its `complete` reports.
-          if (
-            sid
-            && (msg.event === 'notification' || msg.event === 'updated')
-            && getSessionActivity?.(sid)?.background
-          ) {
+          const backgroundActivity = sid ? getSessionActivity?.(sid) : undefined;
+          if (sid && (msg.event === 'notification' || msg.event === 'updated') && backgroundActivity?.background) {
             reportRemainingBackgroundWork(sid);
+            // A task of its own that finished is reported to the model in a turn the CLI starts itself. No event marks
+            // that turn, so it counts as a response from here until the running-sessions poll stops listing it.
+            const ownTask = backgroundActivity.tasks?.find((task) => task.taskId === msg.taskId && !task.nested);
+            if (msg.event === 'notification' && ownTask && msg.status !== 'stopped') {
+              onSessionProcessing?.(sid);
+            }
           }
           // The notification carries only a summary; the task's actual result
           // is folded onto its card by the history reader, so a card that

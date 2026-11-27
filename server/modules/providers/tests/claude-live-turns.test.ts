@@ -395,12 +395,13 @@ test('a turn the CLI starts itself is listed and interrupted in place, keeping t
     const listed = () => listClaudeSDKSelfStartedTurns().filter((turn) => turn.sessionId === 'app-self-started');
     assert.equal(await interruptClaudeSDKSelfStartedTurn('app-self-started'), false, 'nothing to stop between turns');
 
-    // The agent finishes and the CLI starts a turn to report it.
+    // The agent finishes and the CLI starts a turn to report it; the session is busy from the notification on, so it
+    // never shows idle before that turn's first output.
     script.emit(taskNotification('a1', 'toolu_agent', 'completed'));
-    await settle();
-    assert.deepEqual(listed(), [], 'a task event alone is not a turn');
-    script.emit(text('The agent finished.'));
     await waitFor(() => listed().length === 1);
+    script.emit(text('The agent finished.'));
+    await settle();
+    assert.equal(listed().length, 1);
 
     assert.equal(await interruptClaudeSDKSelfStartedTurn('app-self-started'), true);
     assert.deepEqual(script.calls, ['interrupt']);
