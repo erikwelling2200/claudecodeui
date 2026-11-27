@@ -4,6 +4,7 @@ import { sessionsService } from '@/modules/providers/services/sessions.service.j
 import type { IProvider } from '@/shared/interfaces.js';
 import type {
   AnyRecord,
+  CacheWarmResult,
   LiveMcpServerStatus,
   LLMProvider,
   ProviderPermissionDecision,
@@ -126,6 +127,12 @@ export function createProviderRuntimeService(
     async setRemoteControl(providerName: LLMProvider, sessionId: string, enabled: boolean) {
       const { runtime } = dependencies.resolveProvider(providerName);
       return (await runtime.setRemoteControl?.(sessionId, enabled)) ?? null;
+    },
+
+    /** Null when the runtime cannot warm a cache, or the session has nothing to resume yet. */
+    async warmCache(providerName: LLMProvider, sessionId: string, options: AnyRecord): Promise<CacheWarmResult | null> {
+      const provider = dependencies.resolveProvider(providerName);
+      return (await provider.runtime.warmCache?.(sessionId, options, createRuntimeContext(provider))) ?? null;
     },
 
     /** Null when the runtime has no live process for the session, or cannot report MCP servers at all. */

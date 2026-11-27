@@ -21,6 +21,8 @@ type SessionRow = {
   parent_session_id: string | null;
   /** 1 while the user wants Remote Control on for this chat. */
   remote_control: number;
+  /** Until when the chat's prompt cache is kept warm, as an ISO time; NULL while that is off. */
+  cache_keepalive_until: string | null;
   /** 1 for a chat the user starred. */
   isStarred: number;
   isArchived: number;
@@ -34,7 +36,7 @@ type RecentSessionsPage = {
 };
 
 const SESSION_ROW_COLUMNS =
-  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, permission_mode, forked_from_session_id, parent_session_id, remote_control, isStarred, isArchived, created_at, updated_at';
+  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, permission_mode, forked_from_session_id, parent_session_id, remote_control, cache_keepalive_until, isStarred, isArchived, created_at, updated_at';
 
 const SQLITE_UTC_TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
@@ -465,6 +467,26 @@ export const sessionsDb = {
        SET remote_control = ?
        WHERE session_id = ?`
     ).run(enabled ? 1 : 0, sessionId);
+  },
+
+  /** Sets until when the chat's prompt cache is kept warm; null turns that off. */
+  setSessionCacheKeepaliveUntil(sessionId: string, until: string | null): void {
+    const db = getConnection();
+    db.prepare(
+      `UPDATE sessions
+       SET cache_keepalive_until = ?
+       WHERE session_id = ?`
+    ).run(until, sessionId);
+  },
+
+  /** Every chat whose prompt cache is being kept warm. */
+  listCacheKeepaliveSessions(): Array<{ session_id: string; provider: string; cache_keepalive_until: string }> {
+    const db = getConnection();
+    return db.prepare(
+      `SELECT session_id, provider, cache_keepalive_until
+       FROM sessions
+       WHERE cache_keepalive_until IS NOT NULL`
+    ).all() as Array<{ session_id: string; provider: string; cache_keepalive_until: string }>;
   },
 
   setSessionIsStarred(sessionId: string, isStarred: boolean): void {

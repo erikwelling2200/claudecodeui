@@ -710,6 +710,15 @@ export type ProviderRuntimePermissionGateway = {
  * Keeping these lookups outside concrete SDK/CLI adapters prevents the
  * adapters from importing services that resolve back through providerRegistry.
  */
+/** Token counts of a cache-warming ping, from the API's usage report for that one request. */
+export type CacheWarmResult = {
+  /** Tokens served from the prompt cache: the conversation the ping kept warm. */
+  cacheReadTokens: number;
+  /** Tokens written to the cache; close to the whole conversation when the cache had already expired. */
+  cacheWriteTokens: number;
+  inputTokens: number;
+};
+
 export type ProviderRuntimeContext = {
   resolveProviderSessionId(sessionId: string | null | undefined): string | null;
   resolveResumeModel(

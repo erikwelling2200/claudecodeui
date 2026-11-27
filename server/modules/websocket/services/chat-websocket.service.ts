@@ -16,6 +16,7 @@ import {
 import type {
   AnyRecord,
   AuthenticatedWebSocketRequest,
+  CacheWarmResult,
   LLMProvider,
   ProviderPermissionDecision,
   ProviderRuntimeWriter,
@@ -91,6 +92,8 @@ export type ProviderRuntimeGateway = {
   setPermissionMode(provider: LLMProvider, sessionId: string, permissionMode: string): Promise<boolean>;
   /** Starts or stops Remote Control in the session's live process; null when it has none. */
   setRemoteControl(provider: LLMProvider, sessionId: string, enabled: boolean): Promise<{ enabled: boolean; sessionUrl: string | null } | null>;
+  /** Pings the session's prompt cache through a fork that is never saved; null when the runtime cannot. */
+  warmCache(provider: LLMProvider, sessionId: string, options: AnyRecord): Promise<CacheWarmResult | null>;
   /** Adds a message to the session's turn in flight; false when none can take it. */
   steerTurn(provider: LLMProvider, sessionId: string, command: string, options: AnyRecord): Promise<boolean>;
   /** Interrupts the turn in flight for a message still waiting to go into it; false when it is not waiting. */
@@ -343,6 +346,19 @@ async function handleChatSteerCancel(
  * `extraRuntimeOptions` is how an edited message asks the provider to resume
  * partway instead of continuing from the tip; a normal send passes nothing.
  */
+const turnDispatchedListeners = new Set<(sessionId: string, provider: LLMProvider, options: AnyRecord) => void>();
+
+/**
+ * Fired when a turn is handed to its provider runtime, with the options it runs with. The cache keepalive keeps the
+ * last ones per chat, because a ping only hits the cache when it is sent exactly like the chat's own turns.
+ */
+export function onTurnDispatched(listener: (sessionId: string, provider: LLMProvider, options: AnyRecord) => void): () => void {
+  turnDispatchedListeners.add(listener);
+  return () => {
+    turnDispatchedListeners.delete(listener);
+  };
+}
+
 async function dispatchRun(
   ws: WebSocket | null,
   userId: string | number | null,
@@ -451,6 +467,9 @@ async function dispatchRun(
     // be taken back. Inside the try so a rewind that throws still releases the
     // run instead of leaving the session processing forever.
     await beforeRun?.(run);
+    for (const listener of turnDispatchedListeners) {
+      listener(sessionId, provider, runtimeOptions);
+    }
     await dependencies.runtime.run(provider, command, runtimeOptions, run.writer);
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);

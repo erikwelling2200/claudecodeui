@@ -171,6 +171,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- 1 while the user wants Remote Control on for this chat. Its threads follow
     -- it, including threads started after it was turned on.
     remote_control INTEGER NOT NULL DEFAULT 0,
+    -- Until when the chat's prompt cache is kept warm by pings, NULL while that
+    -- is off. Every turn of the chat moves it forward.
+    cache_keepalive_until TEXT,
     -- 1 for a chat the user starred; it sorts above the rest of its project.
     isStarred INTEGER NOT NULL DEFAULT 0,
     isArchived BOOLEAN DEFAULT 0,

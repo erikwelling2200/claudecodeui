@@ -1,6 +1,7 @@
 import type {
   AnyRecord,
   BackgroundTaskSummary,
+  CacheWarmResult,
   CsharpDocumentRequest,
   CsharpLanguageStatus,
   CliVersionProbe,
@@ -97,6 +98,13 @@ export interface IProviderRuntime {
    * is sent with `remoteControl: true`.
    */
   setRemoteControl?(sessionId: string, enabled: boolean): Promise<{ enabled: boolean; sessionUrl: string | null } | null>;
+  /**
+   * Sends a one-line prompt through a throwaway fork of the session that is never written to disk, so the API reads
+   * the conversation from the prompt cache and restarts the cache's lifetime. `options` are those of the session's
+   * last turn: a ping sent with other tools, model or folders would not match the cached prompt. Resolves null when
+   * the session has nothing to resume yet.
+   */
+  warmCache?(sessionId: string, options: AnyRecord, context: ProviderRuntimeContext): Promise<CacheWarmResult | null>;
   /**
    * The MCP servers of the session's live process and how each is connected.
    * Resolves null when the session has no live process: its servers connect

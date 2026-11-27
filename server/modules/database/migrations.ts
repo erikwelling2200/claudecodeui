@@ -460,6 +460,12 @@ const addRemoteControlColumn = (db: Database): void => {
   addColumnToTableIfNotExists(db, 'sessions', columnNames, 'remote_control', 'INTEGER NOT NULL DEFAULT 0');
 };
 
+/** Adds the `cache_keepalive_until` column that records until when a chat's prompt cache is kept warm. */
+const addCacheKeepaliveColumn = (db: Database): void => {
+  const columnNames = getTableInfo(db, 'sessions').map((column) => column.name);
+  addColumnToTableIfNotExists(db, 'sessions', columnNames, 'cache_keepalive_until', 'TEXT');
+};
+
 /** Adds the `isStarred` column that pins a chat to the top of its project. */
 const addSessionIsStarredColumn = (db: Database): void => {
   const columnNames = getTableInfo(db, 'sessions').map((column) => column.name);
@@ -662,6 +668,7 @@ export const runMigrations = (db: Database) => {
     addForkedFromSessionIdColumn(db);
     addParentSessionIdColumn(db);
     addRemoteControlColumn(db);
+    addCacheKeepaliveColumn(db);
     addSessionIsStarredColumn(db);
     addSessionPermissionModeColumn(db);
     ensureProjectsForSessionPaths(db);

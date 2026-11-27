@@ -10,7 +10,7 @@ import type {
   RefObject,
   TouchEvent,
 } from 'react';
-import { PaperclipIcon, SlashIcon,Loader2, ArrowUpIcon, PencilIcon, RadioTowerIcon, ExternalLinkIcon, BrainIcon } from 'lucide-react';
+import { PaperclipIcon, SlashIcon,Loader2, ArrowUpIcon, PencilIcon, RadioTowerIcon, ExternalLinkIcon, BrainIcon, FlameIcon } from 'lucide-react';
 
 import { useVoiceInput } from '@/modules/chat/hooks/useVoiceInput';
 import { useVoiceAvailable } from '@/modules/chat/hooks/useVoiceAvailable';
@@ -41,6 +41,7 @@ import { ScheduleMessagePopover } from '@/modules/chat/composer/ScheduleMessageP
 import { ScheduledMessageList } from '@/modules/chat/composer/ScheduledMessageList';
 import ComposerModelMenu from '@/modules/chat/composer/ComposerModelMenu';
 import ComposerPermissionMenu from '@/modules/chat/composer/ComposerPermissionMenu';
+import type { CacheKeepaliveState } from '@/modules/chat/utils/cacheKeepalive';
 import type { RemoteControlStatus } from '@/modules/chat/utils/remoteControl';
 
 type MentionableFile = {
@@ -83,6 +84,9 @@ type ChatComposerProps = {
   /** Null when the provider has no Remote Control. */
   remoteControl: RemoteControlStatus | null;
   onToggleRemoteControl: () => void;
+  /** Null for a chat that cannot keep its cache warm: not Claude, or no session yet. */
+  cacheKeepalive: CacheKeepaliveState | null;
+  onToggleCacheKeepalive: () => void;
   /** Null hides the toggle, as when thinking is not shown at all. */
   expandThinking: boolean | null;
   onToggleExpandThinking?: () => void;
@@ -145,6 +149,28 @@ type ChatComposerProps = {
  * attachments, queued message, permission banner, voice input and the
  * model/permission popovers that drive the next turn.
  */
+function formatClock(iso: string): string {
+  const date = new Date(iso);
+  const sameDay = date.toDateString() === new Date().toDateString();
+  return date.toLocaleString(undefined, sameDay ? { hour: '2-digit', minute: '2-digit' } : { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+const formatTokens = (tokens = 0): string => (tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens));
+
+/** The keep-warm button's tooltip: the label, or while it is on, until when, the next ping and how the last one went. */
+function describeCacheKeepalive(state: CacheKeepaliveState, t: (key: string, options?: Record<string, unknown>) => string): string {
+  if (!state.enabled || !state.until) return t('input.keepCacheWarm');
+  const lines = [t('input.keepCacheWarmUntil', { time: formatClock(state.until) })];
+  lines.push(state.nextPingAt ? t('input.keepCacheWarmNextPing', { time: formatClock(state.nextPingAt) }) : t('input.keepCacheWarmAfterTurn'));
+  const ping = state.lastPing;
+  if (ping?.error) {
+    lines.push(t('input.keepCacheWarmLastPingFailed', { time: formatClock(ping.at), error: ping.error }));
+  } else if (ping) {
+    lines.push(t('input.keepCacheWarmLastPing', { time: formatClock(ping.at), read: formatTokens(ping.cacheReadTokens), written: formatTokens(ping.cacheWriteTokens) }));
+  }
+  return lines.join(' · ');
+}
+
 export default function ChatComposer({
   pendingPermissionRequests,
   handlePermissionDecision,
@@ -173,6 +199,8 @@ export default function ChatComposer({
   onToggleCommandMenu,
   remoteControl,
   onToggleRemoteControl,
+  cacheKeepalive,
+  onToggleCacheKeepalive,
   expandThinking,
   onToggleExpandThinking,
   onSubmit,
@@ -559,6 +587,18 @@ export default function ChatComposer({
                 onClick={() => window.open(remoteControl.sessionUrl!, '_blank', 'noopener,noreferrer')}
               >
                 <ExternalLinkIcon />
+              </PromptInputButton>
+            )}
+
+            {cacheKeepalive && (
+              <PromptInputButton
+                tooltip={{ content: describeCacheKeepalive(cacheKeepalive, t) }}
+                onClick={onToggleCacheKeepalive}
+                aria-label={t('input.keepCacheWarm')}
+                aria-pressed={cacheKeepalive.enabled}
+                className={cacheKeepalive.enabled ? 'bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary' : undefined}
+              >
+                <FlameIcon />
               </PromptInputButton>
             )}
 

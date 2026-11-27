@@ -328,6 +328,12 @@ export const api = {
     cancel: (id: string) => del(`/api/scheduled-messages/${encodeURIComponent(id)}`),
   },
 
+  // Keeps a chat's prompt cache warm with pings, switching itself off after 20 hours without a turn.
+  cacheKeepalive: {
+    get: (sessionId: string) => get(`/api/cache-keepalive/${encodeURIComponent(sessionId)}`),
+    set: (sessionId: string, enabled: boolean) => put(`/api/cache-keepalive/${encodeURIComponent(sessionId)}`, { enabled }),
+  },
+
   // Workspace file tree
   readFile: (projectId: string, filePath: string, sessionId?: string | null) =>
     get(`/api/file-tree/projects/${projectId}/file${query({ filePath, sessionId })}`),

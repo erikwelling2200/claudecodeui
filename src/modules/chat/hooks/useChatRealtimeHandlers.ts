@@ -8,6 +8,7 @@ import type { SessionStore } from '@/modules/chat/hooks/useSessionStore';
 import { normalizedToChatMessages } from '@/modules/chat/hooks/useChatMessages';
 import { collectRunningBackgroundTasks, listRunningBackgroundLaunches, readBackgroundTaskId, readBackgroundTaskStatus } from '@/modules/chat/utils/backgroundTasks';
 import { addPendingSteer, clearPendingSteers, declinePendingSteer, takePendingSteer } from '@/modules/chat/utils/pendingSteers';
+import { applyCacheKeepaliveEvent } from '@/modules/chat/utils/cacheKeepalive';
 import { applyRemoteControlEvent } from '@/modules/chat/utils/remoteControl';
 
 const isActionablePermissionRequest = (request: { toolName?: unknown } | null | undefined): boolean => {
@@ -248,6 +249,12 @@ export function useChatRealtimeHandlers({
               content: typeof msg.content === 'string' ? msg.content : '',
               attachmentCount: 0,
             });
+          }
+          return;
+
+        case 'cache_keepalive':
+          if (sid) {
+            applyCacheKeepaliveEvent(sid, msg as Record<string, unknown>);
           }
           return;
 

@@ -49,6 +49,8 @@ const props = (overrides: Partial<Props>): Props => ({
   pendingSteers: [],
   primaryOnlyFolderName: null,
   remoteControl: null,
+  cacheKeepalive: null,
+  onToggleCacheKeepalive: () => undefined,
   onToggleRemoteControl: () => undefined,
   expandThinking: null,
   onSendPendingSteerNow: () => undefined,

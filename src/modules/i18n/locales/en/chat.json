@@ -185,6 +185,12 @@
     "expandThinking": "Expand all thinking",
     "collapseThinking": "Collapse all thinking",
     "openRemoteControl": "Open on claude.ai",
+    "keepCacheWarm": "Keep cache warm",
+    "keepCacheWarmUntil": "Keeping cache warm until {{time}}",
+    "keepCacheWarmNextPing": "Next ping {{time}}",
+    "keepCacheWarmAfterTurn": "Pings start after the next turn",
+    "keepCacheWarmLastPing": "Last ping {{time}}: {{read}} cached, {{written}} written",
+    "keepCacheWarmLastPingFailed": "Last ping {{time}} failed: {{error}}",
     "clearInput": "Clear input",
     "scrollToBottom": "Scroll to bottom",
     "queue": {

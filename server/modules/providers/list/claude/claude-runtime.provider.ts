@@ -53,6 +53,7 @@ import { appendPromptText, buildAgentSessionEnv, createCompleteMessage, createNo
 import type {
   AnyRecord,
   BackgroundTaskSummary,
+  CacheWarmResult,
   LiveMcpServerStatus,
   LiveTurnTerms,
   ProviderModelsDefinition,
@@ -3062,6 +3063,62 @@ function getPendingApprovalsForSession(sessionId: string) {
   return pending;
 }
 
+const CACHE_WARM_PROMPT = 'Reply with only the word: ok';
+
+/**
+ * Pings the session's prompt cache (see `IProviderRuntime.warmCache`). The fork is built exactly like a turn of the
+ * session, since any difference in model, tools or system prompt misses the cache. Hooks are off so a plugin's
+ * SessionStart output is not appended to every ping, and any tool call is refused.
+ */
+async function warmClaudeSDKCache(sessionId: string, options: AnyRecord, context: ProviderRuntimeContext): Promise<CacheWarmResult | null> {
+  const providerSessionId = context.resolveProviderSessionId(sessionId);
+  if (!providerSessionId) return null;
+
+  const resolvedModel = await context.resolveResumeModel(sessionId, options.model);
+  let effortModels: ProviderModelsDefinition = CLAUDE_PREDEFINED_MODELS;
+  try {
+    effortModels = await context.getProviderModels();
+  } catch (error) {
+    console.warn('[Claude SDK] Unable to load provider models for effort validation:', error);
+  }
+  const sdkOptions = mapCliOptionsToSDK({
+    ...options,
+    sessionId,
+    providerSessionId,
+    model: resolvedModel || options.model,
+    effortModels,
+    billing: claudeBilling.resolve(),
+  });
+  const mcpServers = await loadMcpConfig(options.cwd);
+  if (mcpServers) {
+    sdkOptions.mcpServers = mcpServers;
+  }
+  sdkOptions.forkSession = true;
+  sdkOptions.persistSession = false;
+  sdkOptions.maxTurns = 1;
+  sdkOptions.settings = { ...(sdkOptions.settings || {}), disableAllHooks: true };
+  sdkOptions.canUseTool = async () => ({ behavior: 'deny', message: 'This is a cache-warming ping. Answer without tools.' });
+
+  async function* prompt() {
+    yield { type: 'user', message: { role: 'user', content: CACHE_WARM_PROMPT }, parent_tool_use_id: null, session_id: providerSessionId } as SDKUserMessage;
+  }
+  const createQuery = context.createQuery ?? query;
+  let usage: AnyRecord | null = null;
+  for await (const message of createQuery({ prompt: prompt(), options: sdkOptions }) as AsyncIterable<AnyRecord>) {
+    if (message.type === 'result') {
+      usage = (message.usage ?? null) as AnyRecord | null;
+    }
+  }
+  if (!usage) {
+    throw new Error('The ping ended without a result.');
+  }
+  return {
+    cacheReadTokens: Number(usage.cache_read_input_tokens) || 0,
+    cacheWriteTokens: Number(usage.cache_creation_input_tokens) || 0,
+    inputTokens: Number(usage.input_tokens) || 0,
+  };
+}
+
 /**
  * Reconnect a session's WebSocketWriter to a new raw WebSocket.
  * Called when client reconnects (e.g. page refresh) while SDK is still running.
@@ -3091,6 +3148,7 @@ export const claudeRuntime = {
   acceptsLiveTurn: acceptsClaudeSDKLiveTurn,
   setPermissionMode: setClaudeSDKPermissionMode,
   setRemoteControl: setClaudeSDKRemoteControl,
+  warmCache: warmClaudeSDKCache,
   listMcpServers: listClaudeSDKMcpServers,
   reconnectMcpServer: reconnectClaudeSDKMcpServer,
   authenticateMcpServer: authenticateClaudeSDKMcpServer,

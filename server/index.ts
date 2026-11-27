@@ -52,6 +52,7 @@ import {
     initializeScheduledMessageDispatcher,
     scheduledMessagesRoutes,
 } from './modules/scheduled-messages/index.js';
+import { cacheKeepaliveRoutes, closeCacheKeepalive, initializeCacheKeepalive } from './modules/cache-keepalive/index.js';
 import browserUseRoutes from './modules/browser-use/browser-use.routes.js';
 import { assetsRoutes } from './modules/assets/index.js';
 import { chatToolsMcpRoutes, chatToolsRoutes, chatToolsService } from './modules/chat-tools/index.js';
@@ -238,6 +239,7 @@ app.use('/api/chat-tools', authenticateToken, chatToolsRoutes);
 // Unified provider MCP routes (protected)
 app.use('/api/providers', authenticateToken, providerRoutes);
 app.use('/api/scheduled-messages', authenticateToken, scheduledMessagesRoutes);
+app.use('/api/cache-keepalive', authenticateToken, cacheKeepaliveRoutes);
 
 // Agent API Routes (uses API key authentication)
 app.use('/api/agent', agentRoutes);
@@ -404,6 +406,7 @@ async function shutdownServer(): Promise<void> {
     await closeSessionsWatcher();
     closeScheduledMessageDispatcher();
     closeLimitContinue();
+    closeCacheKeepalive();
     claudeAccounts.stop();
     workdayPing.stop();
     // Session CLI processes (and their MCP servers) live as long as their
@@ -483,6 +486,7 @@ async function startServer() {
         // then keeps polling.
         initializeScheduledMessageDispatcher(providerRuntimeService);
         initializeLimitContinue(providerRuntimeService);
+        initializeCacheKeepalive(providerRuntimeService);
         claudeAccounts.start();
         workdayPing.start();
 

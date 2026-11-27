@@ -30,6 +30,7 @@ import { useChatComposerState } from '@/modules/chat/hooks/useChatComposerState'
 import { useSessionStore } from '@/modules/chat/hooks/useSessionStore';
 import { useSessionPromptBookends } from '@/modules/chat/hooks/useSessionPromptBookends';
 import { useChatFind } from '@/modules/chat/hooks/useChatFind';
+import { setCacheKeepalive, useCacheKeepalive } from '@/modules/chat/utils/cacheKeepalive';
 import { setRemoteControlWanted, useRemoteControl } from '@/modules/chat/utils/remoteControl';
 import {
   useProcessingSessions,
@@ -470,6 +471,14 @@ function ChatInterface({
     sendMessage({ type: 'chat.set-remote-control', sessionId: remoteControlSessionId, enabled: wanted });
   }, [remoteControl.wanted, remoteControlSessionId, sendMessage, startRemoteControlChat]);
 
+  const cacheKeepalive = useCacheKeepalive(provider === 'claude' ? remoteControlSessionId : null);
+  const handleToggleCacheKeepalive = useCallback(() => {
+    if (!remoteControlSessionId || !cacheKeepalive) return;
+    setCacheKeepalive(remoteControlSessionId, !cacheKeepalive.enabled).catch((error: unknown) => {
+      console.error(error);
+    });
+  }, [cacheKeepalive, remoteControlSessionId]);
+
   // A composer pick becomes the default for new chats and, when a session is
   // open, is recorded against that session so reopening it restores this model.
   const handleSelectComposerModel = useCallback(async (model: string) => {
@@ -660,6 +669,8 @@ function ChatInterface({
           onToggleCommandMenu={handleToggleCommandMenu}
           remoteControl={provider === 'claude' ? remoteControl : null}
           onToggleRemoteControl={handleToggleRemoteControl}
+          cacheKeepalive={cacheKeepalive}
+          onToggleCacheKeepalive={handleToggleCacheKeepalive}
           expandThinking={showThinking && onToggleExpandThinking ? expandThinking : null}
           onToggleExpandThinking={onToggleExpandThinking}
           onSubmit={handleSubmit}
