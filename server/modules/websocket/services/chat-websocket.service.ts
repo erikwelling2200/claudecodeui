@@ -20,7 +20,7 @@ import type {
   ProviderPermissionDecision,
   ProviderRuntimeWriter,
 } from '@/shared/types.js';
-import { listExistingDirectories, parseIncomingJsonObject } from '@/shared/utils.js';
+import { createNormalizedMessage, listExistingDirectories, parseIncomingJsonObject } from '@/shared/utils.js';
 
 /**
  * Trust boundary for client-supplied image attachments: chat.send options come
@@ -427,6 +427,22 @@ async function dispatchRun(
     remoteControl: clientOptions.remoteControl === true || Boolean(session.remote_control),
     ...(followUpInstruction ? { followUpInstruction } : {}),
   };
+
+  // A composer shows its own message the moment it sends; a turn the server
+  // started has no composer, so its message goes out with the stream. The
+  // `local_` id lets the client retire it once the transcript's own row loads.
+  if (!ws) {
+    run.writer.send(createNormalizedMessage({
+      id: `local_server_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      kind: 'text',
+      role: 'user',
+      content,
+      images: runtimeOptions.images.length > 0 ? runtimeOptions.images : undefined,
+      files: runtimeOptions.files.length > 0 ? runtimeOptions.files : undefined,
+      sessionId,
+      provider,
+    }));
+  }
 
   let failure: string | null = null;
   try {

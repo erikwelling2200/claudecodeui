@@ -263,6 +263,12 @@ export const chatRunRegistry = {
       },
       decorateOutboundEvent: (message) => decorateAndRecordEvent(run, message),
     });
+    // Whoever watched the session's last turn watches this one too. A turn the
+    // server starts by itself (a queued or scheduled message) has no socket of
+    // its own, so the open chat would otherwise only see it after re-subscribing.
+    if (existing) {
+      run.writer.adoptConnections(existing.writer);
+    }
 
     runs.set(input.appSessionId, run);
     return run;

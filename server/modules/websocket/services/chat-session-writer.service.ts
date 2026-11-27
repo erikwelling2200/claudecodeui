@@ -140,6 +140,15 @@ export class ChatSessionWriter {
     this.connections.add(newConnection);
   }
 
+  /** Adds every socket still watching `previous` to this run's live audience. */
+  adoptConnections(previous: ChatSessionWriter): void {
+    for (const connection of previous.connections) {
+      if (connection.readyState === WS_OPEN_STATE) {
+        this.connections.add(connection);
+      }
+    }
+  }
+
   setSessionId(sessionId: string): void {
     this.captureProviderSessionId(sessionId);
   }
