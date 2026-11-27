@@ -19,6 +19,7 @@ function createFakeServices(overrides: Partial<FileTreeServices> = {}): FileTree
     createWorkspaceFolder: unexpectedOperation,
     pickFoldersNatively: unexpectedOperation,
     readTextFile: unexpectedOperation,
+    statFile: unexpectedOperation,
     openFile: unexpectedOperation,
     resolveFilePath: unexpectedOperation,
     revealFile: unexpectedOperation,
@@ -336,13 +337,18 @@ test('content search route aborts the search when the client disconnects', async
 
 test('a session id in the query or body reaches the service, and its absence changes nothing', async () => {
   const reads: Parameters<FileTreeServices['readTextFile']>[] = [];
+  const stats: Parameters<FileTreeServices['statFile']>[] = [];
   const saves: Parameters<FileTreeServices['saveTextFile']>[] = [];
   const listings: Parameters<FileTreeServices['listProjectFiles']>[] = [];
   const searches: Parameters<FileTreeServices['searchProjectFiles']>[] = [];
   const services = createFakeServices({
     readTextFile: async (...input) => {
       reads.push(input);
-      return { content: '', path: '/p/a.txt' };
+      return { content: '', path: '/p/a.txt', modifiedAt: 1 };
+    },
+    statFile: async (...input) => {
+      stats.push(input);
+      return { path: '/p/a.txt', modifiedAt: 1, size: 0 };
     },
     saveTextFile: async (...input) => {
       saves.push(input);
@@ -361,6 +367,7 @@ test('a session id in the query or body reaches the service, and its absence cha
   await withFileTreeServer(services, async (baseUrl) => {
     await fetch(`${baseUrl}/api/file-tree/projects/project-1/file?filePath=a.txt&sessionId=chat-1`);
     await fetch(`${baseUrl}/api/file-tree/projects/project-1/file?filePath=a.txt`);
+    await fetch(`${baseUrl}/api/file-tree/projects/project-1/file/stat?filePath=a.txt&sessionId=chat-1`);
     await fetch(`${baseUrl}/api/file-tree/projects/project-1/file`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -371,6 +378,7 @@ test('a session id in the query or body reaches the service, and its absence cha
   });
 
   assert.deepEqual(reads, [['project-1', 'a.txt', 'chat-1'], ['project-1', 'a.txt']]);
+  assert.deepEqual(stats, [['project-1', 'a.txt', 'chat-1']]);
   assert.deepEqual(saves, [['project-1', 'a.txt', 'x', 'chat-1']]);
   assert.deepEqual(listings, [['project-1', { respectGitignore: false, depth: undefined, sessionId: 'chat-1' }]]);
   assert.deepEqual(searches, [['project-1', 'a', { limit: 100, type: 'any', sessionId: 'chat-1' }]]);

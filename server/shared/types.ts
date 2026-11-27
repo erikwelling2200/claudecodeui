@@ -1880,7 +1880,10 @@ export type FileTreeServices = {
    * project's folders are read through (see `SessionFolder`). Without it the
    * folders are the main checkouts.
    */
-  readTextFile(projectId: string, filePath: string, sessionId?: string): Promise<{ content: string; path: string }>;
+  /** `modifiedAt` is the file's mtime in milliseconds, taken before the read, for comparing with `statFile`. */
+  readTextFile(projectId: string, filePath: string, sessionId?: string): Promise<{ content: string; path: string; modifiedAt: number }>;
+  /** The mtime (milliseconds) and size of a file resolved like `readTextFile`; the editor polls it to notice outside changes. */
+  statFile(projectId: string, filePath: string, sessionId?: string): Promise<{ path: string; modifiedAt: number; size: number }>;
   openFile(projectId: string, filePath: string, sessionId?: string): Promise<{ contentType: string; stream: Readable }>;
   /** The full path a possibly relative reference names, resolved the way `readTextFile` resolves it. */
   resolveFilePath(projectId: string, filePath: string, sessionId?: string): Promise<{ path: string; exists: boolean }>;

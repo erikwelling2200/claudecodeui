@@ -329,6 +329,7 @@ test('readTextFile rejects traversal before invoking the filesystem adapter', as
 test('readTextFile reports a directory as a client error, not a 500', async () => {
   const projectRoot = path.resolve('file-tree-test-project');
   const fileSystem = createFakeFileSystem({
+    stat: async () => createStats(true, 0o755),
     readTextFile: async () => {
       const error = new Error('EISDIR: illegal operation on a directory, read');
       (error as NodeJS.ErrnoException).code = 'EISDIR';
@@ -462,6 +463,30 @@ test('a skill file outside the project is saved when the skill-file policy allow
   } finally {
     await fsPromises.rm(projectRoot, { recursive: true, force: true });
     await fsPromises.rm(skillsRoot, { recursive: true, force: true });
+  }
+});
+
+test('a read carries the mtime that statFile reports, and statFile sees a later write', async () => {
+  const projectRoot = await fsPromises.mkdtemp(path.join(testDirectory, 'file-tree-project-'));
+
+  try {
+    const filePath = path.join(projectRoot, 'a.txt');
+    await fsPromises.writeFile(filePath, 'one', 'utf8');
+    await fsPromises.utimes(filePath, new Date('2026-01-01T00:00:00Z'), new Date('2026-01-01T00:00:00Z'));
+    const service = createFileTreeService(createRealFileSystemDependencies(projectRoot));
+
+    const read = await service.readTextFile('project-1', 'a.txt');
+    assert.equal(read.modifiedAt, Date.parse('2026-01-01T00:00:00Z'));
+    assert.deepEqual(await service.statFile('project-1', 'a.txt'), { path: filePath, modifiedAt: read.modifiedAt, size: 3 });
+
+    await fsPromises.writeFile(filePath, 'three', 'utf8');
+    const changed = await service.statFile('project-1', 'a.txt');
+    assert.notEqual(changed.modifiedAt, read.modifiedAt);
+    assert.equal(changed.size, 5);
+
+    await assert.rejects(service.statFile('project-1', 'missing.txt'), (error: unknown) => (error as AppError).statusCode === 404);
+  } finally {
+    await fsPromises.rm(projectRoot, { recursive: true, force: true });
   }
 });
 

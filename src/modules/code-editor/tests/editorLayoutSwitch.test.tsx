@@ -19,7 +19,8 @@ const readFile = vi.fn(async () => ({ ok: true, json: async () => ({ content: 'h
 const saveFile = vi.fn(async () => ({ ok: true, json: async () => ({ success: true }) }));
 
 vi.mock('@/shared/api', () => ({
-  api: { readFile, saveFile },
+  // Their reads carry no mtime, so this one never reports a change.
+  api: { readFile, saveFile, statFile: async () => ({ json: async () => ({}) }) },
   readApiJson: async (response: { json: () => Promise<unknown> }) => response.json(),
 }));
 
