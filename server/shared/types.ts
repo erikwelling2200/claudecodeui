@@ -302,6 +302,8 @@ export type SessionUpsertedEvent = {
     parentSessionId: string | null;
     /** The user starred this chat, which sorts it above the rest of its project. */
     isStarred: boolean;
+    /** The chat's prompt cache is kept warm; live changes arrive as `cache_keepalive` events. */
+    cacheKeepalive: boolean;
   };
   project: SessionUpsertedProject | null;
   timestamp: string;

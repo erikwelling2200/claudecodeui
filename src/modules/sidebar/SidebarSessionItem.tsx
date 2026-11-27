@@ -10,6 +10,7 @@ import { PROVIDER_LABELS, createSessionViewModel } from '@/modules/sidebar/utils
 import { useCompactSidebar } from '@/modules/sidebar/hooks/useCompactSidebar';
 import { useProviderSessionIdCopy } from '@/modules/sidebar/hooks/useProviderSessionIdCopy';
 import SessionOptions from '@/modules/sidebar/SessionOptions';
+import { useCacheKeepaliveEnabled } from '@/modules/chat';
 
 type SidebarSessionItemProps = {
   project: Project;
@@ -131,6 +132,13 @@ function SidebarSessionItem({
   const starLabel = isStarred ? t('tooltips.removeFromFavorites') : t('tooltips.addToFavorites');
   const starMarker = isStarred && (
     <Star aria-label={t('projects.starred')} className="h-3 w-3 flex-shrink-0 fill-current text-yellow-600 dark:text-yellow-400" />
+  );
+  const isCacheWarm = useCacheKeepaliveEnabled(session.id, Boolean(session.cacheKeepalive));
+  const cacheWarmGlow = isCacheWarm && (
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 rounded-[inherit] bg-gradient-to-t from-orange-500/25 to-transparent"
+    />
   );
 
   // The desktop controls live in SessionOptions, which owns the rename panel and
@@ -268,6 +276,7 @@ function SidebarSessionItem({
           onClick={isSelecting ? (isSelectable ? toggleSelected : undefined) : selectMobileSession}
           onKeyDown={isSelecting ? handleSelectionKeyDown : undefined}
         >
+          {cacheWarmGlow}
           <div className="flex items-center gap-2">
             {selectionIcon}
             <div
@@ -482,7 +491,7 @@ function SidebarSessionItem({
           aria-disabled={isSelecting && !isSelectable ? true : undefined}
           className={cn(
             buttonVariants({ variant: 'ghost' }),
-            'h-auto w-full justify-start rounded-md border bg-card p-2 text-left font-normal transition-all duration-150',
+            'relative h-auto w-full justify-start rounded-md border bg-card p-2 text-left font-normal transition-all duration-150',
             isSelecting ? 'pr-2' : 'pr-11',
             isSelected ? 'border-primary/20 bg-primary/5' : 'border-border/30',
             !isSelected && isProcessing
@@ -510,6 +519,7 @@ function SidebarSessionItem({
           }}
           onKeyDown={isSelecting ? handleSelectionKeyDown : undefined}
         >
+          {cacheWarmGlow}
           <div className="flex w-full min-w-0 items-center gap-2">
             {selectionIcon}
             <div

@@ -15,6 +15,7 @@ type SessionSummary = {
   lastActivity: string;
   parentSessionId: string | null;
   isStarred: boolean;
+  cacheKeepalive: boolean;
 };
 
 type SessionRepositoryRow = {
@@ -23,6 +24,7 @@ type SessionRepositoryRow = {
   custom_name?: string | null;
   parent_session_id?: string | null;
   isStarred?: number | null;
+  cache_keepalive_until?: string | null;
   updated_at?: string | null;
   created_at?: string | null;
 };
@@ -132,6 +134,7 @@ function mapSessionRowToSummary(row: SessionRepositoryRow): SessionSummary {
     lastActivity: row.updated_at ?? row.created_at ?? new Date().toISOString(),
     parentSessionId: row.parent_session_id ?? null,
     isStarred: Boolean(row.isStarred),
+    cacheKeepalive: Boolean(row.cache_keepalive_until),
   };
 }
 
