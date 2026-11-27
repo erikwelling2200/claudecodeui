@@ -1034,6 +1034,17 @@ export function startsBackgroundWork(sdkMessage: AnyRecord | null | undefined) {
 const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'killed']);
 
 /**
+ * Whether this message is a task the session's own turns launched finishing on its own, which the CLI then reports
+ * in a turn it starts itself. A stopped task is left out: nothing promises that it gets a turn.
+ */
+export function reportsBackBetweenTurns(message: AnyRecord, outstanding: readonly BackgroundTaskSummary[]): boolean {
+  if (message.type !== 'system' || message.subtype !== 'task_notification' || message.status === 'stopped') {
+    return false;
+  }
+  return outstanding.some((task) => task.taskId === message.task_id && !task.nested);
+}
+
+/**
  * Tracks the background tasks each live session still has outstanding, folded
  * from the `system` task events the SDK stream already carries.
  *
@@ -2458,6 +2469,15 @@ async function queryClaudeSDK(
       }
       if (message.type === 'system' && message.subtype === 'task_started') {
         sawTaskEventThisTurn = true;
+      }
+      // The CLI answers a task of its own finishing between turns with a turn that reports it, so the session is busy
+      // from here on; waiting for that turn's first output would show it idle in between.
+      if (
+        betweenTurns
+        && selfStartedTurnSince === null
+        && reportsBackBetweenTurns(message, backgroundWork.outstanding(sessionKey()!))
+      ) {
+        selfStartedTurnSince = Date.now();
       }
       backgroundWork.apply(sessionKey()!, message);
 

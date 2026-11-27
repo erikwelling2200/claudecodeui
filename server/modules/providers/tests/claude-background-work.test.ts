@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   createBackgroundWorkTracker,
+  reportsBackBetweenTurns,
   startsBackgroundWork,
 } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 
@@ -168,6 +169,18 @@ test('a task_notification removes the task whatever its status', () => {
   tracker.apply('s1', notified('t2', 'stopped'));
   assert.equal(tracker.hasOutstanding('s1'), false);
   assert.deepEqual(tracker.list(), []);
+});
+
+test('only an own task finishing by itself is reported back in a turn of its own', () => {
+  // The session counts as busy from this notification, so the badge never shows it idle before the handback turn.
+  const own = { taskId: 't1', toolUseId: 'toolu_t1', taskType: 'local_agent', description: 'Task t1', startedAt: 0 };
+  const nested = { ...own, taskId: 't2', toolUseId: 'toolu_t2', nested: true };
+  assert.equal(reportsBackBetweenTurns(notified('t1', 'completed'), [own]), true);
+  assert.equal(reportsBackBetweenTurns(notified('t1', 'failed'), [own]), true);
+  assert.equal(reportsBackBetweenTurns(notified('t1', 'stopped'), [own]), false);
+  assert.equal(reportsBackBetweenTurns(notified('t2', 'completed'), [nested]), false);
+  assert.equal(reportsBackBetweenTurns(notified('t3', 'completed'), [own]), false);
+  assert.equal(reportsBackBetweenTurns(started('t1'), [own]), false);
 });
 
 test('a terminal task_updated removes the task', () => {
