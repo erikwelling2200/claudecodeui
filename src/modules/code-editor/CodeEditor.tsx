@@ -25,6 +25,7 @@ import CodeEditorLoadingState from '@/modules/code-editor/CodeEditorLoadingState
 import CodeEditorSurface from '@/modules/code-editor/CodeEditorSurface';
 import CodeEditorBinaryFile from '@/modules/code-editor/CodeEditorBinaryFile';
 import CodeEditorMediaPreview from '@/modules/code-editor/CodeEditorMediaPreview';
+import CodeEditorExternalChangeDialog from '@/modules/code-editor/CodeEditorExternalChangeDialog';
 
 type CodeEditorProps = {
   file: CodeEditorFile;
@@ -96,9 +97,13 @@ export default function CodeEditor({
     fileProjectId,
     hasUnsavedChanges,
     handleSave,
+    externalContent,
+    keepEditorContent,
+    keepFileContent,
   } = useCodeEditorDocument({
     file,
     projectPath,
+    watchForExternalChanges: isActive,
   });
 
   // Cleared on unmount so a closed editor can never block the next open.
@@ -375,6 +380,12 @@ export default function CodeEditor({
           shortcutsLabel={t('footer.shortcuts')}
         />
       </CodeEditorFrame>
+      <CodeEditorExternalChangeDialog
+        fileName={file.name}
+        diskContent={isActive ? externalContent : null}
+        onKeepEditor={keepEditorContent}
+        onKeepFile={keepFileContent}
+      />
     </>
   );
 }

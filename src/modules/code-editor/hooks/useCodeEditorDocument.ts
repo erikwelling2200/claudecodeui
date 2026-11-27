@@ -8,7 +8,11 @@ import { getPreviewKind } from '@/modules/code-editor/utils/previewableFile';
 type UseCodeEditorDocumentParams = {
   file: CodeEditorFile;
   projectPath?: string;
+  // Only the visible tab polls the disk; a tab that becomes visible checks at once.
+  watchForExternalChanges?: boolean;
 };
+
+const EXTERNAL_CHANGE_POLL_MS = 2000;
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) {
@@ -23,7 +27,7 @@ const getErrorMessage = (error: unknown) => {
 // after an undo) unless both sides of the comparison are normalised.
 const normalizeLineEndings = (text: string) => text.replace(/\r\n?/g, '\n');
 
-export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocumentParams) => {
+export const useCodeEditorDocument = ({ file, projectPath, watchForExternalChanges = false }: UseCodeEditorDocumentParams) => {
   const [content, setContent] = useState('');
   // The text as last loaded from disk or written back by a save. The buffer is
   // compared against it to tell whether closing or switching files would
@@ -49,10 +53,23 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
   // when another file is opened belongs to the previous file and must not land
   // on the new one's buffer, baseline or save state.
   const loadGenerationRef = useRef(0);
+  // The mtime of the disk text `savedContent` was last compared with; null for
+  // anything not read from disk (diffs, media, errors), which is never polled.
+  const diskModifiedAtRef = useRef<number | null>(null);
+  // Disk text that changed under unsaved edits, waiting for the user to pick a side.
+  const [externalContent, setExternalContent] = useState<string | null>(null);
+  const contentRef = useRef(content);
+  contentRef.current = content;
+  const savedContentRef = useRef(savedContent);
+  savedContentRef.current = savedContent;
+  // Set by handleSave itself, so a poll never reads our own write before the baseline catches up with it.
+  const savingRef = useRef(false);
 
   useEffect(() => {
     const loadGeneration = ++loadGenerationRef.current;
     const isStaleLoad = () => loadGenerationRef.current !== loadGeneration;
+    diskModifiedAtRef.current = null;
+    setExternalContent(null);
 
     // Every load path resets the saved baseline together with the buffer, so a
     // freshly opened file (or an error placeholder) never counts as dirty.
@@ -102,11 +119,12 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
         // Read through readApiJson so the API's own explanation reaches the
         // pane — a directory, a path outside the project root, a missing file.
         // The bare status showed all of those as an opaque "403 Forbidden".
-        const data = await readApiJson<{ content: string }>(response);
+        const data = await readApiJson<{ content: string; modifiedAt: number }>(response);
         if (isStaleLoad()) {
           return;
         }
         applyLoadedContent(data.content);
+        diskModifiedAtRef.current = data.modifiedAt;
       } catch (error) {
         if (isStaleLoad()) {
           return;
@@ -124,6 +142,68 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
     loadFileContent();
   }, [file.diffInfo, file.name, fileDiffNewString, fileDiffOldString, fileName, filePath, fileProjectId, fileSessionId]);
 
+  useEffect(() => {
+    if (!watchForExternalChanges || loading || !fileProjectId) return undefined;
+    const loadGeneration = loadGenerationRef.current;
+    let checking = false;
+
+    const checkDisk = async () => {
+      if (checking || document.hidden || savingRef.current || diskModifiedAtRef.current === null) return;
+      checking = true;
+      try {
+        const stat = await readApiJson<{ modifiedAt: number }>(await api.statFile(fileProjectId, filePath, fileSessionId));
+        if (stat.modifiedAt === diskModifiedAtRef.current) return;
+        const data = await readApiJson<{ content: string; modifiedAt: number }>(await api.readFile(fileProjectId, filePath, fileSessionId));
+        // A save that started meanwhile moves the baseline itself; the next poll looks again.
+        if (loadGenerationRef.current !== loadGeneration || savingRef.current) return;
+        diskModifiedAtRef.current = data.modifiedAt;
+
+        const diskText = normalizeLineEndings(data.content);
+        // A touch, or our own save, leaves the text as the baseline already has it.
+        if (diskText === normalizeLineEndings(savedContentRef.current)) return;
+        const bufferText = normalizeLineEndings(contentRef.current);
+        if (bufferText === diskText) {
+          setSavedContent(data.content);
+          setExternalContent(null);
+        } else if (bufferText === normalizeLineEndings(savedContentRef.current)) {
+          setContent(data.content);
+          setSavedContent(data.content);
+          setExternalContent(null);
+        } else {
+          setExternalContent(data.content);
+        }
+      } catch (error) {
+        // A file deleted or briefly locked mid-write; the editor keeps its text and the next poll retries.
+        console.warn('Could not check the open file for outside changes:', error);
+      } finally {
+        checking = false;
+      }
+    };
+
+    void checkDisk();
+    const interval = window.setInterval(checkDisk, EXTERNAL_CHANGE_POLL_MS);
+    window.addEventListener('focus', checkDisk);
+    document.addEventListener('visibilitychange', checkDisk);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', checkDisk);
+      document.removeEventListener('visibilitychange', checkDisk);
+    };
+  }, [fileProjectId, filePath, fileSessionId, loading, watchForExternalChanges]);
+
+  // Both take the disk text the dialog was shown for. Keeping the editor leaves
+  // the buffer unsaved, so saving it then overwrites the outside change.
+  const keepEditorContent = useCallback((diskContent: string) => {
+    setSavedContent(diskContent);
+    setExternalContent(null);
+  }, []);
+
+  const keepFileContent = useCallback((diskContent: string) => {
+    setContent(diskContent);
+    setSavedContent(diskContent);
+    setExternalContent(null);
+  }, []);
+
   const handleSave = useCallback(async () => {
     // Preview-only and binary files have no editable text buffer; never write
     // them back (e.g. via Cmd/Ctrl+S) or we'd corrupt the file on disk.
@@ -135,6 +215,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
     const isStaleSave = () => loadGenerationRef.current !== saveGeneration;
 
     setSaving(true);
+    savingRef.current = true;
     setSaveError(null);
 
     try {
@@ -167,6 +248,10 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
       // Baseline is the text that was actually sent: anything typed while the
       // request was in flight is still unsaved.
       setSavedContent(content);
+      // Ahead of the re-render, for a poll that runs as soon as savingRef clears.
+      savedContentRef.current = content;
+      // The save overwrote any outside change the dialog was asking about.
+      setExternalContent(null);
     } catch (error) {
       const message = getErrorMessage(error);
       console.error('Error saving file:', error);
@@ -174,6 +259,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
         setSaveError(message);
       }
     } finally {
+      savingRef.current = false;
       if (!isStaleSave()) {
         setSaving(false);
       }
@@ -225,5 +311,8 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
     hasUnsavedChanges,
     handleSave,
     handleDownload,
+    externalContent,
+    keepEditorContent,
+    keepFileContent,
   };
 };

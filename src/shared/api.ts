@@ -331,6 +331,9 @@ export const api = {
   // Workspace file tree
   readFile: (projectId: string, filePath: string, sessionId?: string | null) =>
     get(`/api/file-tree/projects/${projectId}/file${query({ filePath, sessionId })}`),
+  // The file's mtime and size; the open editor polls it to notice changes made outside it.
+  statFile: (projectId: string, filePath: string, sessionId?: string | null) =>
+    get(`/api/file-tree/projects/${projectId}/file/stat${query({ filePath, sessionId })}`),
   // The full path a (possibly relative) reference names, and whether it exists.
   resolveFilePath: (projectId: string, filePath: string, sessionId?: string | null) =>
     get(`/api/file-tree/projects/${projectId}/files/resolve${query({ path: filePath, sessionId })}`),

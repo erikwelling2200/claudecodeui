@@ -677,13 +677,29 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       const folders = await resolveProjectFolders(projectId, sessionId);
       const resolvedPath = await resolveReadablePath(folders, filePath);
       try {
+        // Stat first: a write landing between the two then shows up as a later mtime, never as a missed one.
+        const stats = await fileSystem.stat(resolvedPath);
         const content = await fileSystem.readTextFile(resolvedPath);
-        return { content, path: resolvedPath };
+        return { content, path: resolvedPath, modifiedAt: stats.mtime.getTime() };
       } catch (error) {
         mapFileSystemError(error, {
           ENOENT: { message: 'File not found', statusCode: 404 },
           EACCES: { message: 'Permission denied', statusCode: 403 },
           EISDIR: { message: 'Path is a directory, not a file', statusCode: 400 },
+        });
+      }
+    },
+
+    async statFile(projectId, filePath, sessionId) {
+      const folders = await resolveProjectFolders(projectId, sessionId);
+      const resolvedPath = await resolveReadablePath(folders, filePath);
+      try {
+        const stats = await fileSystem.stat(resolvedPath);
+        return { path: resolvedPath, modifiedAt: stats.mtime.getTime(), size: stats.size };
+      } catch (error) {
+        mapFileSystemError(error, {
+          ENOENT: { message: 'File not found', statusCode: 404 },
+          EACCES: { message: 'Permission denied', statusCode: 403 },
         });
       }
     },
