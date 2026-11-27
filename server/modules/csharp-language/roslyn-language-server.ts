@@ -30,6 +30,19 @@ const HEADER_NAME = 'Content-Length:';
 // Enough of what Roslyn prints outside the protocol, such as its usage text after a bad argument, to tell why.
 const STRAY_OUTPUT_MAX_LENGTH = 600;
 
+// The line breaks Roslyn's SourceText counts. Positions are UTF-16 offsets, which is what JavaScript string lengths are.
+const LINE_BREAK = /\r\n|[\n\r\u0085\u2028\u2029]/g;
+
+export function endPositionOf(text: string): { line: number; character: number } {
+  let line = 0;
+  let lineStart = 0;
+  for (const match of text.matchAll(LINE_BREAK)) {
+    line += 1;
+    lineStart = match.index + match[0].length;
+  }
+  return { line, character: text.length - lineStart };
+}
+
 /**
  * Runs `Microsoft.CodeAnalysis.LanguageServer` over stdio for one solution. Created by the csharp-language
  * module's composition root, one per `.sln`, and driven by its service through `ICsharpLanguageServer`.
@@ -92,11 +105,13 @@ export class RoslynLanguageServer implements ICsharpLanguageServer {
     }
     if (openDocument.text === text) return;
 
+    // Roslyn only accepts ranged changes and dereferences `range` unchecked, so replace the whole old text by range.
+    const range = { start: { line: 0, character: 0 }, end: endPositionOf(openDocument.text) };
     openDocument.version += 1;
     openDocument.text = text;
     this.notify('textDocument/didChange', {
       textDocument: { uri, version: openDocument.version },
-      contentChanges: [{ text }],
+      contentChanges: [{ range, text }],
     });
   }
 
