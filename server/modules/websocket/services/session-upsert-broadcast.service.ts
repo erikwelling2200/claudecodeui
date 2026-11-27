@@ -51,6 +51,7 @@ async function buildSessionUpsertedEvent(
       lastActivity: row.updated_at ?? row.created_at ?? new Date().toISOString(),
       parentSessionId: row.parent_session_id ?? null,
       isStarred: Boolean(row.isStarred),
+      cacheKeepalive: Boolean(row.cache_keepalive_until),
     },
     project: project
       ? {

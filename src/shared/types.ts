@@ -103,6 +103,8 @@ export type ProjectSession = {
   parentSessionId?: string | null;
   // Starred chats sort above the rest of their project.
   isStarred?: boolean;
+  // The chat's prompt cache is kept warm, as of the last list fetch or upsert.
+  cacheKeepalive?: boolean;
   // Tags the session with the owning project's DB `projectId` so UI handlers
   // (session switching, sidebar focus, etc.) can match against selectedProject.
   __projectId?: string;

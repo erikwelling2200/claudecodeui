@@ -75,6 +75,14 @@ export async function setCacheKeepalive(sessionId: string, enabled: boolean): Pr
   publish();
 }
 
+/**
+ * Whether a sidebar row's cache is kept warm: a `cache_keepalive` event or an earlier load wins over `listed`, the
+ * flag the session list carried, so a change shows at once without fetching the state of every row.
+ */
+export function useCacheKeepaliveEnabled(sessionId: string, listed: boolean): boolean {
+  return useSyncExternalStore(subscribe, () => states.get(sessionId)?.enabled ?? listed);
+}
+
 /** The chat's keepalive state; null until the server has answered, and for a chat without a session id. */
 export function useCacheKeepalive(sessionId: string | null): CacheKeepaliveState | null {
   useEffect(() => {
