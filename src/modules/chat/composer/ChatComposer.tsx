@@ -10,7 +10,7 @@ import type {
   RefObject,
   TouchEvent,
 } from 'react';
-import { PaperclipIcon, SlashIcon,Loader2, ArrowUpIcon, PencilIcon, RadioTowerIcon, ExternalLinkIcon, BrainIcon, FlameIcon } from 'lucide-react';
+import { PaperclipIcon, SlashIcon,Loader2, ArrowUpIcon, PencilIcon, RadioTowerIcon, ExternalLinkIcon, BrainIcon, FlameIcon, FlameKindlingIcon } from 'lucide-react';
 
 import { useVoiceInput } from '@/modules/chat/hooks/useVoiceInput';
 import { useVoiceAvailable } from '@/modules/chat/hooks/useVoiceAvailable';
@@ -159,6 +159,10 @@ const formatTokens = (tokens = 0): string => (tokens >= 1000 ? `${Math.round(tok
 
 /** The keep-warm button's tooltip: the label, or while it is on, until when, the next ping and how the last one went. */
 function describeCacheKeepalive(state: CacheKeepaliveState, t: (key: string, options?: Record<string, unknown>) => string): string {
+  const miss = state.stoppedByMiss;
+  if (miss) {
+    return t('input.keepCacheWarmStoppedByMiss', { time: formatClock(miss.at), read: formatTokens(miss.cacheReadTokens), written: formatTokens(miss.cacheWriteTokens) });
+  }
   if (!state.enabled || !state.until) return t('input.keepCacheWarm');
   const lines = [t('input.keepCacheWarmUntil', { time: formatClock(state.until) })];
   lines.push(state.nextPingAt ? t('input.keepCacheWarmNextPing', { time: formatClock(state.nextPingAt) }) : t('input.keepCacheWarmAfterTurn'));
@@ -596,9 +600,11 @@ export default function ChatComposer({
                 onClick={onToggleCacheKeepalive}
                 aria-label={t('input.keepCacheWarm')}
                 aria-pressed={cacheKeepalive.enabled}
-                className={cacheKeepalive.enabled ? 'bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary' : undefined}
+                className={cacheKeepalive.enabled
+                  ? 'bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'
+                  : cacheKeepalive.stoppedByMiss ? 'text-amber-600 hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-400' : undefined}
               >
-                <FlameIcon />
+                {cacheKeepalive.stoppedByMiss ? <FlameKindlingIcon /> : <FlameIcon />}
               </PromptInputButton>
             )}
 
