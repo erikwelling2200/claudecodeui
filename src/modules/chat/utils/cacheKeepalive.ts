@@ -14,11 +14,19 @@ export type CacheKeepalivePing = {
   error?: string;
 };
 
+export type CacheKeepaliveMiss = {
+  at: string;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+};
+
 export type CacheKeepaliveState = {
   enabled: boolean;
   until: string | null;
   nextPingAt: string | null;
   lastPing: CacheKeepalivePing | null;
+  /** Set when the server switched keepalive off because a ping missed the cache. */
+  stoppedByMiss: CacheKeepaliveMiss | null;
 };
 
 type Listener = () => void;
@@ -46,6 +54,7 @@ function readState(value: Record<string, unknown>): CacheKeepaliveState {
     until: typeof value.until === 'string' ? value.until : null,
     nextPingAt: typeof value.nextPingAt === 'string' ? value.nextPingAt : null,
     lastPing: value.lastPing && typeof value.lastPing === 'object' ? value.lastPing as CacheKeepalivePing : null,
+    stoppedByMiss: value.stoppedByMiss && typeof value.stoppedByMiss === 'object' ? value.stoppedByMiss as CacheKeepaliveMiss : null,
   };
 }
 

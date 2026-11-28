@@ -191,6 +191,7 @@
     "keepCacheWarmAfterTurn": "Pings start after the next turn",
     "keepCacheWarmLastPing": "Last ping {{time}}: {{read}} cached, {{written}} written",
     "keepCacheWarmLastPingFailed": "Last ping {{time}} failed: {{error}}",
+    "keepCacheWarmStoppedByMiss": "Stopped at {{time}}: the ping missed the cache ({{read}} cached, {{written}} written). Click to keep warm again",
     "clearInput": "Clear input",
     "scrollToBottom": "Scroll to bottom",
     "queue": {

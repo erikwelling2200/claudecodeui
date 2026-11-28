@@ -12,6 +12,8 @@ import {
   closeCacheKeepalive,
   decideKeepalive,
   initializeCacheKeepalive,
+  isCacheMiss,
+  recordPing,
   runKeepaliveTick,
 } from '@/modules/cache-keepalive/services/cache-keepalive.service.js';
 import { closeConnection, initializeDatabase, sessionsDb } from '@/modules/database/index.js';
@@ -76,5 +78,32 @@ test('enabling sets a 20-hour window, and a tick past it switches keepalive off'
     await runKeepaliveTick(until);
     assert.equal(cacheKeepaliveService.getState(SESSION_ID).enabled, false);
     assert.equal(sessionsDb.getSessionById(SESSION_ID)?.cache_keepalive_until, null);
+  });
+});
+
+test('a ping that writes more than it reads has missed the cache', () => {
+  assert.equal(isCacheMiss({ cacheReadTokens: 482876, cacheWriteTokens: 1777, inputTokens: 3 }), false);
+  assert.equal(isCacheMiss({ cacheReadTokens: 64732, cacheWriteTokens: 66283, inputTokens: 3 }), true);
+  assert.equal(isCacheMiss({ cacheReadTokens: 0, cacheWriteTokens: 131018, inputTokens: 3 }), true);
+});
+
+test('a ping that misses the cache switches keepalive off and says why, until it is switched on again', async () => {
+  await withIsolatedDatabase(async () => {
+    initializeCacheKeepalive({ warmCache: async () => null }, { tickMs: 60 * 60_000 });
+    cacheKeepaliveService.setEnabled(SESSION_ID, true);
+
+    recordPing(SESSION_ID, '2026-11-28T01:00:00.000Z', { cacheReadTokens: 300000, cacheWriteTokens: 2000, inputTokens: 3 });
+    assert.equal(cacheKeepaliveService.getState(SESSION_ID).enabled, true);
+    assert.equal(cacheKeepaliveService.getState(SESSION_ID).stoppedByMiss, null);
+
+    const miss = { cacheReadTokens: 64732, cacheWriteTokens: 66283, inputTokens: 3 };
+    recordPing(SESSION_ID, '2026-11-28T02:00:00.000Z', miss);
+    const stopped = cacheKeepaliveService.getState(SESSION_ID);
+    assert.equal(stopped.enabled, false);
+    assert.equal(sessionsDb.getSessionById(SESSION_ID)?.cache_keepalive_until, null);
+    assert.deepEqual(stopped.stoppedByMiss, { at: '2026-11-28T02:00:00.000Z', ...miss });
+
+    assert.equal(cacheKeepaliveService.setEnabled(SESSION_ID, true).stoppedByMiss, null);
+    assert.equal(cacheKeepaliveService.setEnabled(SESSION_ID, false).stoppedByMiss, null);
   });
 });

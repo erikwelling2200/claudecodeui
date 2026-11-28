@@ -13,6 +13,8 @@ const TICK_MS = 60_000;
 
 export type CacheKeepalivePing = { at: string } & (CacheWarmResult | { error: string });
 
+export type CacheKeepaliveMiss = { at: string } & CacheWarmResult;
+
 export type CacheKeepaliveState = {
   enabled: boolean;
   /** When keeping the cache warm switches itself off unless the chat runs another turn first. */
@@ -20,7 +22,14 @@ export type CacheKeepaliveState = {
   /** When the next ping goes out; null while no turn has run since the server started, or the cache has expired. */
   nextPingAt: string | null;
   lastPing: CacheKeepalivePing | null;
+  /** The ping that missed the cache and so switched keepalive off; cleared when it is switched on again. */
+  stoppedByMiss: CacheKeepaliveMiss | null;
 };
+
+/** A ping that writes more than it reads did not find the conversation in the cache, so its pings only pay for rewriting it. */
+export function isCacheMiss(result: CacheWarmResult): boolean {
+  return result.cacheWriteTokens > result.cacheReadTokens;
+}
 
 /** What the timer does for one chat on a tick. */
 export function decideKeepalive(input: { now: number; until: number; warmAt: number | undefined; canPing: boolean; busy: boolean }): 'disable' | 'ping' | 'wait' {
@@ -51,6 +60,7 @@ const lastTurnOptions = new Map<string, { provider: LLMProvider; options: AnyRec
 /** When each chat's cache was last read or written, by a turn or a ping. */
 const warmAt = new Map<string, number>();
 const lastPings = new Map<string, CacheKeepalivePing>();
+const misses = new Map<string, CacheKeepaliveMiss>();
 const pinging = new Set<string>();
 let runtime: Pick<ProviderRuntimeGateway, 'warmCache'> | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -65,6 +75,7 @@ function getState(sessionId: string): CacheKeepaliveState {
     until,
     nextPingAt: until !== null && live ? new Date(warm + PING_AFTER_MS).toISOString() : null,
     lastPing: until !== null ? lastPings.get(sessionId) ?? null : null,
+    stoppedByMiss: until === null ? misses.get(sessionId) ?? null : null,
   };
 }
 
@@ -84,6 +95,18 @@ function setUntil(sessionId: string, until: string | null): void {
   }
 }
 
+/** Keeps a ping's result, and switches keepalive off when the ping missed the cache. */
+export function recordPing(sessionId: string, at: string, result: CacheWarmResult): void {
+  warmAt.set(sessionId, Date.now());
+  lastPings.set(sessionId, { at, ...result });
+  console.log(`[CacheKeepalive] Pinged chat ${sessionId}: ${result.cacheReadTokens} tokens read from cache, ${result.cacheWriteTokens} written.`);
+  if (isCacheMiss(result)) {
+    setUntil(sessionId, null);
+    misses.set(sessionId, { at, ...result });
+    console.log(`[CacheKeepalive] Stopped keeping chat ${sessionId} warm: its ping missed the cache.`);
+  }
+}
+
 async function ping(sessionId: string): Promise<void> {
   const turn = lastTurnOptions.get(sessionId);
   if (!runtime || !turn) return;
@@ -92,9 +115,7 @@ async function ping(sessionId: string): Promise<void> {
   try {
     const result = await runtime.warmCache(turn.provider, sessionId, pingOptions(turn.options));
     if (result) {
-      warmAt.set(sessionId, Date.now());
-      lastPings.set(sessionId, { at, ...result });
-      console.log(`[CacheKeepalive] Pinged chat ${sessionId}: ${result.cacheReadTokens} tokens read from cache, ${result.cacheWriteTokens} written.`);
+      recordPing(sessionId, at, result);
     } else {
       lastPings.set(sessionId, { at, error: 'The chat has nothing to resume yet.' });
     }
@@ -134,6 +155,7 @@ export const cacheKeepaliveService = {
   getState,
 
   setEnabled(sessionId: string, enabled: boolean): CacheKeepaliveState {
+    misses.delete(sessionId);
     setUntil(sessionId, enabled ? new Date(Date.now() + KEEPALIVE_WINDOW_MS).toISOString() : null);
     broadcast(sessionId);
     return getState(sessionId);
@@ -171,5 +193,6 @@ export function closeCacheKeepalive(): void {
   lastTurnOptions.clear();
   warmAt.clear();
   lastPings.clear();
+  misses.clear();
   pinging.clear();
 }
